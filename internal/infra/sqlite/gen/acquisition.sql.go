@@ -108,11 +108,13 @@ func (q *Queries) DeleteDownloadClient(ctx context.Context, id int64) (int64, er
 }
 
 const deleteFailedDownloads = `-- name: DeleteFailedDownloads :execrows
-DELETE FROM downloads WHERE state = 'failed' AND submission_phase NOT IN ('submitting','uncertain') AND parked_at=0 AND cleanup_pending=0 AND NOT EXISTS(SELECT 1 FROM publications p WHERE p.download_id=downloads.id AND p.state!='removed') AND NOT EXISTS(SELECT 1 FROM import_placements WHERE state IN ('prepared','committed','retained') AND (json_extract(data,'$.download_id')=downloads.id OR (COALESCE(json_extract(data,'$.download_id'),0)=0 AND json_extract(data,'$.item_id')=downloads.media_item_id AND json_extract(data,'$.release')=downloads.release_title))) AND NOT EXISTS(SELECT 1 FROM import_attempt_stages s WHERE s.download_id=downloads.id AND s.state='held') AND NOT EXISTS(SELECT 1 FROM import_attempt_controls c WHERE c.download_id=downloads.id AND c.outcome IN ('pending','cancelled')) AND NOT EXISTS(SELECT 1 FROM import_publication_authorizations a WHERE a.download_id=downloads.id AND (a.outcome='pending' OR a.resolution='retained_for_review'))
+DELETE FROM downloads WHERE state = 'failed' AND submission_phase NOT IN ('submitting','uncertain') AND parked_at=0 AND cleanup_pending=0 AND NOT EXISTS(SELECT 1 FROM publications p WHERE p.download_id=downloads.id AND p.state!='removed') AND NOT (runner_salvage='pending' AND NOT EXISTS(SELECT 1 FROM publications p WHERE p.download_id=downloads.id AND p.kind='salvage')) AND NOT EXISTS(SELECT 1 FROM import_placements WHERE state IN ('prepared','committed','retained') AND (json_extract(data,'$.download_id')=downloads.id OR (COALESCE(json_extract(data,'$.download_id'),0)=0 AND json_extract(data,'$.item_id')=downloads.media_item_id AND json_extract(data,'$.release')=downloads.release_title))) AND NOT EXISTS(SELECT 1 FROM import_attempt_stages s WHERE s.download_id=downloads.id AND s.state='held') AND NOT EXISTS(SELECT 1 FROM import_attempt_controls c WHERE c.download_id=downloads.id AND c.outcome IN ('pending','cancelled')) AND NOT EXISTS(SELECT 1 FROM import_publication_authorizations a WHERE a.download_id=downloads.id AND (a.outcome='pending' OR a.resolution='retained_for_review'))
 `
 
 // "Clear failed" has the same boundary: dismiss the Activity rows without
 // touching payloads, library records, blocklists, or download clients.
+// A Runner row whose salvage publication is still to come is only hidden
+// (below): its row is how that publication is attributed when it arrives.
 func (q *Queries) DeleteFailedDownloads(ctx context.Context) (int64, error) {
 	result, err := q.db.ExecContext(ctx, deleteFailedDownloads)
 	if err != nil {
@@ -173,11 +175,12 @@ func (q *Queries) DeleteProfile(ctx context.Context, id int64) (int64, error) {
 
 const deleteTerminalDownloadsBefore = `-- name: DeleteTerminalDownloadsBefore :execrows
 DELETE FROM downloads
-WHERE (state != 'imported' OR payload_removed = 1 OR (import_path = '' AND save_path = '' AND handle = '')) AND state IN ('imported', 'failed') AND submission_phase NOT IN ('submitting','uncertain') AND parked_at=0 AND cleanup_pending=0 AND downloads.updated_at < ? AND NOT EXISTS(SELECT 1 FROM publications p WHERE p.download_id=downloads.id AND p.state!='removed') AND NOT EXISTS(SELECT 1 FROM import_placements WHERE state IN ('prepared','committed','retained') AND (json_extract(data,'$.download_id')=downloads.id OR (COALESCE(json_extract(data,'$.download_id'),0)=0 AND json_extract(data,'$.item_id')=downloads.media_item_id AND json_extract(data,'$.release')=downloads.release_title))) AND NOT EXISTS(SELECT 1 FROM import_attempt_stages s WHERE s.download_id=downloads.id AND s.state='held') AND NOT EXISTS(SELECT 1 FROM import_attempt_controls c WHERE c.download_id=downloads.id AND c.outcome IN ('pending','cancelled')) AND NOT EXISTS(SELECT 1 FROM import_publication_authorizations a WHERE a.download_id=downloads.id AND (a.outcome='pending' OR a.resolution='retained_for_review'))
+WHERE (state != 'imported' OR payload_removed = 1 OR (import_path = '' AND save_path = '' AND handle = '')) AND state IN ('imported', 'failed') AND submission_phase NOT IN ('submitting','uncertain') AND parked_at=0 AND cleanup_pending=0 AND downloads.updated_at < ? AND NOT (runner_salvage='pending' AND NOT EXISTS(SELECT 1 FROM publications p WHERE p.download_id=downloads.id AND p.kind='salvage')) AND NOT EXISTS(SELECT 1 FROM publications p WHERE p.download_id=downloads.id AND p.state!='removed') AND NOT EXISTS(SELECT 1 FROM import_placements WHERE state IN ('prepared','committed','retained') AND (json_extract(data,'$.download_id')=downloads.id OR (COALESCE(json_extract(data,'$.download_id'),0)=0 AND json_extract(data,'$.item_id')=downloads.media_item_id AND json_extract(data,'$.release')=downloads.release_title))) AND NOT EXISTS(SELECT 1 FROM import_attempt_stages s WHERE s.download_id=downloads.id AND s.state='held') AND NOT EXISTS(SELECT 1 FROM import_attempt_controls c WHERE c.download_id=downloads.id AND c.outcome IN ('pending','cancelled')) AND NOT EXISTS(SELECT 1 FROM import_publication_authorizations a WHERE a.download_id=downloads.id AND (a.outcome='pending' OR a.resolution='retained_for_review'))
 `
 
 // Retention. Terminal rows only: whatever is still moving is never swept out
-// from under itself, however old it looks.
+// from under itself, however old it looks; nor is a Runner row whose salvage
+// is still to come (the hourly pass settles that from Runner).
 func (q *Queries) DeleteTerminalDownloadsBefore(ctx context.Context, updatedAt int64) (int64, error) {
 	result, err := q.db.ExecContext(ctx, deleteTerminalDownloadsBefore, updatedAt)
 	if err != nil {
@@ -187,11 +190,12 @@ func (q *Queries) DeleteTerminalDownloadsBefore(ctx context.Context, updatedAt i
 }
 
 const dismissFailedDownloadsWithLivePublication = `-- name: DismissFailedDownloadsWithLivePublication :execrows
-UPDATE downloads SET activity_dismissed=1 WHERE activity_dismissed=0 AND state='failed' AND EXISTS(SELECT 1 FROM publications p WHERE p.download_id=downloads.id AND p.state!='removed') AND submission_phase NOT IN ('submitting','uncertain') AND parked_at=0 AND cleanup_pending=0 AND NOT EXISTS(SELECT 1 FROM import_attempt_stages s WHERE s.download_id=downloads.id AND s.state='held') AND NOT EXISTS(SELECT 1 FROM import_attempt_controls c WHERE c.download_id=downloads.id AND c.outcome IN ('pending','cancelled')) AND NOT EXISTS(SELECT 1 FROM import_publication_authorizations a WHERE a.download_id=downloads.id AND (a.outcome='pending' OR a.resolution='retained_for_review'))
+UPDATE downloads SET activity_dismissed=1 WHERE activity_dismissed=0 AND state='failed' AND (EXISTS(SELECT 1 FROM publications p WHERE p.download_id=downloads.id AND p.state!='removed') OR (runner_salvage='pending' AND NOT EXISTS(SELECT 1 FROM publications p WHERE p.download_id=downloads.id AND p.kind='salvage'))) AND submission_phase NOT IN ('submitting','uncertain') AND parked_at=0 AND cleanup_pending=0 AND NOT EXISTS(SELECT 1 FROM import_attempt_stages s WHERE s.download_id=downloads.id AND s.state='held') AND NOT EXISTS(SELECT 1 FROM import_attempt_controls c WHERE c.download_id=downloads.id AND c.outcome IN ('pending','cancelled')) AND NOT EXISTS(SELECT 1 FROM import_publication_authorizations a WHERE a.download_id=downloads.id AND (a.outcome='pending' OR a.resolution='retained_for_review'))
 `
 
 // A publication cascades with its row: a row whose publication still has
 // files on disk is hidden, never deleted, so its cleanup evidence survives.
+// So is a Runner row whose salvage publication Runner has not published yet.
 func (q *Queries) DismissFailedDownloadsWithLivePublication(ctx context.Context) (int64, error) {
 	result, err := q.db.ExecContext(ctx, dismissFailedDownloadsWithLivePublication)
 	if err != nil {

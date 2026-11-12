@@ -1138,20 +1138,16 @@ func (s *Service) MarkHistoricalCohort(ctx context.Context) (int, error) {
 	}
 	n := 0
 	for _, root := range roots {
-		entries, err := os.ReadDir(root)
+		dirs, err := payloadDirs(root)
 		if err != nil {
 			s.log.Warn("historical cohort: completed root unreadable; it is not marked", "root", root, "err", err)
 			continue
 		}
-		for _, e := range entries {
-			if !e.IsDir() {
-				continue
-			}
-			path := filepath.Join(root, e.Name())
+		for _, path := range dirs {
 			if claimed[path] {
 				continue
 			}
-			info, err := e.Info()
+			info, err := os.Stat(path)
 			if err != nil || time.Since(info.ModTime()) < historicalMinAge {
 				continue
 			}
@@ -1214,6 +1210,9 @@ func (s *Service) publicationClaiming(ctx context.Context, path string) (sqlite.
 	}
 	target := storagePath(path, roots)
 	for _, p := range pubs {
+		if payloadContainer(p.Path, roots) {
+			continue // not a payload's record: it claims nothing beside it
+		}
 		dir := storagePath(filepath.Clean(p.Path), roots)
 		if dir == target || within(dir, target) || within(target, dir) {
 			return p, true, nil

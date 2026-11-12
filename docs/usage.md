@@ -1103,7 +1103,9 @@ Everything terminal is history, and history is collapsed:
 - **Clear failed** sits on the Failed grouping and removes every failed row
   after the same inline confirmation. It dismisses Activity records only:
   payloads, library files, blocklists, and download-client jobs stay as they
-  are. In the native app, select the Failed filter to reveal the matching
+  are. A failed Runner download whose salvage Runner has not published
+  yet is hidden rather than deleted (by **Remove** too), so the salvage is
+  still imported under it when it arrives. In the native app, select the Failed filter to reveal the matching
   button beneath the filters.
 - A single row can be dismissed with **Remove**, which has always been
   there and has always meant the row only (there is a separate option for
@@ -1396,6 +1398,26 @@ The tiles are read from `GET /api/v1/system/pipeline`.
   discarded with its reason, and a publication that gave the library nothing
   ends *import failed* with its want grabbed again. A file that does not
   match Runner's manifest (missing, resized, different bytes) does the same.
+  Publications an earlier version failed with a reason this one no longer
+  has (*N file(s) unresolved: …*, *holds no importable media*) are decided
+  again by v0.45.1: imported again with fresh limits when their want is still
+  open, retired as superseded when a later import already satisfied it. Media
+  an import that ended (imported, or failed with its want grabbed again) left
+  undecided is discarded by the next hourly cleanup, so its folder can go.
+  Every hour Curator also reads the completed folders for a committed Runner
+  folder (one with its `.runner-manifest.json`) that no publication claims —
+  a delivery that arrived while Curator had no row for it — and attributes
+  it to its download by the transfer the manifest names, exactly once. If
+  that download is gone from Curator's records, the folder is recorded as a
+  publication with no download (history `publication_orphaned`), its files
+  are discarded and the same pass removes it; a folder that names no Curator
+  transfer is not Curator's and is left alone.
+  A record with no download, manifest or files (the pre-delivery review
+  backlog) is closed by the same hourly pass when its folder is gone or the
+  path is a completed root or its `completed` folder (history
+  `publication_closed`; nothing is deleted). No publication can sit at a
+  completed root or its `completed` folder, so none can stop another folder
+  from being deleted whole.
   An import that keeps failing on its payload is tried five times (spaced
   out), and one that has not finished six hours after it first started ends
   the same way; what it already placed stays, is recorded and is sent to

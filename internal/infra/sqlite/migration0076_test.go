@@ -76,7 +76,8 @@ func TestMigration0076RequeuesOnlyWedgedImports(t *testing.T) {
 	exec(`INSERT INTO import_attempt_controls(download_id,generation_key) VALUES(1,'g-a')`)
 	exec(`INSERT INTO import_attempt_stages(download_id,generation_key,attempt_epoch,stage,source,target) VALUES(1,'g-a',0,'/lib/.monarr-sidecar-x','/c/a.srt','/lib/a.srt')`)
 	exec(`INSERT INTO import_publication_authorizations(download_id,generation_key,attempt_epoch,publication_id,source,target,payload,authorized_at) VALUES(1,'g-a',0,'pub-a','/c/a.mkv','/lib/a.mkv','{}',1)`)
-	if err := db.Migrate(ctx); err != nil {
+	// Exactly 0076: migration 0077 decides the legacy rows 0076 leaves.
+	if err := goose.UpToContext(ctx, db.W, "migrations", 76); err != nil {
 		t.Fatal(err)
 	}
 	for i, r := range rows {
