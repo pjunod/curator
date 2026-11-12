@@ -568,9 +568,10 @@ func (p *Plurx) TestPaths(ctx context.Context, roots []string) (string, error) {
 		OutsideRoots []string  `json:"outside_roots"`
 	}
 	_ = json.Unmarshal(raw, &probe)
-	if status == http.StatusOK {
+	switch status {
+	case http.StatusOK:
 		p.learned = answerFeatures(raw)
-	} else if status == http.StatusUnprocessableEntity {
+	case http.StatusUnprocessableEntity:
 		p.learned = []string{}
 	}
 	switch {
