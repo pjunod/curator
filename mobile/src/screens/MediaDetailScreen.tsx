@@ -8,6 +8,7 @@ import {
   INHERIT_DOWNLOAD_PRIORITY,
   downloadPriorityLabel,
 } from '../downloadPriority'
+import { ItemStatusPanel } from '../components/ItemStatusPanel'
 import { Poster } from '../components/Media'
 import { firstSeason } from '../releaseSearch'
 import {
@@ -29,7 +30,7 @@ import type { BookType, MediaCopy, QualityProfile, ReleaseSearchScope, UpdateMed
 import { useResource } from '../useResource'
 import { ImportFileSheet } from './ImportFileSheet'
 
-export function MediaDetailScreen({ client, id, onBack, onInteractiveSearch }: { client: MonarrClient; id: number; onBack: () => void; onInteractiveSearch: (scope: ReleaseSearchScope) => void }) {
+export function MediaDetailScreen({ client, id, onBack, onInteractiveSearch, onOpenActivity }: { client: MonarrClient; id: number; onBack: () => void; onInteractiveSearch: (scope: ReleaseSearchScope) => void; onOpenActivity?: () => void }) {
   const theme = useTheme()
   const resource = useResource(() => client.getLibraryItem(id), [client, id])
   const profilesResource = useResource(() => client.getProfiles(), [client])
@@ -246,6 +247,8 @@ export function MediaDetailScreen({ client, id, onBack, onInteractiveSearch }: {
             {item.kind === 'series' && item.seasons.length === 0 ? ' Interactive search appears once this series has seasons.' : ''}
           </Text>
         </Panel>
+
+        <ItemStatusPanel client={client} id={id} kind={item.kind} onInteractiveSearch={onInteractiveSearch} onOpenActivity={onOpenActivity} />
 
         {item.kind !== 'book' ? (
           <>
