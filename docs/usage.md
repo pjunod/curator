@@ -1672,10 +1672,10 @@ published placement that has not yet committed library metadata.
 
 Curator reads only Runner's typed terminal and each publication's
 `.runner-manifest.json`; the old `pp_status` / `final_dir` strings and the
-`v1_record` manifest source are gone. Upgrade Runner first. Migration 0078
-refuses to start (`migration 0078 refused: publications still on a v1_record
-manifest`) while any publication that is not removed still uses one, so
-resolve those in the review first; nothing is changed when it refuses.
+`v1_record` manifest source are no longer written. Upgrade Runner first.
+Publications an earlier version recorded with Runner's v1 record keep it and
+finish importing and cleaning up on their own; nothing needs resolving
+first.
 
 ## Runner holds and retained recovery plans
 

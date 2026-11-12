@@ -821,9 +821,14 @@ func admissionTerminal(adm ports.RequestAdmission) (ports.RunnerTerminal, bool) 
 				t.BlamesRelease = *adm.BlamesRelease
 			}
 		} else {
-			// A receipt that names no typed reason: the bytes are intact
-			// but unexplained, so it parks like any other io failure.
-			t = ports.RunnerTerminal{Outcome: ports.OutcomeFailed, Reason: ports.ReasonIO, Message: strings.Join(nonEmpty(adm.TerminalOutcome, adm.FailureCause), ": ")}
+			// A receipt from a Runner older than the typed fields names its
+			// failure only as a legacy status: its prefix gives the reason,
+			// and a release that died on health, fetch, repair, unpack or its
+			// script is blamed (blocklisted) as before. An unrecognised one
+			// is io: not blamed, its want grabbed again.
+			reason, stage, blamed := legacyReceiptReason(adm.TerminalOutcome)
+			t = ports.RunnerTerminal{Outcome: ports.OutcomeFailed, Reason: reason, Stage: stage, BlamesRelease: blamed,
+				Message: strings.Join(nonEmpty(adm.TerminalOutcome, adm.FailureCause), ": ")}
 		}
 		if t.Salvage == "" {
 			t.Salvage = "none"
@@ -1034,4 +1039,22 @@ func nonEmpty(parts ...string) []string {
 		}
 	}
 	return out
+}
+
+// legacyReceiptReason maps a legacy receipt status (a Runner older than the
+// typed failure fields) to its reason, stage and whether the release is to
+// blame, by prefix.
+func legacyReceiptReason(status string) (reason, stage string, blamed bool) {
+	for _, m := range []struct{ prefix, reason, stage string }{
+		{"FAILURE/HEALTH", ports.ReasonHealth, "health"},
+		{"FAILURE/FETCH", ports.ReasonFetch, "fetch"},
+		{"PAR_FAILURE", ports.ReasonPar, "par_repair"},
+		{"UNPACK_FAILURE", ports.ReasonUnpack, "unpack"},
+		{"SCRIPT_FAILURE", ports.ReasonScript, "script"},
+	} {
+		if strings.HasPrefix(status, m.prefix) {
+			return m.reason, m.stage, true
+		}
+	}
+	return ports.ReasonIO, "", false
 }

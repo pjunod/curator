@@ -709,6 +709,19 @@ func (d *DB) CountOverduePublications(ctx context.Context, now time.Time) (int, 
 	return n, err
 }
 
+// RecordPublicationFileManifest stores the manifest read from the
+// directory's .runner-manifest.json on a publication that had none: the
+// cleanup then requires the file to stay until every file is removed.
+func (d *DB) RecordPublicationFileManifest(ctx context.Context, id int64, manifestJSON string, crossVolume bool) error {
+	cross := 0
+	if crossVolume {
+		cross = 1
+	}
+	_, err := d.W.ExecContext(ctx, `UPDATE publications SET manifest_json=?, manifest_source='file', cross_volume=MAX(cross_volume,?), updated_at=? WHERE id=? AND manifest_source='none'`,
+		manifestJSON, cross, time.Now().UnixMilli(), id)
+	return err
+}
+
 // SetPublicationState moves a publication and records why.
 func (d *DB) SetPublicationState(ctx context.Context, id int64, state, errMsg string) error {
 	_, err := d.W.ExecContext(ctx, `UPDATE publications SET state=?, error=?, updated_at=? WHERE id=?`, state, errMsg, time.Now().UnixMilli(), id)

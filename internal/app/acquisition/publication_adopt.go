@@ -98,9 +98,12 @@ func (s *Service) adoptUnclaimedPublications(ctx context.Context) (adopted, orph
 // adoptDirectory adopts one unclaimed directory. ok reports a publication
 // now claims it; orphan that it was recorded with no row.
 func (s *Service) adoptDirectory(ctx context.Context, path string) (ok, orphan bool, err error) {
-	raw, err := os.ReadFile(filepath.Join(path, ports.ManifestFileName))
+	raw, err := readManifestFile(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return false, false, nil // not committed (or not Runner's): nothing to adopt
+	}
+	if errors.Is(err, errManifestTooLarge) {
+		return false, false, nil // not a manifest this pass can attribute
 	}
 	if err != nil {
 		return false, false, err
@@ -188,6 +191,9 @@ func (s *Service) adoptDirectory(ctx context.Context, path string) (ok, orphan b
 	if err != nil || !claimedNow {
 		return false, false, err
 	}
+	// The manifest this pass read is the publication's from now on: the
+	// cleanup requires the file to stay while files remain.
+	s.recordFileManifest(ctx, p, m)
 	s.log.Info("adoption: Runner publication attributed to its download", "path", path, "download", dl.ID, "publication", p.ID, "kind", p.Kind)
 	return true, false, nil
 }

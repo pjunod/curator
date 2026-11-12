@@ -518,7 +518,7 @@ second generation and the historical directories all take the same path.
 
 ### If the upgrade refuses to start
 
-Two migrations refuse rather than guess, and name what blocks them.
+One migration refuses rather than guesses, and names what blocks it.
 
 - `migration 0073 refused: live v1 dependents: N pending explicit deletion
   request(s) (<batch ids>)`: nothing has been changed. Deploy the previous
@@ -526,15 +526,11 @@ Two migrations refuse rather than guess, and name what blocks them.
   let each named request finish or **Cancel deletion request**; then deploy
   again. `SELECT batch_id FROM runner_delivery_explicit_delete_batches WHERE
   abandoned_at=0` lists them.
-- `migration 0078 refused: publications still on a v1_record manifest: N not
-  yet removed (#id state path; …)`: Curator no longer reads Runner's v1
-  delivery record, so a publication that has only that record has no manifest
-  to import or clean from. Let its import or its review batch finish on the
-  previous build (v0.42.x) until none is left —
-  `SELECT count(*) FROM publications WHERE manifest_source = 'v1_record' AND
-  state NOT IN ('removed')` must be 0 — then deploy again. A database older than
-  0072 stops here too, with 0074 applied, because 0072 makes one such
-  publication per old receipt.
+Migration 0078 (v0.46.0) refuses nothing: a publication an earlier build
+(v0.45.x) recorded with a `v1_record` manifest keeps its stored body and
+drains through its import and per-file cleanup; only removed ones are
+normalised. A database older than 0072 migrates straight through to the
+latest migration.
 
 ---
 

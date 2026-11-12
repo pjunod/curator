@@ -293,13 +293,23 @@ restart, and publications left in Resolve for their subtitles and `.nfo`s.
     `job_pp_finished`, the ordered history reader and the receipt lookup no
     longer fall back to the v1 `pp_status` / `final_dir` strings
     (`ports.LegacyTerminal` is deleted); a row without `outcome`, or a
-    completed row without its publication, is not a terminal. A `/deliveries`
+    completed row without its publication, is not a terminal. A request
+    receipt from a Runner older than the typed failure fields maps its legacy
+    status by prefix (`FAILURE/HEALTH`, `FAILURE/FETCH`, `PAR_FAILURE`,
+    `UNPACK_FAILURE`, `SCRIPT_FAILURE`: that reason, the release blamed);
+    anything else is `io`, not blamed. A `/deliveries`
     row with no `kind` is a completed terminal.
-32. **The `v1_record` manifest source is retired.** A publication's manifest is
-    its `.runner-manifest.json`. Migration 0078 (after 0077, unwedge) refuses while a publication
-    that is not `removed` still has `manifest_source = 'v1_record'`, then
-    normalises the removed ones. It is merged only after Runner's M6b is
-    deployed and the M7 review has resolved the historical cohort.
+32. **Nothing writes the `v1_record` manifest source any more.** A
+    publication's manifest is its `.runner-manifest.json`, read without
+    following a symlink and size-capped; when an import or adoption reads it
+    onto a publication that had none, the body is stored with
+    `manifest_source = 'file'`, so the per-file cleanup keeps requiring the
+    file while files remain. Curator no longer asks Runner for a v1 delivery
+    record. A publication that already carries a stored body (`v1_record`,
+    written by v0.45.x and earlier) falls back to it when its file is gone and
+    drains through its import and cleanup. Migration 0078 (after 0077,
+    unwedge) refuses nothing; it normalises only `removed` `v1_record` rows
+    to `none`.
 33. **Not done in M6b**: dropping `runner_delivery_receipts` and
     `runner_delivery_file_outcomes`. The receipts lifecycle
     (`/downloads/deliveries*`, the Activity delivery panel, the joined

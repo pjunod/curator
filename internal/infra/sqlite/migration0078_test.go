@@ -2,18 +2,19 @@ package sqlite
 
 import (
 	"context"
-	"errors"
-	"strings"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/pressly/goose/v3"
 )
 
-// Migration 0078 (pipeline contract v2, M6b): the v1_record manifest source is
-// retired. The count check refuses while a publication that is not removed
-// still depends on it, naming it; once they are all removed their source is
-// normalised and nothing else moves.
-func TestMigration0078RefusesWhileAPublicationStillNeedsTheV1Record(t *testing.T) {
+// Migration 0078 (pipeline contract v2, M6b): nothing writes the v1_record
+// source any more, and nothing is refused. A database at goose 77 — what
+// v0.45.x leaves, with v1_record stamped on live publications — migrates; a
+// live (imported) v1_record row keeps its stored manifest so it drains
+// through its cleanup, and only a removed one is normalised.
+func TestMigration0078MigratesLiveV1RecordRowsAndNormalisesOnlyRemoved(t *testing.T) {
 	ctx := context.Background()
 	db, err := Open(t.TempDir())
 	if err != nil {
@@ -25,7 +26,7 @@ func TestMigration0078RefusesWhileAPublicationStillNeedsTheV1Record(t *testing.T
 	if err := goose.SetDialect("sqlite3"); err != nil {
 		t.Fatal(err)
 	}
-	if err := goose.UpToContext(ctx, db.W, "migrations", 74); err != nil {
+	if err := goose.UpToContext(ctx, db.W, "migrations", 77); err != nil {
 		t.Fatal(err)
 	}
 	exec := func(q string, args ...any) {
@@ -34,77 +35,61 @@ func TestMigration0078RefusesWhileAPublicationStillNeedsTheV1Record(t *testing.T
 			t.Fatalf("%s: %v", q, err)
 		}
 	}
-	source := func(path string) (string, string) {
-		t.Helper()
-		var src, manifest string
-		if err := db.R.QueryRowContext(ctx, `SELECT manifest_source, manifest_json FROM publications WHERE path=?`, path).Scan(&src, &manifest); err != nil {
-			t.Fatal(err)
-		}
-		return src, manifest
+	manifest := `{"generation":"g","files":[{"path":"a.mkv","bytes":1,"sha256":"d"}],"digest":"x"}`
+	// The live row's directory is on disk with its .runner-manifest.json.
+	live := filepath.Join(t.TempDir(), "live-v1")
+	if err := os.MkdirAll(live, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(live, ".runner-manifest.json"), []byte(manifest), 0o644); err != nil {
+		t.Fatal(err)
 	}
 	for path, row := range map[string][2]string{
-		"/completed/live-v1":    {"v1_record", "imported"},
+		live:                    {"v1_record", "imported"},
 		"/completed/removed-v1": {"v1_record", "removed"},
 		"/completed/file":       {"file", "imported"},
 		"/completed/frozen":     {"none", "import_failed"},
 	} {
-		id, err := db.InsertPublication(ctx, PublicationWrite{Generation: "g", Kind: "completed", Path: path, ManifestJSON: `{"generation":"g"}`, Source: row[0], Cohort: "historical"})
+		id, err := db.InsertPublication(ctx, PublicationWrite{Generation: "g", Kind: "completed", Path: path, ManifestJSON: manifest, Source: row[0], Cohort: "live"})
 		if err != nil {
 			t.Fatal(err)
 		}
 		exec(`UPDATE publications SET state=? WHERE id=?`, row[1], id)
 	}
-
-	err = db.Migrate(ctx)
-	if !errors.Is(err, ErrLiveV1Records) || !strings.Contains(err.Error(), "/completed/live-v1") || strings.Contains(err.Error(), "/completed/removed-v1") {
-		t.Fatalf("Migrate = %v, want a refusal naming only the live v1_record publication", err)
-	}
-	if src, _ := source("/completed/removed-v1"); src != "v1_record" {
-		t.Fatal("the refused migration changed a row")
-	}
-
-	// The publication is removed (its import and review finished): now it may go.
-	exec(`UPDATE publications SET state='removed' WHERE path='/completed/live-v1'`)
 	if err := db.Migrate(ctx); err != nil {
-		t.Fatal(err)
+		t.Fatalf("Migrate at goose 77 with a live v1_record publication = %v, want it to run", err)
 	}
-	for _, path := range []string{"/completed/live-v1", "/completed/removed-v1"} {
-		if src, manifest := source(path); src != "none" || manifest != "{}" {
-			t.Fatalf("%s = %s %s, want the source normalised", path, src, manifest)
+	source := func(path string) (string, string) {
+		t.Helper()
+		var src, body string
+		if err := db.R.QueryRowContext(ctx, `SELECT manifest_source, manifest_json FROM publications WHERE path=?`, path).Scan(&src, &body); err != nil {
+			t.Fatal(err)
+		}
+		return src, body
+	}
+	for path, want := range map[string]string{
+		live: "v1_record", "/completed/file": "file", "/completed/frozen": "none", "/completed/removed-v1": "none",
+	} {
+		src, body := source(path)
+		if src != want {
+			t.Errorf("%s source = %s, want %s", path, src, want)
+		}
+		if path == "/completed/removed-v1" && body != "{}" {
+			t.Errorf("removed row kept its manifest body %q", body)
+		}
+		if path == live && body != manifest {
+			t.Errorf("live v1_record row lost its stored manifest: %q", body)
 		}
 	}
-	if src, manifest := source("/completed/file"); src != "file" || manifest != `{"generation":"g"}` {
-		t.Fatalf("a file-manifest publication changed: %s %s", src, manifest)
+	if raw, err := os.ReadFile(filepath.Join(live, ".runner-manifest.json")); err != nil || string(raw) != manifest {
+		t.Fatalf("the live publication's manifest file changed: %q (%v)", raw, err)
 	}
-	if src, _ := source("/completed/frozen"); src != "none" {
-		t.Fatalf("a manifest-less publication changed: %s", src)
+	var state string
+	if err := db.R.QueryRowContext(ctx, `SELECT state FROM publications WHERE path=?`, live).Scan(&state); err != nil || state != "imported" {
+		t.Fatalf("live row state = %q (%v), want untouched", state, err)
 	}
-}
-
-// A database older than 0072 gets its v1_record publications from 0072 itself
-// (one per old receipt); the upgrade stops once they exist rather than
-// stranding them.
-func TestMigration0078RefusesAnUpgradeThatCrossesTheReceiptMigration(t *testing.T) {
-	ctx := context.Background()
-	db, err := Open(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
-	goose.SetBaseFS(migrationsFS)
-	goose.SetLogger(goose.NopLogger())
-	if err := goose.SetDialect("sqlite3"); err != nil {
-		t.Fatal(err)
-	}
-	if err := goose.UpToContext(ctx, db.W, "migrations", 71); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := db.W.ExecContext(ctx, `INSERT INTO runner_delivery_receipts(id,client_id,delivery_id,sequence,publication_generation,manifest_digest,artifact_id,job_id,ready_at,publication_path,files_json,created_at,updated_at)
-		VALUES(1,1,'d-1',1,'g','dig','a','1',1,'/completed/pub','[]',1,1)`); err != nil {
-		t.Fatal(err)
-	}
-	err = db.Migrate(ctx)
-	if !errors.Is(err, ErrLiveV1Records) || !strings.Contains(err.Error(), "/completed/pub") {
-		t.Fatalf("Migrate = %v, want a refusal naming the migrated receipt's publication", err)
+	var version int64
+	if err := db.R.QueryRowContext(ctx, `SELECT MAX(version_id) FROM goose_db_version`).Scan(&version); err != nil || version < retireV1RecordVersion {
+		t.Fatalf("goose version = %d (%v), want 0078 applied", version, err)
 	}
 }

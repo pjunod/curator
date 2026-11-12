@@ -27,26 +27,60 @@ import (
 // completed one, a salvage, a late one).
 
 // publicationManifest reads the manifest from the publication's own
-// .runner-manifest.json, the commit marker of a publication directory. A
-// directory without one is not a publication yet: ok=false, and the next poll
-// checks again.
+// .runner-manifest.json, the commit marker of a publication directory (read
+// without following a symlink, size-capped). A publication an earlier build
+// recorded with a stored manifest body (a v1 delivery record, or the file as
+// first read) falls back to that body when the file is gone, so it drains
+// through its import and cleanup; nothing asks Runner for a v1 record any
+// more. A directory with neither is not a publication yet: ok=false, and
+// the next poll checks again.
 func (s *Service) publicationManifest(pub sqlite.Publication) (ports.Manifest, bool, error) {
-	raw, err := os.ReadFile(filepath.Join(pub.Path, ports.ManifestFileName))
-	if errors.Is(err, os.ErrNotExist) {
-		return ports.Manifest{}, false, nil
-	}
-	if err != nil {
+	raw, err := readManifestFile(pub.Path)
+	switch {
+	case err == nil:
+		var m ports.Manifest
+		if err := json.Unmarshal(raw, &m); err != nil {
+			return m, false, fmt.Errorf("%w: %s is not a manifest: %v", errManifestInvalid, ports.ManifestFileName, err)
+		}
+		m.Source = "file"
+		if err := verifyManifestShape(m, pub.Generation); err != nil {
+			return m, false, fmt.Errorf("%w: %v", errManifestInvalid, err)
+		}
+		return m, true, nil
+	case errors.Is(err, errManifestTooLarge):
+		return ports.Manifest{}, false, fmt.Errorf("%w: %v", errManifestInvalid, err)
+	case !errors.Is(err, os.ErrNotExist):
 		return ports.Manifest{}, false, err
 	}
-	var m ports.Manifest
-	if err := json.Unmarshal(raw, &m); err != nil {
-		return m, false, fmt.Errorf("%w: %s is not a manifest: %v", errManifestInvalid, ports.ManifestFileName, err)
+	if pub.ManifestSource == "v1_record" || pub.ManifestSource == "file" {
+		var m ports.Manifest
+		if err := json.Unmarshal([]byte(pub.ManifestJSON), &m); err == nil && len(m.Files) > 0 {
+			m.Source = pub.ManifestSource
+			if err := verifyManifestShape(m, pub.Generation); err != nil {
+				return m, false, fmt.Errorf("%w: %v", errManifestInvalid, err)
+			}
+			return m, true, nil
+		}
 	}
-	m.Source = "file"
-	if err := verifyManifestShape(m, pub.Generation); err != nil {
-		return m, false, fmt.Errorf("%w: %v", errManifestInvalid, err)
+	return ports.Manifest{}, false, nil
+}
+
+// recordFileManifest stores the manifest an import or adoption read from
+// the directory's .runner-manifest.json on a publication that had none
+// (manifest_source 'none'), so the per-file cleanup's guard knows the
+// directory must still carry it: a missing manifest file then stops the
+// cleanup instead of letting it decide placed files without proof.
+func (s *Service) recordFileManifest(ctx context.Context, pub sqlite.Publication, m ports.Manifest) {
+	if pub.ManifestSource != "none" || m.Source != "file" {
+		return
 	}
-	return m, true, nil
+	raw, err := json.Marshal(m)
+	if err != nil {
+		return
+	}
+	if err := s.db.RecordPublicationFileManifest(ctx, pub.ID, string(raw), m.CrossVolume); err != nil {
+		s.log.Warn("publication manifest could not be recorded", "publication", pub.ID, "err", err)
+	}
 }
 
 // errManifestInvalid is a manifest that says something impossible about
@@ -187,6 +221,7 @@ func (s *Service) runPublicationImport(ctx context.Context, dl sqlite.Download, 
 	for _, f := range m.Files {
 		files = append(files, sqlite.PublicationFile{Path: f.Path, Bytes: f.Bytes, SHA256: f.SHA256})
 	}
+	s.recordFileManifest(ctx, pub, m)
 	if err := s.db.SeedPublicationFiles(ctx, pub.ID, files); err != nil {
 		return err
 	}
@@ -531,6 +566,7 @@ func (s *Service) endPublication(ctx context.Context, dl sqlite.Download, cfg po
 	for _, f := range m.Files {
 		files = append(files, sqlite.PublicationFile{Path: f.Path, Bytes: f.Bytes, SHA256: f.SHA256})
 	}
+	s.recordFileManifest(ctx, pub, *m)
 	if err := s.db.SeedPublicationFiles(ctx, pub.ID, files); err != nil {
 		s.log.Warn("publication could not be ended", "publication", pub.ID, "err", err)
 		return

@@ -1,12 +1,13 @@
 -- +goose Up
--- Pipeline contract v2, M6b: the v1_record manifest source is retired. Curator
--- reads a publication's manifest from its own .runner-manifest.json only.
+-- Pipeline contract v2, M6b: nothing writes the v1_record manifest source any
+-- more. Curator reads a publication's manifest from its own
+-- .runner-manifest.json; a publication that already carries a stored v1
+-- record body keeps it (publicationManifest falls back to it) and drains
+-- through its import and per-file cleanup like any other. Nothing is refused:
+-- v0.45.x stamped v1_record on nearly every new publication.
 --
--- Migrate.go refuses to run this file while a publication that is not yet
--- removed still has manifest_source = 'v1_record' (it would be stranded with
--- no manifest to import or clean from), naming how many and which. By the time
--- it runs, every such row is 'removed', its files gone: the stored manifest is
--- of no further use, so the source is normalised to 'none'.
+-- Only a removed publication's record is normalised (its files are gone; the
+-- stored manifest is of no further use): the source becomes 'none'.
 --
 -- The manifest_source CHECK is left as it is: narrowing it would rebuild
 -- publications, and notifier_deliveries and publication_files cascade from it.

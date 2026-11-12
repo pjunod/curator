@@ -90,8 +90,8 @@ func TestMigration0072(t *testing.T) {
 	_ = fk.Close()
 
 	// The rest reads through the current query layer, which needs the
-	// whole schema (0073, 0076 and 0077 change what it scans). 0078 is not
-	// applied: it refuses while these v1_record publications are not removed.
+	// whole schema (0073, 0076 and 0077 change what it scans); stopping
+	// before 0078 keeps these v1_record rows as 0072 wrote them.
 	if err := goose.UpToContext(ctx, db.W, "migrations", retireV1RecordVersion-1); err != nil {
 		t.Fatal(err)
 	}

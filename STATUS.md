@@ -7,10 +7,10 @@
 closure, historical approvals all kept) · owner: Claude (Sonnet builder) · pushed,
 **no PR** (by instruction), not reviewed, not merged, not deployed.
 
-**DO NOT MERGE EARLY: merge only after runner M6b is deployed and M7 has
-cleared v1_record publications.** Migration 0078 refuses to start otherwise
-(`migration 0078 refused: publications still on a v1_record manifest`), so an
-early merge stops the upgrade rather than corrupting anything.
+**Merge after runner M6b is deployed** (Curator now reads only typed
+terminals). Migration 0078 refuses nothing: live `v1_record` publications
+(v0.45.x stamps nearly every new one) keep their stored manifest and drain;
+only removed ones are normalised.
 
 **Migration renumbered 2026-11-12:** main took `0077_unwedge_legacy_imports.sql`, so
 this branch's `retire_v1_record` is now **0078** (`migration0078.go`,
@@ -27,10 +27,22 @@ Built (plan M6 curator item 1, IMPL_CURATOR section 9):
 - **`v1_record` manifest source retired.** `publicationManifest` reads only
   `.runner-manifest.json`; `attachManifest`, `AttachPublicationManifest` and
   the delivery lookup port are gone. Migration 0078 normalises removed
-  `v1_record` rows to `none` and, in `Migrate`, refuses (named error, count and
-  up to 5 rows) while any non-removed one exists. A database older than 0072
-  stops after 0074, because 0072 itself creates `v1_record` rows.
+  `v1_record` rows to `none`; it refuses nothing (Fable review, 2026-11-12:
+  the refusal would have stopped Curator on the live DB). A publication with a
+  stored body falls back to it; one whose manifest an import or adoption
+  reads from its file records it as `file`.
 - Docs: integration.md, ADR 0026 addendum decisions 31-33, OpenAPI `manifestSource`.
+
+Fable review of this branch (2026-11-12), all fixed:
+
+| # | Finding | Fix |
+|---|---|---|
+| 1 B | 0078 refused on the live DB (v0.45.x stamps v1_record on nearly every publication) | Refusal and preflight removed; v1 writers and the GetDelivery lookup stay gone; `publicationManifest` falls back to a stored body; only removed rows normalised. Test at goose 77 with a live imported v1_record row whose manifest file is on disk |
+| 2 B | Feed publications had source `none`, disabling the cleanup's missing-manifest guard; inventory called every live one manifestless | The import (at seeding) and adoption record the file's manifest as `file`; the "no manifest… delete it from here" label is for record-only publications only |
+| 3 | Legacy receipt status without a typed reason mapped to io, unblamed | Prefix map (health, fetch, par, unpack, script: blamed); otherwise io, not blamed |
+| 4 | Stale docs | integration.md upgrade section, usage.md upgrade note, ADR 0026 decisions 31–32, these STATUS notes |
+| 5 | No live-row migration test | `TestMigration0078MigratesLiveV1RecordRowsAndNormalisesOnlyRemoved` |
+| 6 | Manifest reads followed symlinks, unbounded | `readManifestFile`: `openDeliveryFileNoSymlinks`, 8 MiB cap, in `publicationManifest` and adoption |
 
 **Not done, and why (decision for Paul):** `runner_delivery_receipts` and
 `runner_delivery_file_outcomes` are **not dropped**. The receipt lifecycle
@@ -245,7 +257,7 @@ not merged, not deployed.
 **Merge order (decision, 2026-11-12, coordinator):** this branch ships
 before M6b and owns migration **0077** (`0077_unwedge_legacy_imports.sql`),
 so it applies on main by itself. `claude/pipeline-v2-m6b-curator`'s
-`0077_retire_v1_record.sql` must be renumbered (0078) when M6b is rebased.
+`0077_retire_v1_record.sql` must be renumbered (done on rebase: `0078_retire_v1_record.sql`).
 The M6b build was never deployed, so no live database is at goose 77 from
 it (nuc3 is at 76); this branch's 0077 is the first 0077 any database sees.
 Older notes in the v0.44.0 section that call M6b's migration 0077 are
@@ -381,22 +393,6 @@ clean; `go vet` and pinned golangci-lint v2.12.2 on
 clean; lint 0 issues; `go test ./internal/infra/sqlite/
 ./internal/app/acquisition/` pass. Not run (by instruction): full `make test`, `make
 test-web`, `make test-e2e`.
-
-> **Migration renumbered 2026-11-11 (Claude Opus 5.5 session):** this branch's
-> `0075_retire_v1_record.sql` is now `0077_retire_v1_record.sql` (Go precheck
-> `migration0077.go`, `retireV1RecordVersion = 77`, messages and docs), because
-> `claude/no-wedge` adds `0076`; goose refuses a missing lower version on a
-> database already at 76. Not rebased onto `claude/no-wedge`; the two merge in
-> either order.
-
-> **Rebased 2026-11-11 (Claude Opus 5.5 session) onto `claude/no-wedge`;
-> merge `claude/no-wedge` first, then this branch.** Its migration is
-> `0077_retire_v1_record.sql` (Go precheck `migration0077.go`,
-> `retireV1RecordVersion = 77`), after no-wedge's `0076`; goose refuses a
-> missing lower version, so 0076 must land first. VERSION is 0.45.0 (no-wedge
-> is 0.44.0). The v1 adapter's lookup tests went with the v1_record source;
-> no-wedge's environmental hold for an unreadable manifest now covers only
-> the manifest file.
 
 ## No wedge: hash once, scratch stages, background reconcile, 4 workers, subtitles — 2026-11-11 · v0.44.0
 
