@@ -629,6 +629,17 @@ Contract section 4; the outbox is `internal/app/notify`, the HTTP exchange is
   `mtime_ns`; a same-path replacement with equal size and the same
   whole-second mtime differs only in `mtime_ns`. Anything else is `warning:
   expected <path> not placed (<cinema's reason>)` and is retried.
+- **What is kept.** Each row also stores the item it belongs to
+  (`media_item_id`) and Cinema's answer for every expected file
+  (`file_results_json`: `placed` with its cinema item, bytes and mtime_ns,
+  `skipped` with the reason, or `missing`), so the item page's status panel
+  can say which episode of a season pack is in Cinema. **Ask cinema to
+  confirm** on the item page (`POST /library/{id}/status/confirm`) writes the
+  same sub-delivery rows for the item's (or one episode's) current files,
+  with no download and a stable generation (`confirm-<item>` or
+  `confirm-<item>-e<episode>`), so asking again refreshes the row and advances
+  its attempt; chat notifiers are not told. A retried delivery clears its
+  stored file results with the rest of the last answer.
 - **The schedule** is the outbox ladder in `internal/domain/backoff` —
   `5s → 30s → 2m → 5m → 15m → 1h`, then hourly, without end for anything
   transient (the same helper, with its own rungs, spaces Runner submission,

@@ -461,6 +461,23 @@ func TestQueuedRequestIsPolledUntilVisible(t *testing.T) {
 	}
 }
 
+// Cinema's answer for each expected file is kept on the sub-delivery, with
+// the item it names, so the item page can say which file is in Cinema.
+func TestReadBackKeepsEachFilesResult(t *testing.T) {
+	e := newOutboxEnv(t)
+	p := e.place("Heat (1995)/Heat.mkv", "heat")
+	e.imported(p)
+	e.runFor(time.Hour)
+	r := e.rows()[0]
+	e.requireVisible(r)
+	if r.MediaItemID != 1 {
+		t.Fatalf("media item = %d, want the import's item", r.MediaItemID)
+	}
+	if len(r.FileResults) != 1 || r.FileResults[0].Path != p || r.FileResults[0].State != "placed" || !r.FileResults[0].Matched || r.FileResults[0].ItemID == 0 {
+		t.Fatalf("file results = %+v, want the file placed, matched, with its cinema item", r.FileResults)
+	}
+}
+
 // Contract section 6, new Curator against an old Cinema: request_key,
 // wait_ms and expected_files are ignored, a 202 is handled, and the status
 // read is refused to the scan key — the sub-delivery is done, reading

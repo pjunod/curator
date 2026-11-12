@@ -214,6 +214,12 @@ func (s *Service) applyStatus(ctx context.Context, dl sqlite.Download, cfg ports
 	}
 	now := time.Now()
 	w := sqlite.RunnerStatusWrite{DownloadID: dl.ID, Transfer: dl.Transfer, Progress: st.Progress, Stage: st.Stage}
+	if st.RateBps != nil {
+		w.RateBps = max(0, *st.RateBps)
+	}
+	if st.RemainingBytes != nil {
+		w.RemainingBytes = max(0, *st.RemainingBytes)
+	}
 	if st.Progress == 0 && dl.Progress > 0 {
 		w.Progress = dl.Progress
 	}

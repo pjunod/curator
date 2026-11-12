@@ -383,8 +383,12 @@ type RunnerStatusWrite struct {
 	Error      string
 	Control    string // newest control, for display only ('' keeps the stored one)
 	Stage      string // post-processing stage ('' keeps the stored one)
-	DeadlineAt time.Time
-	Handoff    *HandoffEntry
+	// RateBps and RemainingBytes are Runner's per-job numbers, stored as
+	// reported (0 = not reported).
+	RateBps        int64
+	RemainingBytes int64
+	DeadlineAt     time.Time
+	Handoff        *HandoffEntry
 }
 
 // UpdateRunnerStatus applies a status fact to a row whose terminal is still
@@ -401,12 +405,14 @@ func (d *DB) UpdateRunnerStatus(ctx context.Context, w RunnerStatusWrite) (bool,
 		state_entered_at=CASE WHEN state!=? THEN ? ELSE state_entered_at END,
 		state=?, progress=?, error=?,
 		runner_control=CASE WHEN ?!='' THEN ? ELSE runner_control END,
+		runner_stage_at=CASE WHEN ?!='' AND ?!=runner_stage THEN ? ELSE runner_stage_at END,
 		runner_stage=CASE WHEN ?!='' THEN ? ELSE runner_stage END,
+		rate_bps=?, remaining_bytes=?,
 		deadline_at=?,
 		handoff_log=CASE WHEN ?='null' THEN handoff_log ELSE json_insert(handoff_log,'$[#]',json(?)) END,
 		updated_at=?
 		WHERE id=? AND transfer=? AND runner_outcome='' AND state IN ('grabbed','submitting','downloading','held')`,
-		w.State, now, w.State, w.Progress, w.Error, w.Control, w.Control, w.Stage, w.Stage, unixMilliOrZero(w.DeadlineAt), entry, entry, now, w.DownloadID, w.Transfer)
+		w.State, now, w.State, w.Progress, w.Error, w.Control, w.Control, w.Stage, w.Stage, now, w.Stage, w.Stage, w.RateBps, w.RemainingBytes, unixMilliOrZero(w.DeadlineAt), entry, entry, now, w.DownloadID, w.Transfer)
 	if err != nil {
 		return false, err
 	}

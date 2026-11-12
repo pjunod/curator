@@ -1130,6 +1130,123 @@ func (e SeriesMonitorMode) Valid() bool {
 	}
 }
 
+// Defines values for StatusHeadlineState.
+const (
+	StatusHeadlineStateActive  StatusHeadlineState = "active"
+	StatusHeadlineStateDone    StatusHeadlineState = "done"
+	StatusHeadlineStateFailed  StatusHeadlineState = "failed"
+	StatusHeadlineStateTodo    StatusHeadlineState = "todo"
+	StatusHeadlineStateWaiting StatusHeadlineState = "waiting"
+)
+
+// Valid indicates whether the value is a known member of the StatusHeadlineState enum.
+func (e StatusHeadlineState) Valid() bool {
+	switch e {
+	case StatusHeadlineStateActive:
+		return true
+	case StatusHeadlineStateDone:
+		return true
+	case StatusHeadlineStateFailed:
+		return true
+	case StatusHeadlineStateTodo:
+		return true
+	case StatusHeadlineStateWaiting:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for StatusStageActions.
+const (
+	CancelDownload    StatusStageActions = "cancel_download"
+	ConfirmCinema     StatusStageActions = "confirm_cinema"
+	InteractiveSearch StatusStageActions = "interactive_search"
+	OpenActivity      StatusStageActions = "open_activity"
+	ResendCinema      StatusStageActions = "resend_cinema"
+	RetryImport       StatusStageActions = "retry_import"
+	Search            StatusStageActions = "search"
+)
+
+// Valid indicates whether the value is a known member of the StatusStageActions enum.
+func (e StatusStageActions) Valid() bool {
+	switch e {
+	case CancelDownload:
+		return true
+	case ConfirmCinema:
+		return true
+	case InteractiveSearch:
+		return true
+	case OpenActivity:
+		return true
+	case ResendCinema:
+		return true
+	case RetryImport:
+		return true
+	case Search:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for StatusStageKey.
+const (
+	StatusStageKeyCinemaNotified StatusStageKey = "cinema_notified"
+	StatusStageKeyDownloading    StatusStageKey = "downloading"
+	StatusStageKeyInCinema       StatusStageKey = "in_cinema"
+	StatusStageKeyMoved          StatusStageKey = "moved"
+	StatusStageKeyProcessed      StatusStageKey = "processed"
+	StatusStageKeySearched       StatusStageKey = "searched"
+)
+
+// Valid indicates whether the value is a known member of the StatusStageKey enum.
+func (e StatusStageKey) Valid() bool {
+	switch e {
+	case StatusStageKeyCinemaNotified:
+		return true
+	case StatusStageKeyDownloading:
+		return true
+	case StatusStageKeyInCinema:
+		return true
+	case StatusStageKeyMoved:
+		return true
+	case StatusStageKeyProcessed:
+		return true
+	case StatusStageKeySearched:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for StatusStageState.
+const (
+	StatusStageStateActive  StatusStageState = "active"
+	StatusStageStateDone    StatusStageState = "done"
+	StatusStageStateFailed  StatusStageState = "failed"
+	StatusStageStateTodo    StatusStageState = "todo"
+	StatusStageStateWaiting StatusStageState = "waiting"
+)
+
+// Valid indicates whether the value is a known member of the StatusStageState enum.
+func (e StatusStageState) Valid() bool {
+	switch e {
+	case StatusStageStateActive:
+		return true
+	case StatusStageStateDone:
+		return true
+	case StatusStageStateFailed:
+		return true
+	case StatusStageStateTodo:
+		return true
+	case StatusStageStateWaiting:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for TitleAliasRole.
 const (
 	TitleAliasRoleAlternate  TitleAliasRole = "alternate"
@@ -2348,6 +2465,27 @@ type IndexerInput struct {
 
 // IndexerInputProtocol defines model for IndexerInput.Protocol.
 type IndexerInputProtocol string
+
+// ItemStatus defines model for ItemStatus.
+type ItemStatus struct {
+	// Active A download is moving; poll every 2 s.
+	Active   bool             `json:"active"`
+	Attempts *[]StatusAttempt `json:"attempts,omitempty"`
+	Cinema   *StatusCinema    `json:"cinema,omitempty"`
+
+	// Done Every stage is done; the panel collapses to one line.
+	Done     bool             `json:"done"`
+	Download *StatusDownload  `json:"download,omitempty"`
+	Episodes *[]StatusEpisode `json:"episodes,omitempty"`
+
+	// GeneratedAt Unix ms.
+	GeneratedAt int64           `json:"generatedAt"`
+	Headline    StatusHeadline  `json:"headline"`
+	Kind        string          `json:"kind"`
+	MediaItemId int64           `json:"mediaItemId"`
+	Seasons     *[]StatusSeason `json:"seasons,omitempty"`
+	Stages      *[]StatusStage  `json:"stages,omitempty"`
+}
 
 // LanguageOption defines model for LanguageOption.
 type LanguageOption struct {
@@ -3585,6 +3723,115 @@ type SettingsUpdate struct {
 	TraktClientId *string `json:"traktClientId,omitempty"`
 }
 
+// StatusAttempt defines model for StatusAttempt.
+type StatusAttempt struct {
+	At         int64   `json:"at"`
+	DownloadId int64   `json:"downloadId"`
+	Indexer    *string `json:"indexer,omitempty"`
+	Outcome    string  `json:"outcome"`
+	Reason     *string `json:"reason,omitempty"`
+	Release    string  `json:"release"`
+}
+
+// StatusCinema defines model for StatusCinema.
+type StatusCinema struct {
+	DeliveryId int64    `json:"deliveryId"`
+	Error      *string  `json:"error,omitempty"`
+	ItemIds    *[]int64 `json:"itemIds,omitempty"`
+	NotifierId int64    `json:"notifierId"`
+	Status     string   `json:"status"`
+	VisibleAt  *int64   `json:"visibleAt,omitempty"`
+	WaitingOn  *string  `json:"waitingOn,omitempty"`
+}
+
+// StatusDownload defines model for StatusDownload.
+type StatusDownload struct {
+	Bytes int64 `json:"bytes"`
+
+	// Episodes Episodes covered; more than one is a season pack.
+	Episodes *int `json:"episodes,omitempty"`
+
+	// EtaSeconds remaining_bytes / rate_bps.
+	EtaSeconds *int64  `json:"etaSeconds,omitempty"`
+	Id         int64   `json:"id"`
+	Indexer    *string `json:"indexer,omitempty"`
+	Progress   float32 `json:"progress"`
+
+	// RateBps Runner's rate_bps, relayed.
+	RateBps *int64 `json:"rateBps,omitempty"`
+	Release string `json:"release"`
+
+	// Stage Runner's post-processing stage.
+	Stage      *string `json:"stage,omitempty"`
+	StageSince *int64  `json:"stageSince,omitempty"`
+	State      string  `json:"state"`
+	Total      int64   `json:"total"`
+}
+
+// StatusEpisode defines model for StatusEpisode.
+type StatusEpisode struct {
+	// At Unix ms the client formats beside the summary.
+	At     *int64        `json:"at,omitempty"`
+	Cinema *StatusCinema `json:"cinema,omitempty"`
+
+	// DownloadId The download this episode's track follows.
+	DownloadId *int64        `json:"downloadId,omitempty"`
+	Episode    int           `json:"episode"`
+	EpisodeId  int64         `json:"episodeId"`
+	InPack     bool          `json:"inPack"`
+	Season     int           `json:"season"`
+	Stages     []StatusStage `json:"stages"`
+	Summary    string        `json:"summary"`
+	Title      *string       `json:"title,omitempty"`
+
+	// WantableId Scopes Search now to this episode (POST /wanted/searches
+	WantableId string `json:"wantableId"`
+}
+
+// StatusHeadline defines model for StatusHeadline.
+type StatusHeadline struct {
+	// At Unix ms the client formats beside the title.
+	At     *int64              `json:"at,omitempty"`
+	Detail *string             `json:"detail,omitempty"`
+	State  StatusHeadlineState `json:"state"`
+	Title  string              `json:"title"`
+}
+
+// StatusHeadlineState defines model for StatusHeadline.State.
+type StatusHeadlineState string
+
+// StatusSeason defines model for StatusSeason.
+type StatusSeason struct {
+	Active   bool            `json:"active"`
+	Download *StatusDownload `json:"download,omitempty"`
+	Episodes int             `json:"episodes"`
+	InCinema int             `json:"inCinema"`
+	OnDisk   int             `json:"onDisk"`
+	Season   int             `json:"season"`
+	Summary  string          `json:"summary"`
+}
+
+// StatusStage defines model for StatusStage.
+type StatusStage struct {
+	// Actions Actions that apply to this stage.
+	Actions *[]StatusStageActions `json:"actions,omitempty"`
+
+	// At Unix ms; absent when there is no time to show.
+	At     *int64           `json:"at,omitempty"`
+	Detail *string          `json:"detail,omitempty"`
+	Key    StatusStageKey   `json:"key"`
+	State  StatusStageState `json:"state"`
+}
+
+// StatusStageActions defines model for StatusStage.Actions.
+type StatusStageActions string
+
+// StatusStageKey defines model for StatusStage.Key.
+type StatusStageKey string
+
+// StatusStageState defines model for StatusStage.State.
+type StatusStageState string
+
 // StorageChangeRequest defines model for StorageChangeRequest.
 type StorageChangeRequest struct {
 	ExpectedIdentity string  `json:"expectedIdentity"`
@@ -4039,6 +4286,17 @@ type ResolveLibraryReviewFlagJSONBody struct {
 	FileGeneration string `json:"fileGeneration"`
 }
 
+// GetLibraryItemStatusParams defines parameters for GetLibraryItemStatus.
+type GetLibraryItemStatusParams struct {
+	Season *int `form:"season,omitempty" json:"season,omitempty"`
+}
+
+// ConfirmLibraryItemInCinemaParams defines parameters for ConfirmLibraryItemInCinema.
+type ConfirmLibraryItemInCinemaParams struct {
+	// Episode An episode id; only that episode's files are named.
+	Episode *int64 `form:"episode,omitempty" json:"episode,omitempty"`
+}
+
 // PreviewMetadataParams defines parameters for PreviewMetadata.
 type PreviewMetadataParams struct {
 	Kind   MediaKind `form:"kind" json:"kind"`
@@ -4069,6 +4327,9 @@ type ListQueueParamsFilter string
 // RemoveQueueItemParams defines parameters for RemoveQueueItem.
 type RemoveQueueItemParams struct {
 	FromClient *bool `form:"fromClient,omitempty" json:"fromClient,omitempty"`
+
+	// Blocklist With fromClient: also blocklist the release (the item page's Cancel download), so automation does not grab it again. Activity's Remove leaves it off: a removal is not a verdict on the release.
+	Blocklist *bool `form:"blocklist,omitempty" json:"blocklist,omitempty"`
 }
 
 // PlacePublicationFilesJSONBody defines parameters for PlacePublicationFiles.
@@ -4591,6 +4852,12 @@ type ServerInterface interface {
 	// SetSeasonMonitored Monitor or unmonitor one season (cascades to its episodes)
 	// (PATCH /library/{id}/seasons/{season})
 	SetSeasonMonitored(w http.ResponseWriter, r *http.Request, id int64, season int)
+	// GetLibraryItemStatus Where this item stands, from search to cinema
+	// (GET /library/{id}/status)
+	GetLibraryItemStatus(w http.ResponseWriter, r *http.Request, id int64, params GetLibraryItemStatusParams)
+	// ConfirmLibraryItemInCinema Ask cinema to confirm this item's files
+	// (POST /library/{id}/status/confirm)
+	ConfirmLibraryItemInCinema(w http.ResponseWriter, r *http.Request, id int64, params ConfirmLibraryItemInCinemaParams)
 	// PreviewMetadata Read a title before adding, without loading episodes or writing library state
 	// (GET /metadata/preview)
 	PreviewMetadata(w http.ResponseWriter, r *http.Request, params PreviewMetadataParams)
@@ -7155,6 +7422,90 @@ func (siw *ServerInterfaceWrapper) SetSeasonMonitored(w http.ResponseWriter, r *
 	handler.ServeHTTP(w, r)
 }
 
+// GetLibraryItemStatus operation middleware
+func (siw *ServerInterfaceWrapper) GetLibraryItemStatus(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetLibraryItemStatusParams
+
+	// ------------- Optional query parameter "season" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "season", r.URL.Query(), &params.Season, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "season"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "season", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetLibraryItemStatus(w, r, id, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ConfirmLibraryItemInCinema operation middleware
+func (siw *ServerInterfaceWrapper) ConfirmLibraryItemInCinema(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ConfirmLibraryItemInCinemaParams
+
+	// ------------- Optional query parameter "episode" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "episode", r.URL.Query(), &params.Episode, runtime.BindQueryParameterOptions{Type: "integer", Format: "int64"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "episode"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "episode", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ConfirmLibraryItemInCinema(w, r, id, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // PreviewMetadata operation middleware
 func (siw *ServerInterfaceWrapper) PreviewMetadata(w http.ResponseWriter, r *http.Request) {
 
@@ -7757,6 +8108,19 @@ func (siw *ServerInterfaceWrapper) RemoveQueueItem(w http.ResponseWriter, r *htt
 			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "fromClient"})
 		} else {
 			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "fromClient", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "blocklist" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "blocklist", r.URL.Query(), &params.Blocklist, runtime.BindQueryParameterOptions{Type: "boolean", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "blocklist"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "blocklist", Err: err})
 		}
 		return
 	}
@@ -8744,6 +9108,8 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/importlists", wrapper.AddImportList)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/importlists/{id}", wrapper.DeleteImportList)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/library/{id}/autosearch", wrapper.AutoSearchLibraryItem)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/library/{id}/status", wrapper.GetLibraryItemStatus)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/library/{id}/status/confirm", wrapper.ConfirmLibraryItemInCinema)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/library/{id}/copies", wrapper.AddMediaCopy)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/library/{id}/copies/{copyId}", wrapper.DeleteMediaCopy)
 	m.HandleFunc(http.MethodPatch+" "+options.BaseURL+"/library/{id}/copies/{copyId}", wrapper.UpdateMediaCopy)

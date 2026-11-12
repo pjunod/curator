@@ -340,6 +340,7 @@ func (d *Dispatcher) settleSub(ctx context.Context, del sqlite.Delivery, sub sub
 			unreported(scannedText(res.ItemIDs) + " (cinema does not report results)")
 			break
 		}
+		del.FileResults = fileResults(del.ExpectedFiles, res.Files)
 		missing := notPlaced(del.ExpectedFiles, res.Files)
 		if len(missing) == 0 {
 			del.Status, del.NextAt, del.LastError = "ok", 0, ""
@@ -366,6 +367,27 @@ func (d *Dispatcher) settleSub(ctx context.Context, del sqlite.Delivery, sub sub
 		pending()
 	}
 	d.store(ctx, del, sub.peer, timing, errors.New(del.LastError))
+}
+
+// fileResults keeps Cinema's answer for every expected file, so the item page
+// can say which episode of a season pack is in Cinema and which is not. A
+// file Cinema did not mention is missing.
+func fileResults(expected []ports.ExpectedFile, files []ports.PlacedReport) []sqlite.DeliveryFileResult {
+	byPath := map[string]ports.PlacedReport{}
+	for _, f := range files {
+		byPath[f.Path] = f
+	}
+	out := make([]sqlite.DeliveryFileResult, 0, len(expected))
+	for _, e := range expected {
+		f, ok := byPath[e.Path]
+		if !ok {
+			out = append(out, sqlite.DeliveryFileResult{Path: e.Path, State: "missing"})
+			continue
+		}
+		out = append(out, sqlite.DeliveryFileResult{Path: e.Path, State: f.State, ItemID: f.ItemID, Bytes: f.Bytes,
+			MtimeNs: f.MtimeNs, Reason: f.Reason, Matched: f.State == "placed" && f.Bytes == e.Bytes && f.MtimeNs == e.MtimeNs})
+	}
+	return out
 }
 
 // notPlaced lists, in the delivery log's words, every expected file Cinema
