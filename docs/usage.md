@@ -527,6 +527,64 @@ usual questions at a glance:
 - **Links** — IMDb / TMDB / TVDB / Open Library pages, opening in a new
   tab.
 
+### Where it stands — the status panel
+
+Directly under the title block, above Identity, every item shows where it
+stands from search to cinema, in six stages left to right (stacked on a
+phone): **Searched**, **Downloading**, **Processed**, **Moved**, **Cinema
+notified**, **In cinema**. Each stage has its state (✓ done, ● in progress,
+◷ waiting, ✕ failed, ○ not yet), when it happened, and one line of detail.
+
+- **Searched** names the last search and who ran it — `manual` (you pressed
+  a button), `automatic` (the backlog, auto search on add), `wanted` (a Wanted
+  run), `replacement` (a re-grab after a failure), `rss`, `interactive` (you
+  picked a release) or a season comparison — with what it saw: `11 seen, 0
+  accepted`, and the reason most releases were refused, or why it did not
+  search at all (`downloading`, `unmonitored`, `indexers unavailable`).
+  Curator keeps the newest 20 searches per movie or episode.
+- **Downloading** shows the percentage and Runner's own speed and time left;
+  Curator does not average or guess. Before Runner starts it the stage says
+  `queued in Runner` — Runner has no queue position to report.
+- **Processed** is Runner's post-processing stage (`verifying`,
+  `repairing`, `unpacking`) and since when, or the failure Runner reported.
+- **Moved** counts the files placed into the library, or says the import is
+  waiting or failed.
+- **Cinema notified** and **In cinema** come from the cinema read-back:
+  `scan accepted`, then `confirmed` at the time cinema confirmed every file
+  with matching size and modification time, or what cinema says it is
+  waiting on (a full scan, its queue). Each episode of a season pack gets
+  its own answer.
+
+The headline says the current stage in a sentence. Below it are the live
+download numbers, any earlier attempts (a failed grab, a cancelled one), and
+the actions that apply: **Search now**, **Interactive search**, **Open in
+Activity**, **Cancel download** (asks first, then cancels in Runner and
+blocklists that release so the next automatic search does not grab it straight
+back; Activity's Remove stays a plain removal, and you can still pick the
+release yourself from interactive search),
+**Retry import**, **Send to cinema again**, and **Ask cinema to confirm**,
+which sends a scan request naming the item's current files so cinema's
+answer confirms them — the way to check an item imported before this record
+existed; asking again refreshes the same request rather than adding one.
+Every action shows its result in the panel. Once something is on disk, a later
+search that finds nothing (or is skipped) shows as detail on **Searched**, not
+as a step backwards, and a failed upgrade grab is listed under earlier attempts
+while the panel keeps showing the file you have.
+
+The panel refreshes every 2 seconds while a download is moving and every 30
+seconds otherwise, without moving your scroll position or focus. It never
+hides: once everything is done it collapses to one line (`In cinema,
+confirmed Sep 4`) that opens again on a click. A series shows one line per
+season (`2 of 6 in cinema · 4 in one season pack`), with a season pack's
+download shown once on the season (the counts cover monitored episodes that
+have aired, plus any with a file); open a season for a six-segment strip per
+episode, and click an episode for its full track and its own actions —
+**Search now** searches that episode only, and **Retry import**, **Send to
+cinema again** and **Ask cinema to confirm** act on that episode's download and
+files. The panel follows the primary copy; additional quality copies and book
+editions have their own rows in Activity. The phone app shows the
+same panel from the same endpoint (`GET /library/{id}/status`).
+
 **Seasons** and **Files** start collapsed and show their totals in the section
 header. Expand Seasons to use the existing season/episode monitoring and search
 controls. Each section keeps your choice while the item refreshes; visiting
@@ -1373,7 +1431,7 @@ in History. An unreachable Runner decides nothing.
 
 When the failed job is still listed in Runner's queue (stalled, or blocked
 past Runner's own deadline), Curator also asks Runner once to cancel it
-(v0.45.3), in the background after the failure is recorded. The cancel only
+(v0.46.1), in the background after the failure is recorded. The cancel only
 removes the job from Runner's queue: a job that has finished meanwhile is left
 alone, and its history record is never deleted. It is best effort: if it
 fails or times out (3 seconds) it is logged and ignored, never retried, and

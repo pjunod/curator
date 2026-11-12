@@ -249,18 +249,23 @@ const ManualAdditionalParam = "monarr-manual-additional"
 
 // job is one row of `GET /api/v1/jobs`.
 type job struct {
-	Kind            string                 `json:"kind"`
-	TorrentRole     string                 `json:"torrent_role"`
-	ID              int64                  `json:"id"`
-	Name            string                 `json:"name"`
-	Status          json.RawMessage        `json:"status"`
-	SizeBytes       int64                  `json:"size_bytes"`
-	DownloadedBytes int64                  `json:"downloaded_bytes"`
-	PPDone          bool                   `json:"pp_done"`
-	Ready           bool                   `json:"ready"`
-	Stages          []stageSpan            `json:"stages"`
-	Control         *ports.DownloadControl `json:"control"`
-	Params          [][2]string            `json:"params"`
+	Kind            string          `json:"kind"`
+	TorrentRole     string          `json:"torrent_role"`
+	ID              int64           `json:"id"`
+	Name            string          `json:"name"`
+	Status          json.RawMessage `json:"status"`
+	SizeBytes       int64           `json:"size_bytes"`
+	DownloadedBytes int64           `json:"downloaded_bytes"`
+	// RateBps and RemainingBytes are Runner's own per-job numbers (its
+	// rolling average speed and the bytes it still has to fetch). Pointers:
+	// an older Runner sends neither, and absent is not zero.
+	RateBps        *int64                 `json:"rate_bps"`
+	RemainingBytes *int64                 `json:"remaining_bytes"`
+	PPDone         bool                   `json:"pp_done"`
+	Ready          bool                   `json:"ready"`
+	Stages         []stageSpan            `json:"stages"`
+	Control        *ports.DownloadControl `json:"control"`
+	Params         [][2]string            `json:"params"`
 	// StatusProjected is Runner's own projection of the job's status
 	// (contract section 2.3): "held" for a job on hold, whatever the
 	// persisted status says. Empty from an older Runner.
@@ -422,6 +427,8 @@ func (c *Client) Statuses(ctx context.Context) ([]ports.DownloadStatus, error) {
 			Message:          msg,
 			Stage:            stage,
 			OperationalState: operational,
+			RateBps:          j.RateBps,
+			RemainingBytes:   j.RemainingBytes,
 		})
 	}
 	return out, nil

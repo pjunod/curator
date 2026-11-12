@@ -86,7 +86,7 @@ func readStatusPage[T any](body io.Reader, collection string, limit int) ([]T, m
 						return nil, err
 					}
 					return json.Marshal(counts)
-				case "kind", "torrent_role", "id", "job", "name", "status", "size_bytes", "downloaded_bytes", "pp_done", "ready", "stages", "control", "final_dir", "seq",
+				case "kind", "torrent_role", "id", "job", "name", "status", "size_bytes", "downloaded_bytes", "rate_bps", "remaining_bytes", "pp_done", "ready", "stages", "control", "final_dir", "seq",
 					// pipeline contract v2: the projected status and the typed terminal.
 					"status_projected", "transfer", "outcome", "reason", "fetch_cause", "stage", "message", "blames_release",
 					"salvage", "keep_on_failure", "fetched", "publication":

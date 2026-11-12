@@ -95,7 +95,7 @@ function MonarrApp() {
 
   let content
   if (overlay?.name === 'detail') {
-    content = <MediaDetailScreen client={client} id={overlay.id} onBack={() => setOverlay(null)} onInteractiveSearch={(scope) => openReleases(overlay.id, scope)} />
+    content = <MediaDetailScreen client={client} id={overlay.id} onBack={() => setOverlay(null)} onInteractiveSearch={(scope) => openReleases(overlay.id, scope)} onOpenActivity={() => { setOverlay(null); setTab('activity') }} />
   } else if (overlay?.name === 'releases') {
     content = <ReleaseSearchScreen client={client} id={overlay.id} initialScope={overlay.scope} onBack={() => openMedia(overlay.id)} />
   } else if (overlay?.name === 'calendar') {

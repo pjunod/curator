@@ -1,6 +1,6 @@
 # Monarr — Project Status
 
-## Overdue exit cancels a still-listed stalled job in Runner — 2026-11-12 · v0.45.3
+## Overdue exit cancels a still-listed stalled job in Runner — 2026-11-12 · v0.46.1
 
 **Status:** built, targeted tests and lint run (see the commit report) · branch
 `claude/overdue-cancel` from `origin/main` 9a5821d · no PR · not merged.
@@ -78,7 +78,7 @@ Adversarial review of this branch — 6 findings, all fixed:
 Expected-on-deploy timings shift accordingly: rows absent from Runner's
 queue fail after 10 minutes of successful polls; #733 after 15 minutes.
 
-Decision (Paul, v0.45.3): a job Runner still lists that has not moved for
+Decision (Paul, v0.46.1): a job Runner still lists that has not moved for
 24 h past its deadline, or that Runner holds blocked past its own retry
 deadline, is failed and re-grabbed, and then Curator makes one best-effort
 cancel of it in Runner (a queue-only `CancelQueued`, never the history-delete

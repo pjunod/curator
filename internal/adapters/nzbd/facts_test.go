@@ -58,6 +58,30 @@ func TestStatusesMarksHeldJobs(t *testing.T) {
 	}
 }
 
+// Runner's per-job rate and remaining bytes are relayed as sent; an older
+// Runner that sends neither leaves them unset rather than zero.
+func TestStatusesRelayRunnersRateAndRemainingBytes(t *testing.T) {
+	srv := fake(t, nil, func(w http.ResponseWriter, r *http.Request) bool {
+		if r.URL.Path != "/api/v1/jobs" {
+			return false
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"jobs":[{"id":3,"name":"x","status":"downloading","size_bytes":100,"downloaded_bytes":40,"rate_bps":48200000,"remaining_bytes":60},` +
+			`{"id":4,"name":"y","status":"downloading","size_bytes":100,"downloaded_bytes":40}]}`))
+		return true
+	})
+	got, err := client(t, srv, "", "tok").Statuses(context.Background())
+	if err != nil || len(got) != 2 {
+		t.Fatalf("Statuses = %+v, %v", got, err)
+	}
+	if got[0].RateBps == nil || *got[0].RateBps != 48200000 || got[0].RemainingBytes == nil || *got[0].RemainingBytes != 60 {
+		t.Fatalf("rate/remaining = %v/%v, want 48200000/60", got[0].RateBps, got[0].RemainingBytes)
+	}
+	if got[1].RateBps != nil || got[1].RemainingBytes != nil {
+		t.Fatalf("older Runner row = %+v, want rate and remaining unset", got[1])
+	}
+}
+
 func TestPublicationReadyIsASalvage(t *testing.T) {
 	ev := oneFact(t, "job_publication_ready", `{"job":9,"transfer":"t-9","publication":{"path":"/completed/x.runner-g","generation":"g","manifest_digest":"d","files":2}}`)
 	f := ev.Fact

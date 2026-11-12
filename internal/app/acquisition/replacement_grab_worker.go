@@ -151,7 +151,7 @@ func (s *Service) runReplacementGrab(ctx context.Context, g sqlite.ReplacementGr
 			if episode {
 				allowed = exactWantedCandidate // a replacement for an episode is never a pack
 			}
-			tally, err := s.searchAndGrabBestScoped(ctx, target, enabled, allowed, nil)
+			tally, err := s.searchAndGrabBestScoped(withSearchTrigger(ctx, "replacement"), target, enabled, allowed, nil)
 			if err != nil {
 				lastErr = err
 				continue
