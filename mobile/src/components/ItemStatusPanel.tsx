@@ -144,7 +144,8 @@ function Seasons({ client, id, s, onInteractiveSearch, onOpenActivity }: {
     <View style={styles.seasons}>
       {(s.seasons ?? []).map((sn) => (
         <View key={sn.season} style={[styles.season, { borderTopColor: theme.border }]}>
-          <Pressable accessibilityRole="button" accessibilityState={{ expanded: open === sn.season }} onPress={() => setOpen(open === sn.season ? null : sn.season)}>
+          <Pressable accessibilityRole="button" accessibilityState={{ expanded: open === sn.season }}
+            accessibilityLabel={`Where it stands for ${sn.season === 0 ? 'specials' : `season ${sn.season}`}: ${sn.summary}`} onPress={() => setOpen(open === sn.season ? null : sn.season)}>
             <Text style={[styles.stageName, { color: theme.text }]}>{sn.season === 0 ? 'Specials' : `Season ${sn.season}`}</Text>
             <Text style={[styles.small, { color: theme.muted }]}>{sn.summary}</Text>
           </Pressable>

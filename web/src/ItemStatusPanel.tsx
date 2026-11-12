@@ -225,7 +225,11 @@ function SeriesSeasons({ itemId, seasons, onInteractiveSearch }: {
     <div className="item-seasons-status">
       {seasons.map((sn) => (
         <div key={sn.season} className="item-season-status">
+          {/* Named for this panel: the Seasons section below has its own
+              "Season N" disclosure, and two controls with one name are one
+              control too many for a screen reader. */}
           <button type="button" className="item-season-h" aria-expanded={!!open[sn.season]}
+            aria-label={`Where it stands for ${sn.season === 0 ? 'specials' : `season ${sn.season}`}: ${sn.summary}`}
             onClick={() => setOpen((o) => ({ ...o, [sn.season]: !o[sn.season] }))}>
             <span className={`dot ${sn.active ? 's-active' : sn.episodes > 0 && sn.inCinema === sn.episodes ? 's-done' : 's-wait'}`} aria-hidden="true" />
             <b>{sn.season === 0 ? 'Specials' : `Season ${sn.season}`}</b>

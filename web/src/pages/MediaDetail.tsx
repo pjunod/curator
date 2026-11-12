@@ -98,26 +98,34 @@ function IdentityPanel({ item }: { item: MediaItemDetail }) {
   const [title, setTitle] = useState('')
   const [searchable, setSearchable] = useState(false)
   const [message, setMessage] = useState('')
+  const [noticeRevision, setNoticeRevision] = useState(0)
+  const say = (text: string) => {
+    setMessage(text)
+    setNoticeRevision((r) => r + 1)
+  }
   const aliases = item.aliases ?? []
   const [aliasesOpen, setAliasesOpen] = useState(() => aliases.length <= 3)
   const sources = item.identitySources ?? []
   const add = useMutation({
     mutationFn: () => addLibraryAlias(item.id, title.trim(), searchable),
-    onSuccess: () => {
+    // The result is revealed once the refreshed alias list has rendered:
+    // revealed earlier, the list growing above it pushed it back out of the
+    // viewport (CLAUDE.md §5).
+    onSuccess: async () => {
       setTitle('')
       setSearchable(false)
-      setMessage('Alias added.')
-      void qc.invalidateQueries({ queryKey: ['library-item', String(item.id)] })
+      await qc.invalidateQueries({ queryKey: ['library-item', String(item.id)] })
+      say('Alias added.')
     },
-    onError: (error) => setMessage(`✕ ${(error as Error).message}`),
+    onError: (error) => say(`✕ ${(error as Error).message}`),
   })
   const remove = useMutation({
     mutationFn: (aliasId: number) => deleteLibraryAlias(item.id, aliasId),
-    onSuccess: () => {
-      setMessage('Alias removed.')
-      void qc.invalidateQueries({ queryKey: ['library-item', String(item.id)] })
+    onSuccess: async () => {
+      await qc.invalidateQueries({ queryKey: ['library-item', String(item.id)] })
+      say('Alias removed.')
     },
-    onError: (error) => setMessage(`✕ ${(error as Error).message}`),
+    onError: (error) => say(`✕ ${(error as Error).message}`),
   })
 
   return (
@@ -159,7 +167,9 @@ function IdentityPanel({ item }: { item: MediaItemDetail }) {
         <label className="inline"><input type="checkbox" checked={searchable} onChange={(event) => setSearchable(event.target.checked)} /> Include in indexer searches</label>
         <button disabled={!title.trim() || add.isPending} onClick={() => add.mutate()}>{add.isPending ? 'Adding…' : 'Add alias'}</button>
       </div>
-      {message && <p className={message.startsWith('✕') ? 'error-text' : 'ok-text'}>{message}</p>}
+      {/* Revealed, not just appended: the result must land in the viewport
+          wherever Identity sits on the page (CLAUDE.md §5). */}
+      {message && <ActionNotice warning={message.startsWith('✕')} revision={noticeRevision}>{message}</ActionNotice>}
     </section>
   )
 }
