@@ -519,12 +519,14 @@ func (s *Service) redecideLeftoverSidecars(ctx context.Context, pub sqlite.Publi
 		return nil
 	}
 	decisions := map[string]sidecarDecision{}
+	var owner *sqlite.Download
 	if pub.DownloadID != 0 {
 		dl, err := s.db.GetDownload(ctx, pub.DownloadID)
 		if err != nil && !errors.Is(err, sql.ErrNoRows) && !errors.Is(err, sqlite.ErrNotFound) {
 			return err
 		}
 		if err == nil {
+			owner = &dl
 			item, err := s.db.GetMediaItemFull(ctx, dl.MediaItemID)
 			if err != nil {
 				return err
@@ -541,20 +543,11 @@ func (s *Service) redecideLeftoverSidecars(ctx context.Context, pub sqlite.Publi
 			}
 		}
 	}
+	var media []string
 	for path, f := range pending {
 		d, ok := decisions[path]
 		if isPublicationMedia(path) {
-			// Only an import decides a media file (a full or unmounted library
-			// holds the publication in discovered, so it never reaches here).
-			// This publication's import has ended — imported, or failed with
-			// its want grabbed again — so media it left pending (an earlier
-			// build's import, or a stall that ended the import before it
-			// reached the file) was not selected and is not kept, exactly as
-			// the import itself records an unselected file.
-			f.Outcome, f.DiscardReason, f.Reason, f.LibraryPath = "discarded", "rejected", "its publication's import ended without placing it; not kept", ""
-			if err := s.db.SetPublicationFileOutcome(ctx, f); err != nil {
-				return err
-			}
+			media = append(media, path)
 			continue
 		}
 		if !ok {
@@ -570,7 +563,99 @@ func (s *Service) redecideLeftoverSidecars(ctx context.Context, pub sqlite.Publi
 			return err
 		}
 	}
+	if len(media) == 0 {
+		return nil
+	}
+	return s.decideLeftoverMedia(ctx, pub.ID, owner, media)
+}
+
+// decideLeftoverMedia decides media an ended import left pending (an earlier
+// build's import; ADR 0026 decision 27). Only an import places media, and
+// the sweep discards it only when nothing could still want it:
+//
+//   - every want of its download is filled in the library (or no longer
+//     monitored), or a replacement download imported it: discarded;
+//   - otherwise the publication goes back to discovered and its import
+//     decides the file; the requeue counts as an attempt, so once attempts
+//     run out the import's own cap ends the publication, deciding every
+//     file;
+//   - with no download row, or no attempt left: discarded.
+//
+// Each write is conditional on the publication being exactly as read, so a
+// person's Retry import (or an import that moved it on) wins the race.
+func (s *Service) decideLeftoverMedia(ctx context.Context, publicationID int64, owner *sqlite.Download, media []string) error {
+	pub, err := s.db.GetPublication(ctx, publicationID)
+	if err != nil {
+		return err
+	}
+	if pub.State != "imported" && pub.State != "notified" && pub.State != "import_failed" {
+		return nil
+	}
+	reason := ""
+	switch {
+	case owner == nil:
+		reason = "no download row to import it under; not kept"
+	case s.wantsSettled(ctx, *owner):
+		reason = "its want is already filled in the library or imported by a replacement; not kept"
+	default:
+		attempts, err := s.db.PublicationImportAttempts(ctx, pub.ID)
+		if err != nil {
+			return err
+		}
+		if attempts < sqlite.MaxPublicationImportAttempts {
+			ok, err := s.db.RequeuePublicationForPendingMedia(ctx, pub)
+			if err != nil {
+				return err
+			}
+			if ok {
+				_ = s.db.AddHistory(ctx, "import_retried", owner.MediaItemID, owner.ReleaseTitle,
+					map[string]any{"publication": pub.Path, "reason": "media an ended import left pending is imported again", "files": media})
+				s.log.Info("publication requeued: pending media is imported again", "publication", pub.ID, "files", len(media))
+			}
+			return nil
+		}
+		reason = fmt.Sprintf("not imported after %d attempts; not kept", attempts)
+	}
+	for _, path := range media {
+		if _, err := s.db.DiscardPendingPublicationFile(ctx, pub, path, reason); err != nil {
+			return err
+		}
+	}
 	return nil
+}
+
+// wantsSettled reports that nothing still wants what a download was grabbed
+// for: each of its wantables is filled in the library at its profile's
+// standard (or no longer monitored), or the want's current attempt is
+// another download that imported. A download that names no wantable is not
+// settled (its import decides).
+func (s *Service) wantsSettled(ctx context.Context, dl sqlite.Download) bool {
+	if len(dl.WantableIDs) == 0 {
+		return false
+	}
+	attempts, err := s.db.WantableAttempts(ctx, dl.WantableIDs)
+	if err != nil {
+		return false
+	}
+	for _, id := range dl.WantableIDs {
+		if a, ok := attempts[id]; ok && a.DownloadID != dl.ID {
+			if other, err := s.db.GetDownload(ctx, a.DownloadID); err == nil && (other.State == "imported" || other.State == "notified") {
+				continue
+			}
+		}
+		fresh, err := s.wantableFromID(ctx, id)
+		if err != nil {
+			return false
+		}
+		if !fresh.Monitored() {
+			continue
+		}
+		profile, err := s.db.GetProfile(ctx, fresh.ProfileID())
+		if err != nil || wants(profile, fresh) {
+			return false
+		}
+	}
+	return true
 }
 
 // isPublicationMedia reports a path that is media of any kind Curator

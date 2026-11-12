@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/pjunod/monarr/internal/infra/sqlite"
 	"github.com/pjunod/monarr/internal/ports"
@@ -126,20 +127,7 @@ func (s *Service) adoptDirectory(ctx context.Context, path string) (ok, orphan b
 		return false, false, err
 	}
 	if !found {
-		reason := fmt.Sprintf("%s %s (Runner job %d): the attempt is gone from Curator's records and its want was grabbed again; nothing can import it, so it is not kept", orphanReasonPrefix, mf.Transfer, mf.Job)
-		files := make([]sqlite.PublicationFile, 0, len(m.Files))
-		for _, f := range m.Files {
-			files = append(files, sqlite.PublicationFile{Path: f.Path, Bytes: f.Bytes, SHA256: f.SHA256})
-		}
-		_, inserted, err := s.db.RecordOrphanPublication(ctx, sqlite.PublicationWrite{Generation: mf.Generation, Kind: "completed", Path: path,
-			RemotePath: path, ManifestJSON: string(rawManifest), Source: "file", CrossVolume: mf.CrossVolume, Cohort: "live"}, files, reason)
-		if err != nil || !inserted {
-			return false, false, err
-		}
-		_ = s.db.AddHistory(ctx, "publication_orphaned", 0, filepath.Base(path),
-			map[string]any{"publication": path, "transfer": mf.Transfer, "job": mf.Job, "generation": mf.Generation, "reason": reason})
-		s.log.Warn("adoption: Runner publication has no download row; its files are not kept", "path", path, "transfer", mf.Transfer, "job", mf.Job)
-		return true, true, nil
+		return s.adoptOrphan(ctx, path, mf, rawManifest)
 	}
 	cfg, err := s.db.GetDownloadClient(ctx, dl.ClientID)
 	if err != nil {
@@ -151,20 +139,50 @@ func (s *Service) adoptDirectory(ctx context.Context, path string) (ok, orphan b
 	}
 	pub := &ports.RunnerPublication{Path: remote, Generation: mf.Generation, ManifestDigest: mf.Digest, Files: len(m.Files),
 		CrossVolume: mf.CrossVolume, Kind: "completed", Manifest: &m}
-	f := ports.RunnerFact{Transfer: dl.Transfer, Publication: pub, Source: "completed-root scan"}
-	switch {
-	case dl.RunnerOutcome == ports.OutcomeFailed || dl.State == "failed" || dl.State == "imported" || dl.State == "notified":
-		// A row whose terminal is written: the directory is a salvage or a
+	if !rowTerminal(dl) {
+		// The row has no terminal yet: only Runner says how the transfer
+		// ended. Its request receipt is asked; nothing is inferred from the
+		// directory. Unreachable, unknown or not yet terminal: the next
+		// pass asks again.
+		feeds, ok := runnerFeedsOf(s.newClient(cfg))
+		if !ok {
+			return false, false, nil
+		}
+		adm, known, err := feeds.GetRequestAdmission(ctx, dl.Transfer)
+		if err != nil || !known {
+			return false, false, nil
+		}
+		t, terminal := admissionTerminal(adm)
+		if !terminal {
+			return false, false, nil
+		}
+		if t.Outcome == ports.OutcomeCompleted && t.Publication != nil && ports.MapRemotePath(cfg.PathMappings, t.Publication.Path) == path {
+			// Runner confirms this directory is the transfer's completed
+			// publication: recorded as the terminal would have been.
+			t.Publication = pub
+		}
+		if err := s.observe(ctx, dl, cfg, ports.RunnerFact{Kind: ports.FactTerminal, Transfer: dl.Transfer, Handle: ports.Handle(adm.JobID),
+			Terminal: &t, Source: "completed-root scan (request receipt)"}); err != nil {
+			return false, false, err
+		}
+		if dl, err = s.db.GetDownload(ctx, dl.ID); err != nil {
+			return false, false, err
+		}
+	}
+	if _, claimed, err := s.db.PublicationByPath(ctx, path); err != nil {
+		return false, false, err
+	} else if !claimed {
+		if !rowTerminal(dl) {
+			return false, false, nil
+		}
+		// A row whose terminal Runner gave (failed, cancelled, or completed
+		// with its publication elsewhere): the directory is a salvage or a
 		// late publication of it, imported under the row as the feed's
 		// publication_ready would be.
 		pub.Kind = "salvage"
-		f.Kind = ports.FactPublicationReady
-	default:
-		f.Kind = ports.FactTerminal
-		f.Terminal = &ports.RunnerTerminal{Outcome: ports.OutcomeCompleted, Salvage: "none", Publication: pub}
-	}
-	if err := s.observe(ctx, dl, cfg, f); err != nil {
-		return false, false, err
+		if err := s.observe(ctx, dl, cfg, ports.RunnerFact{Kind: ports.FactPublicationReady, Transfer: dl.Transfer, Publication: pub, Source: "completed-root scan"}); err != nil {
+			return false, false, err
+		}
 	}
 	p, claimedNow, err := s.db.PublicationByPath(ctx, path)
 	if err != nil || !claimedNow {
@@ -172,6 +190,68 @@ func (s *Service) adoptDirectory(ctx context.Context, path string) (ok, orphan b
 	}
 	s.log.Info("adoption: Runner publication attributed to its download", "path", path, "download", dl.ID, "publication", p.ID, "kind", p.Kind)
 	return true, false, nil
+}
+
+// rowTerminal reports a row whose Runner terminal is written.
+func rowTerminal(dl sqlite.Download) bool {
+	return (dl.RunnerOutcome != "" && !dl.Provisional) || dl.State == "failed" || dl.State == "imported" || dl.State == "notified"
+}
+
+// orphanMinAge is how long a committed directory must have sat with no row
+// before it is an orphan: a transfer Curator is still recording (a restore,
+// a row written after the submit) has its row by then.
+const orphanMinAge = 24 * time.Hour
+
+// adoptOrphan records a committed directory whose Curator transfer token has
+// no row, once it is old enough and every enabled Runner client confirms the
+// token is unknown to it or terminal (none says it is still running). An
+// unreachable Runner, or none configured, means the next pass asks again.
+func (s *Service) adoptOrphan(ctx context.Context, path string, mf runnerManifestFile, rawManifest []byte) (bool, bool, error) {
+	info, err := os.Stat(filepath.Join(path, ports.ManifestFileName))
+	if err != nil || time.Since(info.ModTime()) < orphanMinAge {
+		return false, false, nil
+	}
+	clients, err := s.db.ListDownloadClients(ctx)
+	if err != nil {
+		return false, false, err
+	}
+	asked := 0
+	for _, cfg := range clients {
+		if !cfg.Enabled {
+			continue
+		}
+		feeds, ok := runnerFeedsOf(s.newClient(cfg))
+		if !ok {
+			continue
+		}
+		adm, known, err := feeds.GetRequestAdmission(ctx, mf.Transfer)
+		if err != nil {
+			return false, false, nil
+		}
+		if known {
+			if _, terminal := admissionTerminal(adm); !terminal {
+				return false, false, nil
+			}
+		}
+		asked++
+	}
+	if asked == 0 {
+		return false, false, nil
+	}
+	reason := fmt.Sprintf("%s %s (Runner job %d): the attempt is gone from Curator's records, Runner reports it unknown or ended, and its want was grabbed again; nothing can import it, so it is not kept", orphanReasonPrefix, mf.Transfer, mf.Job)
+	files := make([]sqlite.PublicationFile, 0, len(mf.Files))
+	for _, f := range mf.Files {
+		files = append(files, sqlite.PublicationFile{Path: f.Path, Bytes: f.Bytes, SHA256: f.SHA256})
+	}
+	_, inserted, err := s.db.RecordOrphanPublication(ctx, sqlite.PublicationWrite{Generation: mf.Generation, Kind: "completed", Path: path,
+		RemotePath: path, ManifestJSON: string(rawManifest), Source: "file", CrossVolume: mf.CrossVolume, Cohort: "live"}, files, reason)
+	if err != nil || !inserted {
+		return false, false, err
+	}
+	_ = s.db.AddHistory(ctx, "publication_orphaned", 0, filepath.Base(path),
+		map[string]any{"publication": path, "transfer": mf.Transfer, "job": mf.Job, "generation": mf.Generation, "reason": reason})
+	s.log.Warn("adoption: Runner publication has no download row; its files are not kept", "path", path, "transfer", mf.Transfer, "job", mf.Job)
+	return true, true, nil
 }
 
 // unmapLocalPath is MapRemotePath backwards: Curator's view of a path as the

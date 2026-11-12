@@ -112,6 +112,15 @@ func (s *Service) CleanupPayloads(ctx context.Context) error {
 	if _, err := s.closeRecordOnlyPublications(ctx); err != nil {
 		s.log.Warn("cleanup: closing record-only publications failed", "err", err)
 	}
+	// Every waiting publication is offered (or ended) here too, so none
+	// depends on its client's poll; and rows hidden for a pending salvage
+	// are settled from Runner.
+	if _, _, err := s.offerWaitingPublications(ctx); err != nil {
+		s.log.Warn("cleanup: offering waiting publications failed", "err", err)
+	}
+	if _, err := s.settlePendingSalvages(ctx); err != nil {
+		s.log.Warn("cleanup: settling pending salvages failed", "err", err)
+	}
 	// Adoption next: a committed directory no publication claims gets one
 	// (attributed, or orphaned and discarded), and the sweep below retires
 	// an orphan in the same pass.

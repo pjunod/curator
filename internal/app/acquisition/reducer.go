@@ -312,7 +312,9 @@ func (s *Service) recordTerminalWith(ctx context.Context, dl sqlite.Download, cf
 			return false, nil
 		}
 		mapped := ports.MapRemotePath(cfg.PathMappings, pub.Path)
-		if s.isPayloadContainer(ctx, mapped) {
+		if container, err := s.isPayloadContainer(ctx, mapped); err != nil {
+			return false, err // roots unreadable: the fact is read again
+		} else if container {
 			// A completed root or its storage container is never one
 			// payload: refused, like a completion without its publication;
 			// the real path arrives with history or the deliveries feed.
@@ -506,7 +508,9 @@ func (s *Service) recordSalvage(ctx context.Context, dl sqlite.Download, cfg por
 	if strings.TrimSpace(mapped) == "" {
 		return nil
 	}
-	if s.isPayloadContainer(ctx, mapped) {
+	if container, err := s.isPayloadContainer(ctx, mapped); err != nil {
+		return err
+	} else if container {
 		s.log.Warn("runner salvage path refused: it is a completed root or its storage container", "download", dl.ID, "path", mapped, "source", source)
 		return nil
 	}
