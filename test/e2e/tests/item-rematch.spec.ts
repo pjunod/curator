@@ -11,7 +11,7 @@ const newPath = '/20t/movies/Dune (2021) {tmdb-438631}/Dune (2021) [Bluray-2160p
 const ep5 = '/20t/tv/Slow Horses/Season 04/Slow Horses - S04E05 - Five [WEBDL-1080p].mkv'
 const ep6 = '/20t/tv/Slow Horses/Season 04/Slow Horses - S04E06 - Six [WEBDL-1080p].mkv'
 
-async function fixture(page: Page) {
+async function fixture(page: Page, opts: { running?: boolean } = {}) {
   const calls: { preview: unknown[]; start: unknown[]; cancel: number } = { preview: [], start: [], cancel: 0 }
   await page.route('**/api/v1/library/4243', route => route.fulfill({ json: {
     id: 4243, kind: 'movie', title: 'Dune', year: 1984, monitored: true, path: '/20t/movies/Dune (1984)',
@@ -35,7 +35,7 @@ async function fixture(page: Page) {
     { kind: 'movie', tmdbId: 438631, title: 'Dune', year: 2021, overview: '', posterPath: '', inLibrary: false },
     { kind: 'movie', tmdbId: 693134, title: 'Dune: Part Two', year: 2024, overview: '', posterPath: '', inLibrary: false },
   ] }))
-  const base = { leftOut: [], blocklist: [], blocklistOn: true, sourceRevision: 7, targetRevision: 0, fingerprint: 'fp-1' }
+  const base = { leftOut: [], unresolved: 0, blocklist: [], blocklistOn: true, sourceRevision: 7, targetRevision: 0, fingerprint: 'fp-1' }
   await page.route('**/api/v1/library/4243/rematch/preview', async route => {
     calls.preview.push(route.request().postDataJSON())
     await route.fulfill({ json: { ...base,
@@ -48,6 +48,12 @@ async function fixture(page: Page) {
   })
   let stopped = false
   await page.route('**/api/v1/library/4243/rematch', async route => {
+    if (route.request().method() === 'GET') {
+      // The open operation for the item: one already copying, or none.
+      return opts.running
+        ? route.fulfill({ json: { operationId: 'rm-1', requestId: 'r', state: 'moving', sourceItemId: 4243, targetItemId: 5000, bytesDone: 12_000_000_000, bytesTotal: 60_000_000_000, cinema: [] } })
+        : route.fulfill({ status: 204, body: '' })
+    }
     calls.start.push(route.request().postDataJSON())
     await route.fulfill({ status: 202, json: { operationId: 'rm-1', requestId: 'r', state: 'moving', sourceItemId: 4243, targetItemId: 5000, bytesDone: 0, bytesTotal: 60_000_000_000 } })
   })
@@ -74,6 +80,7 @@ async function fixture(page: Page) {
       sourceOutcome: 'stays', sourceReason: 'the files stay in Slow Horses', summary: 'Move 1 file' } })
   })
   await page.route('**/api/v1/library/4244/rematch', async route => {
+    if (route.request().method() === 'GET') return route.fulfill({ status: 204, body: '' })
     calls.start.push(route.request().postDataJSON())
     await route.fulfill({ status: 202, json: { operationId: 'rm-2', requestId: 'r2', state: 'complete', sourceItemId: 4244, targetItemId: 4244, bytesDone: 0, bytesTotal: 0,
       result: { moved: [{ from: ep5, to: ep6, episodes: [6], mode: 'rename' }], blocklisted: [{ release: 'Slow.Horses.S04E05.1080p.WEB' }] }, cinema: [] } })
@@ -132,6 +139,22 @@ for (const width of [390, 1280]) {
     await dialog.getByRole('button', { name: 'Done' }).click()
     await expect(dialog).toHaveCount(0)
     await expect(trigger).toBeFocused()
+  })
+
+  test(`Re-match… reopened while a move copies follows it, with Stop, at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 800 })
+    const calls = await fixture(page, { running: true })
+    await page.goto('/library/4243')
+    await page.getByRole('button', { name: 'Re-match…' }).click()
+    const dialog = page.getByRole('dialog', { name: 'Re-match Dune (1984)' })
+    await inViewport(page, dialog.getByRole('status').filter({ hasText: /Copying 11\.2 GB of 55\.9 GB/ }))
+    const stop = dialog.getByRole('button', { name: 'Stop' })
+    await inViewport(page, stop)
+    await stop.click()
+    await expect.poll(() => calls.cancel).toBe(1)
+    await inViewport(page, dialog.getByRole('status').filter({ hasText: 'Stopped. Every file is back where it was.' }))
+    expect(calls.preview.length).toBe(0)
+    expect(calls.start.length).toBe(0)
   })
 
   test(`Move to… moves one episode file to another episode of the same show at ${width}px`, async ({ page }) => {

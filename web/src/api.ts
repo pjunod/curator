@@ -2048,6 +2048,8 @@ export interface RematchMove {
   /** Why it is left out: it stays on disk and leaves the library. */
   problem?: string
   needsPick?: boolean
+  /** Left out by the person: it leaves the library (stays on disk). */
+  leave?: boolean
 }
 export interface RematchBlocked { reason: string; ref: string; itemId: number; message: string; retry: boolean }
 export interface RematchItemRef { id: number; kind: string; title: string; year?: number; inLibrary: boolean; folder?: string; folderChosen?: boolean }
@@ -2069,9 +2071,11 @@ export interface RematchPreview {
   sourceRevision: number
   targetRevision: number
   fingerprint: string
+  /** leftOut lines that need a choice; Move refuses while it is not 0. */
+  unresolved: number
   summary: string
 }
-export type RematchState = 'planned' | 'moving' | 'moved' | 'committed' | 'notified' | 'complete' | 'cancel_pending' | 'cancelled' | 'failed'
+export type RematchState = 'planned' | 'moving' | 'moved' | 'committed' | 'complete' | 'cancel_pending' | 'cancelled' | 'failed'
 export interface RematchResult {
   moved?: { from: string; to: string; episodes?: number[]; mode: string }[]
   leftOut?: string[]
@@ -2097,5 +2101,7 @@ export const previewRematch = (itemId: number, req: RematchRequest) =>
   send<RematchPreview>('POST', `/library/${itemId}/rematch/preview`, req)
 export const startRematch = (itemId: number, req: RematchRequest) =>
   send<RematchOperation>('POST', `/library/${itemId}/rematch`, req)
+/** The open Re-match for an item; undefined when there is none (204). */
+export const getLibraryRematch = (itemId: number) => send<RematchOperation | undefined>('GET', `/library/${itemId}/rematch`).then((op) => op ?? null)
 export const getRematch = (operationId: string) => get<RematchOperation>(`/rematch/${encodeURIComponent(operationId)}`)
 export const cancelRematch = (operationId: string) => send<void>('POST', `/rematch/${encodeURIComponent(operationId)}/cancel`)

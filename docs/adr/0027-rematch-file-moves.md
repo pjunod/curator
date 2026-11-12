@@ -38,7 +38,8 @@ file between items, and Cinema cannot be told that a path went away
    with `kind: rematch_move` (ADR 0021 journal; states `rematch_planned → rematch_moved → rematch_committed → rematch_done`, never the import's `prepared|committed|retained`, so no import path reads them) plus a `rematch_operations`
    row (operation id, request id + fingerprint like `CreateReplacement`,
    state, per-file result). States: `planned → moving → moved →
-   committed → notified → complete | cancelled | failed`. Journal before
+   committed → complete`, or `cancel_pending → cancelled | failed`
+   (cinema's confirmation is the sub-deliveries' own `visible_at`). Journal before
    the filesystem step; one SQLite transaction commits file rows and
    file-episode links to the target, writes history, the blocklist entry
    (item 7) and the outbox rows (item 9), and bumps `lifecycle_item_revision`
@@ -85,8 +86,9 @@ file between items, and Cinema cannot be told that a path went away
 8. **Shapes.** *Multi-episode files* move whole and map to every episode they
    covered (n:m, ADR 0002); a target missing any of those episodes puts the
    file in the picker or leaves it out; it is never split. Files that do not
-   fit the new title are listed with a picker, or left out: left-out files
-   stay on disk and are removed from the library (history records them).
+   fit the new title are listed with a picker; until each is picked or
+   explicitly left out nothing moves. Only an explicitly left-out file stays
+   on disk and is removed from the library (history records it).
    *Books:* a move is between editions of the same medium (ADR 0018); the
    parts of a multipart audiobook move as one unit; work/edition ids go to
    Cinema. *Manual entries* (ADR 0012) may be source or target; nothing here
@@ -168,6 +170,29 @@ file between items, and Cinema cannot be told that a path went away
   `present` forever.
 - **The request** names the event as `"event": "moved"`; `source` stays
   `monarr`.
+- **Driven until terminal.** Open operations are driven by a worker
+  started with the importers (immediately, then every 30 s), admitted as
+  work so a deployment drain sees them; titles busy with an import are
+  waited for and the operation says so. An operation completes only when
+  every move is `rematch_done` (copied originals removed, replaced files
+  gone); a rollback that cannot put a file back stays `cancel_pending`,
+  naming what is where. Either is retried on every pass. Finished
+  operations' journal rows are pruned.
+- **Scans.** A library scan skips the titles of an open operation and the
+  folder it chose.
+- **Cinema requests.** Expected files are split across requests like
+  removed paths (≤ 64 and ≤ 16 KiB each), so every file is probed. Whether a
+  request carried `removed_paths` is stored on the row
+  (`notifier_deliveries.removed_sent`). Cinema's features are re-read before
+  a moved request unless read in the last 10 minutes; a stored
+  `removed_paths` that cannot be confirmed holds the request (retried), never
+  a common-parent request on a stale feature.
+- **Replacements cannot be cancelled.** A replacement waiting for a release
+  or blocked on cleanup holds the title; the blocker says so instead of
+  promising that waiting ends it.
+- **Following a running move.** `GET /library/{id}/rematch` is the item's
+  open operation; the dialog follows it (progress, Stop) when reopened, and
+  a preview blocked by another move offers *Show its progress*.
 - **Mobile** has no per-file Files panel; its Re-match sheet chooses all
   files or one file (Move to…).
 - **Status panel.** The operation's bytes, Stop and Cinema confirmation

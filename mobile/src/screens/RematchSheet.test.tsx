@@ -33,12 +33,12 @@ describe('RematchSheet', () => {
     const preview = (chosen: boolean) => ({ source: { id: 4244, kind: 'series', title: 'Slow Horses', inLibrary: true }, target: { id: 4244, kind: 'series', title: 'Slow Horses', inLibrary: true },
       moves: [{ fileId: 61, from: ep5, to: chosen ? ep6 : ep5, season: 4, episodes: [chosen ? 6 : 5], mode: chosen ? 'rename' : 'relink', bytes: 10 }], leftOut: [],
       sourceOutcome: 'stays', sourceReason: 'the files stay in Slow Horses', blocklist: [], blocklistOn: true,
-      episodes: [{ season: 4, episode: 5, hasFile: true }, { season: 4, episode: 6, hasFile: false }], sourceRevision: 3, targetRevision: 3, fingerprint: chosen ? 'fp6' : 'fp5', summary: 'Move 1 file' })
+      episodes: [{ season: 4, episode: 5, hasFile: true }, { season: 4, episode: 6, hasFile: false }], sourceRevision: 3, targetRevision: 3, fingerprint: chosen ? 'fp6' : 'fp5', unresolved: 0, summary: 'Move 1 file' })
     const client = {
       getLibrary: vi.fn().mockResolvedValue([]), searchMetadata: vi.fn().mockResolvedValue([]),
       previewRematch: vi.fn().mockImplementation((_: number, req: { choices?: { episodes?: number[] }[] }) => Promise.resolve(preview(req.choices?.[0]?.episodes?.[0] === 6))),
       startRematch: vi.fn().mockResolvedValue({ operationId: 'rm-2', state: 'complete', bytesDone: 0, bytesTotal: 0, result: { moved: [{ from: ep5, to: ep6 }] }, cinema: [] }),
-      getRematch: vi.fn(), cancelRematch: vi.fn(),
+      getRematch: vi.fn(), cancelRematch: vi.fn(), getLibraryRematch: vi.fn().mockResolvedValue(null),
     }
     await act(async () => { renderer = create(<RematchSheet client={client as unknown as MonarrClient} item={item} onClose={vi.fn()} />) })
     await act(async () => { find(Chip, 'Move Slow Horses - S04E05').props.onPress() })
@@ -53,5 +53,22 @@ describe('RematchSheet', () => {
       choices: [{ fileId: 61, season: 4, episodes: [6] }], fingerprint: 'fp6', sourceRevision: 3, targetRevision: 3 }))
     expect(texts()).toContain('Moved 1 file.')
     expect(find(Button, 'Done')).toBeTruthy()
+  })
+
+  it('follows a move already running for the item, with Stop', async () => {
+    const running = { operationId: 'rm-1', state: 'moving', bytesDone: 1024, bytesTotal: 4096, cinema: [] }
+    const client = {
+      getLibrary: vi.fn().mockResolvedValue([]), searchMetadata: vi.fn().mockResolvedValue([]), previewRematch: vi.fn(),
+      startRematch: vi.fn(), getLibraryRematch: vi.fn().mockResolvedValue(running),
+      getRematch: vi.fn().mockResolvedValue({ ...running, state: 'cancelled' }), cancelRematch: vi.fn().mockResolvedValue(undefined),
+    }
+    await act(async () => { renderer = create(<RematchSheet client={client as unknown as MonarrClient} item={item} onClose={vi.fn()} />) })
+    await flush()
+    expect(texts().some((t) => t.startsWith('Copying'))).toBe(true)
+    await act(async () => { find(Button, 'Stop').props.onPress() })
+    await flush()
+    expect(client.cancelRematch).toHaveBeenCalledWith('rm-1')
+    expect(texts()).toContain('Stopped. Every file is back where it was.')
+    expect(client.startRematch).not.toHaveBeenCalled()
   })
 })

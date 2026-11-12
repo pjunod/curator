@@ -6,6 +6,7 @@ import {
   cancelRematch,
   fmtBytes,
   getLibrary,
+  getLibraryRematch,
   getRematch,
   previewRematch,
   searchMetadata,
@@ -22,7 +23,7 @@ import { episodeToken, rematchCandidates, type RematchCandidate } from './rematc
 import './RematchDialog.css'
 
 const MODE_TEXT = { rename: 'renamed (same volume)', copy: 'copied across volumes, verified, then the original removed', relink: 'already named this; only the library changes' }
-const RUNNING = new Set(['planned', 'moving', 'moved', 'committed', 'notified', 'cancel_pending'])
+const RUNNING = new Set(['planned', 'moving', 'moved', 'committed', 'cancel_pending'])
 
 /**
  * Re-match… (every file of the item) and Move to… (one file): choose the
@@ -58,8 +59,10 @@ export function RematchDialog({ item, file, onClose }: { item: MediaItemDetail; 
     retry: false,
   })
   const run = useMutation({
-    mutationFn: (p: RematchPreview) => startRematch(item.id, {
-      ...request!, requestId: `rematch-${item.id}-${p.fingerprint}-${Date.now()}`,
+    // One request id per preview: a retry of the same click is the same
+    // request, and the server answers with the operation it already started.
+    mutationFn: ({ p, requestId }: { p: RematchPreview; requestId: string }) => startRematch(item.id, {
+      ...request!, requestId,
       sourceRevision: p.sourceRevision, targetRevision: p.targetRevision, fingerprint: p.fingerprint,
     }),
     onSuccess: (op) => setOperation(op),
@@ -82,6 +85,15 @@ export function RematchDialog({ item, file, onClose }: { item: MediaItemDetail; 
   const stop = useMutation({ mutationFn: () => cancelRematch(op!.operationId), onSuccess: () => void status.refetch() })
 
   const p = preview.data
+  const fingerprint = p?.fingerprint ?? ''
+  const requestId = useMemo(() => (fingerprint ? `rematch-${item.id}-${fingerprint}-${Math.random().toString(36).slice(2, 10)}` : ''), [item.id, fingerprint])
+  // A move already running for this item (the dialog was closed while it
+  // copied) is followed here: progress and Stop, not a "wait".
+  const open = useQuery({ queryKey: ['library-rematch', item.id], queryFn: () => getLibraryRematch(item.id), enabled: !operation, retry: false })
+  useEffect(() => {
+    if (open.data && !operation) setOperation(open.data)
+  }, [open.data, operation])
+  const follow = (operationId: string) => setOperation({ operationId, requestId: '', state: 'planned', sourceItemId: item.id, targetItemId: 0, bytesDone: 0, bytesTotal: 0 })
   const pick = (m: RematchMove, value: string) => {
     setChoices((prev) => {
       const next = { ...prev }
@@ -185,7 +197,7 @@ export function RematchDialog({ item, file, onClose }: { item: MediaItemDetail; 
                     <span className="rmd-to">
                       <span className="warning-text">{m.problem}</span>
                       {episodeSelect(m)}
-                      {!m.needsPick && !choices[m.fileId]?.leave ? null : <span className="muted">Left out: it stays on disk and leaves the library.</span>}
+                      {m.leave ? null : <span className="muted">Choose an episode or Leave it out; until then nothing moves and this file stays where it is.</span>}
                     </span>
                   </li>
                 ))}
@@ -201,7 +213,10 @@ export function RematchDialog({ item, file, onClose }: { item: MediaItemDetail; 
               {p.cinema && <span className={p.cinema.includes('does not support') ? 'warning-text' : 'muted'}>{p.cinema}.</span>}
               {p.blocked && (
                 <div className="banner warning" role="alert">
-                  {p.blocked.message}. <button type="button" onClick={() => void preview.refetch()}>Wait for it</button>
+                  {p.blocked.message}.{' '}
+                  {p.blocked.reason === 'rematch'
+                    ? <button type="button" onClick={() => follow(p.blocked!.ref)}>Show its progress</button>
+                    : <button type="button" onClick={() => void preview.refetch()}>Wait for it</button>}
                 </div>
               )}
               {run.isError && <div className="banner warning" role="alert">{(run.error as Error).message}</div>}
@@ -209,8 +224,8 @@ export function RematchDialog({ item, file, onClose }: { item: MediaItemDetail; 
                 <span className="muted">{p.moves.length} file{p.moves.length === 1 ? '' : 's'}{p.leftOut.length ? `, ${p.leftOut.length} left out` : ''}</span>
                 <div className="row-actions">
                   <button type="button" onClick={onClose}>Cancel</button>
-                  <button type="button" className="btn-accent" disabled={Boolean(p.blocked) || run.isPending || preview.isFetching || (p.moves.length === 0 && p.leftOut.length === 0)}
-                    onClick={() => run.mutate(p)}>
+                  <button type="button" className="btn-accent" disabled={Boolean(p.blocked) || run.isPending || preview.isFetching || p.unresolved > 0 || p.moves.length === 0}
+                    onClick={() => run.mutate({ p, requestId })}>
                     {run.isPending ? 'Starting…' : file ? 'Move' : p.summary}
                   </button>
                 </div>
@@ -234,12 +249,14 @@ function RematchProgress({ op, stopping, onStop, stopError, onClose }: { op: Rem
     case 'complete': text = `Moved ${r.moved?.length ?? 0} file${r.moved?.length === 1 ? '' : 's'}.`; break
     case 'cancelled': text = 'Stopped. Every file is back where it was.'; break
     case 'failed': text = `Nothing moved: ${op.lastError ?? 'the move failed'}. Every file is back where it was.`; break
-    case 'cancel_pending': text = 'Stopping…'; break
+    case 'cancel_pending': text = 'Stopping: putting the moved files back…'; break
+    case 'committed': text = 'Files in place; finishing (removing originals and replaced files)…'; break
     default: text = op.bytesTotal > 0 ? `Copying ${fmtBytes(op.bytesDone)} of ${fmtBytes(op.bytesTotal)}…` : 'Moving…'
   }
   return (
     <div className="rmd-progress">
       <ActionNotice warning={op.state === 'failed'}>{text}</ActionNotice>
+      {running && op.lastError && <p className="warning-text">{op.lastError}</p>}
       {op.bytesTotal > 0 && running && <progress max={op.bytesTotal} value={op.bytesDone} aria-label="Bytes copied" />}
       {r.failed && r.failed.length > 0 && <p className="warning-text">Not moved, needs review: {r.failed.map((f) => `${f.from} (${f.to})`).join('; ')}</p>}
       {r.leftOut && r.leftOut.length > 0 && <p className="muted">Left out (still on disk, no longer in the library): {r.leftOut.join(', ')}</p>}

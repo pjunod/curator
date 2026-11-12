@@ -533,6 +533,7 @@ export interface RematchMove {
   replaces?: { fileId: number; path: string; quality?: string }[]
   problem?: string
   needsPick?: boolean
+  leave?: boolean
 }
 export interface RematchItemRef { id: number; kind: string; title: string; year?: number; inLibrary: boolean; folder?: string; folderChosen?: boolean }
 export interface RematchPreview {
@@ -552,11 +553,12 @@ export interface RematchPreview {
   sourceRevision: number
   targetRevision: number
   fingerprint: string
+  unresolved: number
   summary: string
 }
 export interface RematchOperation {
   operationId: string
-  state: 'planned' | 'moving' | 'moved' | 'committed' | 'notified' | 'complete' | 'cancel_pending' | 'cancelled' | 'failed'
+  state: 'planned' | 'moving' | 'moved' | 'committed' | 'complete' | 'cancel_pending' | 'cancelled' | 'failed'
   bytesDone: number
   bytesTotal: number
   lastError?: string

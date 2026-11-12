@@ -658,6 +658,8 @@ Body as today (`source: "monarr"`), plus `"event": "moved"` and:
 - `"removed_paths": ["/lib/movies/Dune (1984)/Dune.1984.mkv", …]` — files
   (or a folder, once emptied and removed) that no longer exist. Each must be
   under `path`. Max 64 per request (as `expected_files`), then more requests.
+  Because such a request is probe-only, curator splits `expected_files`
+  across the same requests too, so every expected file is probed.
 - `"expected_files"` as today, the files now at the destination.
 - `path` is the **common parent** of every expected and removed path, which
   must be a library root or below one. If the old and new folders sit under

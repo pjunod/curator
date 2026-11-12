@@ -664,10 +664,11 @@ Nothing moves until you have read the preview. It lists:
 - how the bytes get there: a **rename** on one volume; across volumes a
   **copy**, verified (size and SHA-256) and published, then the original
   removed. A file already at a destination is never overwritten: that file
-  is listed as left out, with a picker on a series.
-- files that do not fit, with an episode picker, or *Leave it out*. A left-out
-  file stays on disk and leaves the library. A file covering two episodes
-  maps to two episodes, never split.
+  needs a choice, with a picker on a series.
+- files that do not fit, with an episode picker, or *Leave it out*. Until
+  every such file is picked or left out, **Move** waits and nothing moves.
+  Only a file you leave out leaves the library (it stays on disk). A file
+  covering two episodes maps to two episodes, never split.
 - what happens to the item the files leave: it **stays** (wanted) if you
   added it or it still has files or downloads; it is **removed** only when
   folder adoption created it and it is now empty, along with its emptied
@@ -686,14 +687,20 @@ Nothing moves until you have read the preview. It lists:
 
 The preview refuses while either title has a download in flight, an import
 running, a replacement open or another move running, and names which;
-**Wait for it** previews again. A preview that the library has since moved
+**Wait for it** previews again (another move offers *Show its progress*
+instead). A replacement waiting for a release can hold a title for a long
+time and cannot be cancelled; the message says so. A preview that the library has since moved
 past is refused when you press Move: preview again.
 
-After **Move**, the dialog shows bytes copied and **Stop**. Stop before the
+After **Move**, the dialog shows bytes copied and **Stop**; close it and
+reopen **Re-match…** to follow the move again. Stop before the
 files are committed puts every moved file back (a copy's partial file is
 removed, the original never touched). A restart mid-move resumes from the
 journal; a file that changed on disk since the preview is not moved and is
-listed for review. Both items' history show a `rematched` entry with every
+listed for review. A move is finished only when the copied originals and
+replaced files are gone; anything that could not be removed (or, after
+Stop, put back) is named in the dialog and retried every 30 seconds. A
+library scan leaves both titles alone while a move runs. Both items' history show a `rematched` entry with every
 path that moved, and the dialog shows *Moved, cinema confirming* until
 cinema reports the new files placed and the old paths gone.
 

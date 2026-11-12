@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Modal, ScrollView, StyleSheet, Switch, Text, View } from 'react-native'
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context'
 import type { MonarrClient } from '../api'
@@ -8,7 +8,7 @@ import { episodeToken, rematchCandidates, type RematchCandidate } from '../remat
 import { useTheme } from '../theme'
 import type { MediaItemDetail, MediaItemSummary, RematchChoice, RematchMove, RematchOperation, RematchPreview, RematchTarget, SearchResult } from '../types'
 
-const RUNNING = new Set(['planned', 'moving', 'moved', 'committed', 'notified', 'cancel_pending'])
+const RUNNING = new Set(['planned', 'moving', 'moved', 'committed', 'cancel_pending'])
 const MODE_TEXT = { rename: 'renamed (same volume)', copy: 'copied across volumes, verified, then the original removed', relink: 'already named this; only the library changes' }
 
 /**
@@ -64,11 +64,29 @@ export function RematchSheet({ client, item, onClose }: { client: MonarrClient; 
     return () => clearTimeout(timer)
   }, [client, op])
 
+  // One request id per preview, so a retried tap is the same request.
+  const requestIds = useRef(new Map<string, string>())
+  const requestIdFor = (fingerprint: string) => {
+    let id = requestIds.current.get(fingerprint)
+    if (!id) {
+      id = `rematch-${item.id}-${fingerprint}-${Math.random().toString(36).slice(2, 10)}`
+      requestIds.current.set(fingerprint, id)
+    }
+    return id
+  }
+  // A move already running for this item is followed: progress and Stop.
+  useEffect(() => {
+    let live = true
+    void client.getLibraryRematch(item.id).then((open) => { if (live && open) setOp((cur) => cur ?? open) }).catch(() => undefined)
+    return () => { live = false }
+  }, [client, item.id])
+  const follow = (operationId: string) => { void client.getRematch(operationId).then(setOp).catch((cause) => setStartError(cause instanceof Error ? cause.message : 'Could not read that move.')) }
+
   const start = async (p: RematchPreview) => {
     setStarting(true)
     setStartError('')
     try {
-      setOp(await client.startRematch(item.id, { ...JSON.parse(requestKey), requestId: `rematch-${item.id}-${p.fingerprint}-${Date.now()}`,
+      setOp(await client.startRematch(item.id, { ...JSON.parse(requestKey), requestId: requestIdFor(p.fingerprint),
         sourceRevision: p.sourceRevision, targetRevision: p.targetRevision, fingerprint: p.fingerprint }))
     } catch (cause) {
       setStartError(cause instanceof Error ? cause.message : 'Could not start the move.')
@@ -176,7 +194,9 @@ export function RematchSheet({ client, item, onClose }: { client: MonarrClient; 
                 {p.cinema ? <Text style={{ color: p.cinema.includes('does not support') ? theme.warning : theme.muted }}>{p.cinema}.</Text> : null}
                 {p.blocked ? <>
                   <InlineError message={p.blocked.message} />
-                  <Button secondary compact label="Wait for it" onPress={() => setNonce((n) => n + 1)} />
+                  {p.blocked.reason === 'rematch'
+                    ? <Button secondary compact label="Show its progress" onPress={() => follow(p.blocked!.ref)} />
+                    : <Button secondary compact label="Wait for it" onPress={() => setNonce((n) => n + 1)} />}
                 </> : null}
               </> : null}
               <InlineError message={startError} />
@@ -188,7 +208,7 @@ export function RematchSheet({ client, item, onClose }: { client: MonarrClient; 
               <Button label={RUNNING.has(op.state) ? 'Close (keeps running)' : 'Done'} onPress={onClose} />
             </> : (
               <Button label={starting ? 'Starting…' : fileId ? 'Move' : p?.summary ?? 'Move'}
-                disabled={!p || !!p.blocked || starting || preview.loading || (p.moves.length === 0 && p.leftOut.length === 0)}
+                disabled={!p || !!p.blocked || starting || preview.loading || p.unresolved > 0 || p.moves.length === 0}
                 onPress={() => { if (p) void start(p) }} />
             )}
           </SafeAreaView>
@@ -207,12 +227,14 @@ function Progress({ op }: { op: RematchOperation }) {
     case 'complete': text = `Moved ${r.moved?.length ?? 0} file${r.moved?.length === 1 ? '' : 's'}.`; break
     case 'cancelled': text = 'Stopped. Every file is back where it was.'; break
     case 'failed': text = `Nothing moved: ${op.lastError ?? 'the move failed'}. Every file is back where it was.`; break
-    case 'cancel_pending': text = 'Stopping…'; break
+    case 'cancel_pending': text = 'Stopping: putting the moved files back…'; break
+    case 'committed': text = 'Files in place; finishing (removing originals and replaced files)…'; break
     default: text = op.bytesTotal > 0 ? `Copying ${formatBytes(op.bytesDone)} of ${formatBytes(op.bytesTotal)}…` : 'Moving…'
   }
   return (
     <Panel style={styles.line}>
       <Text accessibilityRole="alert" style={{ color: op.state === 'failed' ? theme.error : theme.text }}>{text}</Text>
+      {RUNNING.has(op.state) && op.lastError ? <Text style={{ color: theme.warning }}>{op.lastError}</Text> : null}
       {r.failed?.length ? <Text style={{ color: theme.warning }}>Not moved, needs review: {r.failed.map((f) => f.from).join('; ')}</Text> : null}
       {r.leftOut?.length ? <Text style={{ color: theme.muted }}>Left out (still on disk): {r.leftOut.join(', ')}</Text> : null}
       {r.blocklisted?.length ? <Text style={{ color: theme.muted }}>Blocklisted: {r.blocklisted.map((b) => b.release).join(', ')}</Text> : null}
