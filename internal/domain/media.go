@@ -171,7 +171,7 @@ type MediaItem struct {
 	// OffloadedSeasons counts seasons flagged offloaded, including ones with no
 	// episode rows (list views only).
 	OffloadedSeasons int
-	FileCount         int
+	FileCount        int
 	// Quality is the WEAKEST quality among the primary copy's files, and
 	// Upgrade is what the item's profile makes of it. The weakest rather
 	// than the best because that is the one deciding whether the item is

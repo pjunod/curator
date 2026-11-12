@@ -233,7 +233,7 @@ func (s *Service) cancelOffloadDeliveries(ctx context.Context, sc reacquireScope
 			continue
 		}
 		var keepPaths []string
-		if !(sc.clear == "movie" || stored.Movie) {
+		if sc.clear != "movie" && !stored.Movie {
 			for _, f := range files {
 				if f.Kind != "media" || f.State != "deleted" {
 					continue
