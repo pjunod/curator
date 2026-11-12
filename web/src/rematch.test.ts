@@ -33,5 +33,9 @@ describe('cinemaFeatureState', () => {
     expect(cinemaFeatureState(base).supported).toBeNull()
     expect(cinemaFeatureState({ ...(base as object), features: ['removed_paths'], featuresReadAt: 1 } as never).supported).toBe(true)
     expect(cinemaFeatureState({ ...(base as object), features: [], featuresReadAt: 1 } as never).supported).toBe(false)
+    // Offload is advertised separately from removed_paths (ADR 0028).
+    const withOffload = { ...(base as object), features: ['removed_paths', 'offload'], featuresReadAt: 1 } as never
+    expect(cinemaFeatureState(withOffload, 'offload').supported).toBe(true)
+    expect(cinemaFeatureState({ ...(base as object), features: ['removed_paths'], featuresReadAt: 1 } as never, 'offload').supported).toBe(false)
   })
 })

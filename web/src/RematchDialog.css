@@ -10,6 +10,7 @@
 .rmd-cand.sel { background: var(--bg-hover); }
 .rmd-cand-text { flex: 1; min-width: 0; }
 .rmd-line { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1.3fr); gap: 6px 10px; padding: 10px 12px; overflow-wrap: anywhere; }
+.rmd-line.rmd-file { grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); }
 .rmd-arr { color: var(--text-muted); }
 .rmd-to { display: grid; gap: 4px; justify-items: start; min-width: 0; }
 .rmd-to select { max-width: 100%; }
@@ -19,6 +20,6 @@
 .rmd-progress progress { width: 100%; }
 .rmd-h { font-size: 0.9rem; }
 @media (max-width: 640px) {
-  .rmd-line { grid-template-columns: minmax(0, 1fr); }
+  .rmd-line, .rmd-line.rmd-file { grid-template-columns: minmax(0, 1fr); }
   .rmd-arr { display: none; }
 }

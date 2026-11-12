@@ -37,16 +37,18 @@ import {
   rescanManualEntry,
   setEpisodeMonitored,
   setSeasonMonitored,
+  reacquire,
   updateLibraryItem,
   updateMediaCopy,
 } from '../api'
-import type { BookType, MediaFileInfo, MediaItemDetail, QualityProfile } from '../api'
+import type { BookType, MediaFileInfo, MediaItemDetail, OffloadRequest, QualityProfile } from '../api'
 import { describeAutoSearch } from '../autosearch'
 import { audioUndeterminedNote } from '../language'
 import { DOWNLOAD_PRIORITIES, downloadPriorityLabel } from '../downloadPriority'
 import { ActionDialog, ActionNotice, focusActionTrigger } from '../ActionDialog'
 import { ImportFileDialog } from '../ImportFileDialog'
 import { RematchDialog } from '../RematchDialog'
+import { OffloadDialog } from '../OffloadDialog'
 import { ItemStatusPanel } from '../ItemStatusPanel'
 import { ReleaseSearch } from './ReleaseSearch'
 import { Pager, PageSizePicker, clampPage, sliceForPage } from '../Pager'
@@ -609,6 +611,8 @@ function EditPanel(props: {
           <input
             type="checkbox"
             checked={monitored}
+            disabled={item.kind === 'movie' && Boolean(item.offloaded)}
+            title={item.kind === 'movie' && item.offloaded ? 'Offloaded — use Re-acquire on the item page to get it back' : undefined}
             onChange={(e) => setMonitored(e.target.checked)}
           />
         </label>
@@ -1217,6 +1221,8 @@ export function MediaDetailPage() {
   const [editing, setEditing] = useState(search.assignFolder === true)
   const [importing, setImporting] = useState(false)
   const [rematching, setRematching] = useState(false)
+  // Offload… target: the title, one season or one episode.
+  const [offloading, setOffloading] = useState<{ request: OffloadRequest; label: string } | null>(null)
   // Interactive search target: null = closed. copyId selects an additional
   // quality copy or book edition; zero/absent is the primary target.
   const [searching, setSearching] = useState<{
@@ -1368,6 +1374,22 @@ export function MediaDetailPage() {
     },
   })
 
+  // Re-acquire: clears Offloaded inside the scope, monitors it and searches at
+  // the current profile. The answer is on screen at once (the page notice).
+  const reacq = useMutation({
+    mutationFn: (v: { request: OffloadRequest; label: string }) => reacquire(Number(id), v.request),
+    onSuccess: (res, v) => {
+      setAutoMsg(res.cleared
+        ? `Re-acquire of ${v.label}: ${res.state === 'searching' ? 'searching at the current profile' : res.state.replace('_', ' ')}.`
+        : `${v.label} is not offloaded: ${res.state.replace('_', ' ')}.`)
+      void qc.invalidateQueries({ queryKey: ['library-item', id] })
+      void qc.invalidateQueries({ queryKey: ['library'] })
+      void qc.invalidateQueries({ queryKey: ['wanted'] })
+      void qc.invalidateQueries({ queryKey: ['item-status'] })
+    },
+    onError: (e, v) => setAutoMsg(`✕ could not re-acquire ${v.label}: ${(e as Error).message}`),
+  })
+
   if (item.isLoading) return <p className="muted">Loading…</p>
   if (item.isError || !item.data) return <div className="banner warning">Item not found.</div>
 
@@ -1395,6 +1417,15 @@ export function MediaDetailPage() {
     }
   }
   const comp = completeness(m.kind, epHave, epAired, fileCount)
+  let offloadedEpisodes = 0
+  let allEpisodes = 0
+  for (const season of m.seasons) {
+    for (const e of season.episodes) {
+      allEpisodes++
+      if (e.offloaded || season.offloaded) offloadedEpisodes++
+    }
+  }
+  const showHasFiles = m.files.length > 0
 
   return (
     <>
@@ -1443,6 +1474,12 @@ export function MediaDetailPage() {
               <span className={`pill ${m.monitored ? 'pill-ok' : 'pill-neutral'}`}>
                 {m.monitored ? 'monitored' : 'unmonitored'}
               </span>
+              {m.kind === 'movie' && m.offloaded && <span className="pill pill-warning" title="Files deleted on purpose; the title is kept. Re-acquire to get it back.">offloaded</span>}
+              {m.kind === 'series' && offloadedEpisodes > 0 && (
+                <span className="pill pill-warning" title="Files deleted on purpose; the titles are kept. Re-acquire to get them back.">
+                  {offloadedEpisodes === allEpisodes ? 'offloaded' : `${offloadedEpisodes} episode${offloadedEpisodes === 1 ? '' : 's'} offloaded`}
+                </span>
+              )}
               {m.kind === 'series' && <span className="muted">{monitorLabel(m.monitor)}</span>}
               <span
                 className={`pill ${comp.cls}`}
@@ -1534,6 +1571,16 @@ export function MediaDetailPage() {
             )}
             <button onClickCapture={focusActionTrigger} onClick={() => setImporting(true)}>Import file…</button>
             {m.files.length > 0 && <button onClickCapture={focusActionTrigger} onClick={() => setRematching(true)}>Re-match…</button>}
+            {(m.kind === 'movie' || m.kind === 'series') && showHasFiles && (
+              <button onClickCapture={focusActionTrigger} title="Delete the files and keep the title; Re-acquire gets it back"
+                onClick={() => setOffloading({ request: { scope: 'item' }, label: m.title })}>Offload…</button>
+            )}
+            {((m.kind === 'movie' && m.offloaded) || (m.kind === 'series' && offloadedEpisodes > 0)) && (
+              <button className="btn-accent" disabled={reacq.isPending} title="Clear Offloaded, monitor it again and search at the current profile"
+                onClick={() => reacq.mutate({ request: { scope: 'item' }, label: m.title })}>
+                {reacq.isPending ? 'Re-acquiring…' : 'Re-acquire'}
+              </button>
+            )}
             <button onClickCapture={focusActionTrigger} onClick={() => setEditing(true)}>Edit</button>
             {m.kind !== 'book' && (
               <button
@@ -1615,6 +1662,7 @@ export function MediaDetailPage() {
 
       {importing && <ImportFileDialog item={m} onClose={() => setImporting(false)} />}
       {rematching && <RematchDialog item={m} onClose={() => setRematching(false)} />}
+      {offloading && <OffloadDialog itemId={m.id} title={offloading.label} request={offloading.request} onClose={() => setOffloading(null)} />}
 
       {searching && (
         <ReleaseSearch
@@ -1642,6 +1690,7 @@ export function MediaDetailPage() {
               const have = s.episodes.filter((e) => e.hasFile).length
               const open = openSeasons[s.number] ?? s.number === 1
               const label = s.number === 0 ? 'Specials' : `Season ${s.number}`
+              const seasonOffloaded = Boolean(s.offloaded) || (s.episodes.length > 0 && s.episodes.every((e) => e.offloaded))
               return (
                 <div key={s.number} className="season">
                   <div className="season-head">
@@ -1649,12 +1698,15 @@ export function MediaDetailPage() {
                       type="checkbox"
                       className="monitor-box"
                       title={
-                        s.monitored
-                          ? 'Monitored — untick to stop wanting this season'
-                          : 'Unmonitored — tick to want this season'
+                        s.offloaded
+                          ? 'Offloaded — Re-acquire to get it back'
+                          : s.monitored
+                            ? 'Monitored — untick to stop wanting this season'
+                            : 'Unmonitored — tick to want this season'
                       }
                       aria-label={`Monitor ${label}`}
                       checked={s.monitored}
+                      disabled={Boolean(s.offloaded)}
                       onChange={(e) =>
                         monitorSeason.mutate({ season: s.number, monitored: e.target.checked })
                       }
@@ -1672,8 +1724,16 @@ export function MediaDetailPage() {
                       <span className="muted">
                         {have}/{s.episodes.length} on disk{s.monitored ? '' : ' · unmonitored'}
                       </span>
+                      {seasonOffloaded && <> <span className="pill pill-warning">offloaded</span></>}
                     </button>
-                    <button onClickCapture={focusActionTrigger} onClick={() => setSearching({ season: s.number })}>Search pack</button>
+                    {seasonOffloaded ? (
+                      <button className="btn-accent" disabled={reacq.isPending} onClick={() => reacq.mutate({ request: { scope: 'season', season: s.number }, label })}>Re-acquire</button>
+                    ) : (
+                      <>
+                        <button onClickCapture={focusActionTrigger} onClick={() => setSearching({ season: s.number })}>Search pack</button>
+                        {have > 0 && <button onClickCapture={focusActionTrigger} onClick={() => setOffloading({ request: { scope: 'season', season: s.number }, label: `${m.title} · ${label}` })}>Offload…</button>}
+                      </>
+                    )}
                   </div>
                   {open && (
                     <table>
@@ -1694,9 +1754,10 @@ export function MediaDetailPage() {
                               <input
                                 type="checkbox"
                                 className="monitor-box"
-                                title={e.monitored ? 'Monitored' : 'Unmonitored'}
+                                title={e.offloaded || s.offloaded ? 'Offloaded — Re-acquire to get it back' : e.monitored ? 'Monitored' : 'Unmonitored'}
                                 aria-label={`Monitor episode ${e.seasonNumber}x${e.episodeNumber}`}
                                 checked={e.monitored}
+                                disabled={Boolean(e.offloaded || s.offloaded)}
                                 onChange={(ev) =>
                                   monitorEpisode.mutate({
                                     episodeId: e.id,
@@ -1713,19 +1774,34 @@ export function MediaDetailPage() {
                             <td>
                               {e.hasFile ? (
                                 <span className="pill pill-ok">✓</span>
+                              ) : e.offloaded || s.offloaded ? (
+                                <span className="pill pill-warning">offloaded</span>
                               ) : (
                                 <span className="muted">—</span>
                               )}
                             </td>
                             <td>
-                              <button
-                                onClickCapture={focusActionTrigger}
-                                onClick={() =>
-                                  setSearching({ season: e.seasonNumber, episode: e.episodeNumber })
-                                }
-                              >
-                                Search
-                              </button>
+                              {e.offloaded || s.offloaded ? (
+                                <button className="btn-accent" disabled={reacq.isPending}
+                                  onClick={() => reacq.mutate({ request: { scope: 'episode', episodeId: e.id }, label: `${e.seasonNumber}x${String(e.episodeNumber).padStart(2, '0')}` })}>Re-acquire</button>
+                              ) : (
+                                <>
+                                  <button
+                                    onClickCapture={focusActionTrigger}
+                                    onClick={() =>
+                                      setSearching({ season: e.seasonNumber, episode: e.episodeNumber })
+                                    }
+                                  >
+                                    Search
+                                  </button>
+                                  {e.hasFile && (
+                                    <button onClickCapture={focusActionTrigger}
+                                      onClick={() => setOffloading({ request: { scope: 'episode', episodeId: e.id }, label: `${m.title} · ${e.seasonNumber}x${String(e.episodeNumber).padStart(2, '0')}` })}>
+                                      Offload…
+                                    </button>
+                                  )}
+                                </>
+                              )}
                             </td>
                           </tr>
                         ))}
