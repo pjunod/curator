@@ -46,6 +46,7 @@ import { audioUndeterminedNote } from '../language'
 import { DOWNLOAD_PRIORITIES, downloadPriorityLabel } from '../downloadPriority'
 import { ActionDialog, ActionNotice, focusActionTrigger } from '../ActionDialog'
 import { ImportFileDialog } from '../ImportFileDialog'
+import { ItemStatusPanel } from '../ItemStatusPanel'
 import { ReleaseSearch } from './ReleaseSearch'
 import { Pager, PageSizePicker, clampPage, sliceForPage } from '../Pager'
 import { mapReplacementObservationsByFileID } from '../replacementObservations'
@@ -1574,6 +1575,13 @@ export function MediaDetailPage() {
           onSaved={setAutoMsg}
         />
       )}
+
+      <ItemStatusPanel
+        key={`status-${m.id}`}
+        itemId={m.id}
+        kind={m.kind}
+        onInteractiveSearch={(t) => setSearching(t)}
+      />
 
       {m.kind !== 'book' && <IdentityPanel key={m.id} item={m} />}
 

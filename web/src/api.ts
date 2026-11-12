@@ -2000,3 +2000,98 @@ export interface ImportActivityPage {
 }
 export const getImportActivity = (filter: 'all' | ImportCategory, q: string, limit: number, offset: number) =>
   get<ImportActivityPage>(`/imports?${new URLSearchParams({ filter, q, limit: String(limit), offset: String(offset) })}`)
+
+// ---- item status panel (0.44.0) ----
+
+export type StatusState = 'done' | 'active' | 'waiting' | 'failed' | 'todo'
+export type StatusStageKey = 'searched' | 'downloading' | 'processed' | 'moved' | 'cinema_notified' | 'in_cinema'
+export type StatusAction =
+  | 'search'
+  | 'interactive_search'
+  | 'open_activity'
+  | 'cancel_download'
+  | 'retry_import'
+  | 'resend_cinema'
+  | 'confirm_cinema'
+
+export interface StatusStage {
+  key: StatusStageKey
+  state: StatusState
+  at?: number
+  detail?: string
+  actions?: StatusAction[]
+}
+
+export interface StatusDownload {
+  id: number
+  release: string
+  indexer?: string
+  state: string
+  bytes: number
+  total: number
+  progress: number
+  rateBps?: number
+  etaSeconds?: number
+  stage?: string
+  stageSince?: number
+  episodes?: number
+}
+
+export interface StatusCinema {
+  deliveryId: number
+  notifierId: number
+  status: string
+  waitingOn?: string
+  visibleAt?: number
+  itemIds?: number[]
+  error?: string
+}
+
+export interface StatusAttempt {
+  downloadId: number
+  release: string
+  indexer?: string
+  at: number
+  outcome: string
+  reason?: string
+}
+
+export interface StatusSeason {
+  season: number
+  episodes: number
+  inCinema: number
+  onDisk: number
+  active: boolean
+  summary: string
+  download?: StatusDownload
+}
+
+export interface StatusEpisode {
+  episodeId: number
+  season: number
+  episode: number
+  title?: string
+  summary: string
+  inPack: boolean
+  stages: StatusStage[]
+}
+
+export interface ItemStatus {
+  mediaItemId: number
+  kind: string
+  generatedAt: number
+  active: boolean
+  done: boolean
+  headline: { state: StatusState; title: string; detail?: string }
+  stages?: StatusStage[]
+  download?: StatusDownload
+  cinema?: StatusCinema
+  attempts?: StatusAttempt[]
+  seasons?: StatusSeason[]
+  episodes?: StatusEpisode[]
+}
+
+export const getItemStatus = (id: number, season?: number) =>
+  get<ItemStatus>(`/library/${id}/status${season === undefined ? '' : `?season=${season}`}`)
+export const confirmItemInCinema = (id: number) =>
+  send<{ queued: number }>('POST', `/library/${id}/status/confirm`)
