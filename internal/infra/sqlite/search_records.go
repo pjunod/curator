@@ -56,11 +56,12 @@ func (d *DB) RecordSearch(ctx context.Context, r SearchRecord) error {
 	return tx.Commit()
 }
 
-// ItemSearchRecords returns an item's search records, newest first.
-func (d *DB) ItemSearchRecords(ctx context.Context, itemID int64, limit int) ([]SearchRecord, error) {
+// ItemSearchRecords returns the search records of one item's primary copy
+// in one season (-1 for a movie or book), newest first.
+func (d *DB) ItemSearchRecords(ctx context.Context, itemID int64, season, limit int) ([]SearchRecord, error) {
 	rows, err := d.R.QueryContext(ctx, `SELECT id, media_item_id, copy_id, wantable_id, season, episode, at, trigger,
 		seen, matched, accepted, top_rejection, grabbed, download_id, skipped, error
-		FROM search_records WHERE media_item_id=? ORDER BY id DESC LIMIT ?`, itemID, limit)
+		FROM search_records WHERE media_item_id=? AND season=? AND copy_id=0 ORDER BY id DESC LIMIT ?`, itemID, season, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -79,9 +80,9 @@ func (d *DB) ItemSearchRecords(ctx context.Context, itemID int64, limit int) ([]
 	return out, rows.Err()
 }
 
-// ItemDownloads returns every download row of an item, newest first.
-func (d *DB) ItemDownloads(ctx context.Context, itemID int64) ([]Download, error) {
-	rows, err := d.downloadsWhere(ctx, `media_item_id=?`, itemID)
+// ItemDownloads returns an item's newest download rows, newest first.
+func (d *DB) ItemDownloads(ctx context.Context, itemID int64, limit int) ([]Download, error) {
+	rows, err := d.downloadsWhere(ctx, `id IN (SELECT id FROM downloads WHERE media_item_id=? ORDER BY id DESC LIMIT ?)`, itemID, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -89,4 +90,15 @@ func (d *DB) ItemDownloads(ctx context.Context, itemID int64) ([]Download, error
 		rows[i], rows[j] = rows[j], rows[i]
 	}
 	return rows, nil
+}
+
+// LastHistoryAt is when an item last had a history event of this type
+// (zero time if never), read through idx_history_item.
+func (d *DB) LastHistoryAt(ctx context.Context, itemID int64, eventType string) (time.Time, error) {
+	var ts int64
+	err := d.R.QueryRowContext(ctx, `SELECT COALESCE(MAX(ts),0) FROM history_events WHERE media_item_id=? AND type=?`, itemID, eventType).Scan(&ts)
+	if err != nil || ts == 0 {
+		return time.Time{}, err
+	}
+	return time.UnixMilli(ts), nil
 }

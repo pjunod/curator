@@ -46,7 +46,7 @@ func TestSearchRecordIsWrittenByTheSharedSearchPath(t *testing.T) {
 	if _, err := svc.AutoSearchItem(WithManualSearch(ctx), movieID); err != nil {
 		t.Fatal(err)
 	}
-	recs, err := db.ItemSearchRecords(ctx, movieID, 10)
+	recs, err := db.ItemSearchRecords(ctx, movieID, -1, 10)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -79,7 +79,7 @@ func TestSearchRecordsKeepTheNewestTwentyPerWantable(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	recs, err := db.ItemSearchRecords(ctx, movieID, 100)
+	recs, err := db.ItemSearchRecords(ctx, movieID, -1, 100)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -96,7 +96,7 @@ func TestItemStatusRelaysRunnersRateAndStage(t *testing.T) {
 	if _, err := svc.AutoSearchItem(ctx, movieID); err != nil {
 		t.Fatal(err)
 	}
-	dls, err := db.ItemDownloads(ctx, movieID)
+	dls, err := db.ItemDownloads(ctx, movieID, 10)
 	if err != nil || len(dls) != 1 {
 		t.Fatalf("downloads = %v, %v", dls, err)
 	}
@@ -162,13 +162,13 @@ func TestItemStatusInCinemaFromPerFileReadBack(t *testing.T) {
 	}
 
 	// Ask cinema to confirm needs a cinema notifier.
-	if _, err := svc.ConfirmInCinema(ctx, movieID); !errors.Is(err, ErrNothingToConfirm) {
+	if _, err := svc.ConfirmInCinema(ctx, movieID, 0); !errors.Is(err, ErrNothingToConfirm) {
 		t.Fatalf("confirm without a notifier = %v, want ErrNothingToConfirm", err)
 	}
 	if _, err := db.AddNotifier(ctx, ports.NotifierConfig{Type: "plurx", Name: "cinema", Enabled: true, OnImport: true, Settings: map[string]string{"url": "http://cinema"}}); err != nil {
 		t.Fatal(err)
 	}
-	n, err := svc.ConfirmInCinema(ctx, movieID)
+	n, err := svc.ConfirmInCinema(ctx, movieID, 0)
 	if err != nil || n != 1 {
 		t.Fatalf("confirm = %d, %v; want one folder request", n, err)
 	}
@@ -201,6 +201,29 @@ func TestItemStatusInCinemaFromPerFileReadBack(t *testing.T) {
 	if len(reread[0].FileResults) != 1 || !reread[0].FileResults[0].Matched {
 		t.Fatalf("file results not stored: %+v", reread[0].FileResults)
 	}
+
+	// Asking again refreshes the same request (stable key) instead of adding one.
+	if n, err := svc.ConfirmInCinema(ctx, movieID, 0); err != nil || n != 1 {
+		t.Fatalf("second confirm = %d, %v", n, err)
+	}
+	again, _ := db.ListItemDeliveries(ctx, movieID, 10)
+	if len(again) != 1 || again[0].ID != del.ID || again[0].Attempt <= del.Attempt || len(again[0].FileResults) != 0 || again[0].VisibleAt != 0 {
+		t.Fatalf("after a repeated confirm = %+v, want the one row refreshed with a new attempt", again)
+	}
+
+	// A retried failed delivery drops the last read-back with the rest of it.
+	failed := again[0]
+	failed.Status, failed.FileResults = "failed", []sqlite.DeliveryFileResult{{Path: path, State: "skipped", Reason: "unreadable"}}
+	if err := db.SettleDelivery(ctx, failed, sqlite.DeliveryTiming{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.RetryDelivery(ctx, failed.NotifierID, failed.ID); err != nil {
+		t.Fatal(err)
+	}
+	retried, _ := db.ListItemDeliveries(ctx, movieID, 10)
+	if len(retried[0].FileResults) != 0 {
+		t.Fatalf("retry kept the old file results: %+v", retried[0].FileResults)
+	}
 }
 
 // A season pack is one runner job: its download is shown once, on the
@@ -229,5 +252,26 @@ func TestItemStatusShowsASeasonPackOnceOnTheSeason(t *testing.T) {
 	}
 	if len(st.Episodes) != 2 || !st.Episodes[0].InPack || len(st.Episodes[0].Stages) != 6 || !strings.HasPrefix(st.Episodes[0].Summary, "in season pack") {
 		t.Fatalf("episodes = %+v, want two pack episodes with six stages", st.Episodes)
+	}
+}
+
+// Cancel download from the panel must not loop: the job is cancelled in
+// Runner exactly as Activity's Remove does it, and the release is
+// blocklisted, so the next automatic search refuses it.
+// (Activity's Remove stays a plain removal: TestRemovingARunnerRowCancelsItNeverParks.)
+func TestCancelAndBlocklistIsNotGrabbedAgain(t *testing.T) {
+	f := setupV2(t, []ports.Release{rel(epOne, 10)})
+	d := f.grab(1, epOne)
+	if err := f.svc.CancelAndBlocklist(f.ctx, d.ID); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.row(d.ID); got.RunnerOutcome != ports.OutcomeCancelled {
+		t.Fatalf("row = %s/%s, want the cancelled terminal Remove records", got.State, got.RunnerOutcome)
+	}
+	if bl := mustBlocklist(t, f); len(bl) != 1 || bl[0].ReleaseTitle != d.ReleaseTitle {
+		t.Fatalf("blocklist = %+v, want the cancelled release", bl)
+	}
+	if !f.svc.skipCandidateFor(f.ctx, d.MediaItemID, rel(epOne, 10)) {
+		t.Fatal("automation would grab the cancelled release again")
 	}
 }

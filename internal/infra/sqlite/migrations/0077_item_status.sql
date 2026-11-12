@@ -5,7 +5,7 @@
 -- search-and-grab path (auto search, background automation, Wanted runs,
 -- replacement grabs, interactive grabs, season comparisons). Newest 20 are
 -- kept per wantable; the writer prunes.
---   trigger      manual | automatic | wanted | replacement | interactive | season
+--   trigger      manual | automatic | wanted | replacement | interactive | rss | season
 --   seen/matched/accepted  the search funnel (searchTally)
 --   top_rejection          the commonest reason a matched release was refused
 --   grabbed/download_id    what it led to ('' / 0 = nothing grabbed)

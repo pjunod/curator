@@ -3770,17 +3770,28 @@ type StatusDownload struct {
 
 // StatusEpisode defines model for StatusEpisode.
 type StatusEpisode struct {
-	Episode   int           `json:"episode"`
-	EpisodeId int64         `json:"episodeId"`
-	InPack    bool          `json:"inPack"`
-	Season    int           `json:"season"`
-	Stages    []StatusStage `json:"stages"`
-	Summary   string        `json:"summary"`
-	Title     *string       `json:"title,omitempty"`
+	// At Unix ms the client formats beside the summary.
+	At     *int64        `json:"at,omitempty"`
+	Cinema *StatusCinema `json:"cinema,omitempty"`
+
+	// DownloadId The download this episode's track follows.
+	DownloadId *int64        `json:"downloadId,omitempty"`
+	Episode    int           `json:"episode"`
+	EpisodeId  int64         `json:"episodeId"`
+	InPack     bool          `json:"inPack"`
+	Season     int           `json:"season"`
+	Stages     []StatusStage `json:"stages"`
+	Summary    string        `json:"summary"`
+	Title      *string       `json:"title,omitempty"`
+
+	// WantableId Scopes Search now to this episode (POST /wanted/searches
+	WantableId string `json:"wantableId"`
 }
 
 // StatusHeadline defines model for StatusHeadline.
 type StatusHeadline struct {
+	// At Unix ms the client formats beside the title.
+	At     *int64              `json:"at,omitempty"`
 	Detail *string             `json:"detail,omitempty"`
 	State  StatusHeadlineState `json:"state"`
 	Title  string              `json:"title"`
@@ -4280,6 +4291,12 @@ type GetLibraryItemStatusParams struct {
 	Season *int `form:"season,omitempty" json:"season,omitempty"`
 }
 
+// ConfirmLibraryItemInCinemaParams defines parameters for ConfirmLibraryItemInCinema.
+type ConfirmLibraryItemInCinemaParams struct {
+	// Episode An episode id; only that episode's files are named.
+	Episode *int64 `form:"episode,omitempty" json:"episode,omitempty"`
+}
+
 // PreviewMetadataParams defines parameters for PreviewMetadata.
 type PreviewMetadataParams struct {
 	Kind   MediaKind `form:"kind" json:"kind"`
@@ -4310,6 +4327,9 @@ type ListQueueParamsFilter string
 // RemoveQueueItemParams defines parameters for RemoveQueueItem.
 type RemoveQueueItemParams struct {
 	FromClient *bool `form:"fromClient,omitempty" json:"fromClient,omitempty"`
+
+	// Blocklist With fromClient: also blocklist the release (the item page's Cancel download), so automation does not grab it again. Activity's Remove leaves it off: a removal is not a verdict on the release.
+	Blocklist *bool `form:"blocklist,omitempty" json:"blocklist,omitempty"`
 }
 
 // PlacePublicationFilesJSONBody defines parameters for PlacePublicationFiles.
@@ -4837,7 +4857,7 @@ type ServerInterface interface {
 	GetLibraryItemStatus(w http.ResponseWriter, r *http.Request, id int64, params GetLibraryItemStatusParams)
 	// ConfirmLibraryItemInCinema Ask cinema to confirm this item's files
 	// (POST /library/{id}/status/confirm)
-	ConfirmLibraryItemInCinema(w http.ResponseWriter, r *http.Request, id int64)
+	ConfirmLibraryItemInCinema(w http.ResponseWriter, r *http.Request, id int64, params ConfirmLibraryItemInCinemaParams)
 	// PreviewMetadata Read a title before adding, without loading episodes or writing library state
 	// (GET /metadata/preview)
 	PreviewMetadata(w http.ResponseWriter, r *http.Request, params PreviewMetadataParams)
@@ -7459,8 +7479,24 @@ func (siw *ServerInterfaceWrapper) ConfirmLibraryItemInCinema(w http.ResponseWri
 		return
 	}
 
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ConfirmLibraryItemInCinemaParams
+
+	// ------------- Optional query parameter "episode" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "episode", r.URL.Query(), &params.Episode, runtime.BindQueryParameterOptions{Type: "integer", Format: "int64"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "episode"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "episode", Err: err})
+		}
+		return
+	}
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.ConfirmLibraryItemInCinema(w, r, id)
+		siw.Handler.ConfirmLibraryItemInCinema(w, r, id, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -8072,6 +8108,19 @@ func (siw *ServerInterfaceWrapper) RemoveQueueItem(w http.ResponseWriter, r *htt
 			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "fromClient"})
 		} else {
 			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "fromClient", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "blocklist" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "blocklist", r.URL.Query(), &params.Blocklist, runtime.BindQueryParameterOptions{Type: "boolean", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "blocklist"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "blocklist", Err: err})
 		}
 		return
 	}

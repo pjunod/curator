@@ -913,8 +913,10 @@ func (s *Service) AutoSearchItem(ctx context.Context, itemID int64) (AutoSearchO
 		switch {
 		case !w.Monitored():
 			t.Skipped = SkipUnmonitored
+			s.recordSearch(ctx, w, searchTrigger(ctx), searchTally{Skipped: t.Skipped}, nil)
 		case len(s.notInFlight(ctx, []domain.Wantable{w})) == 0:
 			t.Skipped = SkipInFlight
+			s.recordSearch(ctx, w, searchTrigger(ctx), searchTally{Skipped: t.Skipped}, nil)
 		default:
 			var allowed candidatePredicate
 			if _, episode := w.(domain.EpisodeWantable); episode {

@@ -630,7 +630,9 @@ func (s *Service) runSeasonSearch(ctx context.Context, j domain.Job) error {
 							return e
 						}
 						if p.IntrinsicPartial && p.Stage == "episodes" {
-							if _, e := s.admitSeasonCandidates(ctx, p, item, pack, profile, targets, false); e != nil {
+							tally, e := s.admitSeasonCandidates(ctx, p, item, pack, profile, targets, false)
+							s.recordSearch(ctx, pack, seasonRecordTrigger(p), tally, e)
+							if e != nil {
 								return e
 							}
 						}
@@ -814,7 +816,7 @@ func seasonRecordTrigger(p seasonCheckpoint) string {
 
 // admitSeasonCandidates plans and admits the season's grabs. The tally it
 // returns is the comparison's funnel for the season's search record: releases
-// seen, the ones tied to this show, and the ones the plan could use.
+// seen, the ones tied to this show, and the ones the plan picked.
 func (s *Service) admitSeasonCandidates(ctx context.Context, p seasonCheckpoint, item domain.MediaItem, pack domain.SeasonWantable, profile quality.Profile, targets []domain.EpisodeWantable, allowPacks bool) (tally searchTally, err error) {
 	tally.Seen = len(deduplicateReleases(p.Releases))
 	index, err := s.allIdentity(ctx, time.Now())
@@ -949,7 +951,6 @@ func (s *Service) admitSeasonCandidates(ctx context.Context, p seasonCheckpoint,
 		evidence[key] = matchEvidence(parsed, w, r, match)
 		titles[key] = r.Title
 	}
-	tally.Accepted = len(in.Candidates)
 	plan, err := acquisitionplan.Build(in)
 	if err != nil {
 		return tally, err
@@ -957,6 +958,7 @@ func (s *Service) admitSeasonCandidates(ctx context.Context, p seasonCheckpoint,
 	if len(plan.Releases) == 0 {
 		return tally, nil
 	}
+	tally.Accepted = len(plan.Releases) // the plan's picks, not every candidate
 	var grabbed []string
 	for _, key := range plan.Releases {
 		grabbed = append(grabbed, titles[key])

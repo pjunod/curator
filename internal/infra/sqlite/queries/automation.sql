@@ -113,14 +113,14 @@ SELECT * FROM notifier_deliveries
 -- name: RetryDelivery :one
 UPDATE notifier_deliveries
    SET status = 'pending', attempts = 0, result = '', next_at = ?, updated_at = ?,
-       attempt = attempt + 1, remote_request_id = '', remote_state = '', waiting_on = ''
+       attempt = attempt + 1, remote_request_id = '', remote_state = '', waiting_on = '', file_results_json = '[]'
  WHERE id = ? AND notifier_id = ? AND status = 'failed'
 RETURNING *;
 
 -- name: RetryFailedDeliveries :execrows
 UPDATE notifier_deliveries
    SET status = 'pending', attempts = 0, result = '', next_at = ?, updated_at = ?,
-       attempt = attempt + 1, remote_request_id = '', remote_state = '', waiting_on = ''
+       attempt = attempt + 1, remote_request_id = '', remote_state = '', waiting_on = '', file_results_json = '[]'
  WHERE notifier_id = ? AND status = 'failed';
 
 -- name: DeleteDeliveriesForNotifier :exec

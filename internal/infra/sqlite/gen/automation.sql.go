@@ -677,7 +677,7 @@ func (q *Queries) ListNotifiers(ctx context.Context) ([]Notifier, error) {
 const retryDelivery = `-- name: RetryDelivery :one
 UPDATE notifier_deliveries
    SET status = 'pending', attempts = 0, result = '', next_at = ?, updated_at = ?,
-       attempt = attempt + 1, remote_request_id = '', remote_state = '', waiting_on = ''
+       attempt = attempt + 1, remote_request_id = '', remote_state = '', waiting_on = '', file_results_json = '[]'
  WHERE id = ? AND notifier_id = ? AND status = 'failed'
 RETURNING id, notifier_id, download_id, event, payload, attempts, last_error, result, status, next_at, created_at, updated_at, publication_id, directory, idempotency_key, attempt, expected_files_json, remote_request_id, remote_state, waiting_on, visible_at, item_ids_json, media_item_id, file_results_json
 `
@@ -732,7 +732,7 @@ func (q *Queries) RetryDelivery(ctx context.Context, arg RetryDeliveryParams) (N
 const retryFailedDeliveries = `-- name: RetryFailedDeliveries :execrows
 UPDATE notifier_deliveries
    SET status = 'pending', attempts = 0, result = '', next_at = ?, updated_at = ?,
-       attempt = attempt + 1, remote_request_id = '', remote_state = '', waiting_on = ''
+       attempt = attempt + 1, remote_request_id = '', remote_state = '', waiting_on = '', file_results_json = '[]'
  WHERE notifier_id = ? AND status = 'failed'
 `
 

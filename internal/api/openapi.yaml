@@ -1911,6 +1911,14 @@ paths:
           in: query
           required: false
           schema: { type: boolean }
+        - name: blocklist
+          in: query
+          required: false
+          description: >
+            With fromClient: also blocklist the release (the item page's
+            Cancel download), so automation does not grab it again. Activity's
+            Remove leaves it off: a removal is not a verdict on the release.
+          schema: { type: boolean }
       responses:
         "204": { description: Removed. }
         "404":
@@ -2489,11 +2497,17 @@ paths:
         Queues a scan request per folder, with the item's current files as
         the expected files, through the same notification outbox an import
         writes. The read-back then confirms each file or names what is
-        missing.
+        missing. The request key is stable per item (or per episode), so
+        asking again refreshes the same request instead of adding one.
       parameters:
         - name: id
           in: path
           required: true
+          schema: { type: integer, format: int64 }
+        - name: episode
+          in: query
+          required: false
+          description: An episode id; only that episode's files are named.
           schema: { type: integer, format: int64 }
       responses:
         "202":
@@ -5352,6 +5366,7 @@ components:
         state: { type: string, enum: [done, active, waiting, failed, todo] }
         title: { type: string }
         detail: { type: string }
+        at: { type: integer, format: int64, description: Unix ms the client formats beside the title. }
 
     StatusStage:
       type: object
@@ -5424,14 +5439,18 @@ components:
 
     StatusEpisode:
       type: object
-      required: [episodeId, season, episode, summary, inPack, stages]
+      required: [episodeId, season, episode, wantableId, summary, inPack, stages]
       properties:
         episodeId: { type: integer, format: int64 }
         season: { type: integer }
         episode: { type: integer }
         title: { type: string }
+        wantableId: { type: string, description: Scopes Search now to this episode (POST /wanted/searches, scope target). }
         summary: { type: string }
+        at: { type: integer, format: int64, description: Unix ms the client formats beside the summary. }
         inPack: { type: boolean }
+        downloadId: { type: integer, format: int64, description: The download this episode's track follows. }
+        cinema: { $ref: "#/components/schemas/StatusCinema" }
         stages:
           type: array
           items: { $ref: "#/components/schemas/StatusStage" }

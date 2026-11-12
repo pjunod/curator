@@ -25,8 +25,12 @@ func (s *Server) GetLibraryItemStatus(w http.ResponseWriter, r *http.Request, id
 
 // ConfirmLibraryItemInCinema implements POST /library/{id}/status/confirm:
 // a scan request with the item's files as expected files.
-func (s *Server) ConfirmLibraryItemInCinema(w http.ResponseWriter, r *http.Request, id int64) {
-	n, err := s.deps.Acquisition.ConfirmInCinema(r.Context(), id)
+func (s *Server) ConfirmLibraryItemInCinema(w http.ResponseWriter, r *http.Request, id int64, params apigen.ConfirmLibraryItemInCinemaParams) {
+	var episode int64
+	if params.Episode != nil {
+		episode = *params.Episode
+	}
+	n, err := s.deps.Acquisition.ConfirmInCinema(r.Context(), id, episode)
 	if errors.Is(err, acquisition.ErrNothingToConfirm) {
 		writeError(w, http.StatusConflict, err.Error())
 		return
