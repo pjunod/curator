@@ -13,6 +13,7 @@ import (
 	"github.com/pjunod/monarr/internal/domain"
 	"github.com/pjunod/monarr/internal/infra/bus"
 	"github.com/pjunod/monarr/internal/infra/sqlite"
+	"github.com/pjunod/monarr/internal/infra/sqlite/sqlitetest"
 	"github.com/pjunod/monarr/internal/ports"
 )
 
@@ -36,7 +37,7 @@ func (r *recorder) count() int {
 }
 
 func TestDispatcherRoutesByFlags(t *testing.T) {
-	db, err := sqlite.Open(t.TempDir())
+	db, err := sqlite.Open(sqlitetest.Dir(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -148,7 +149,7 @@ func (s *sink) attempts() int {
 
 func queueFixture(t *testing.T, target ports.Notifier) (*sqlite.DB, *bus.Bus, *Dispatcher, context.Context) {
 	t.Helper()
-	db, err := sqlite.Open(t.TempDir())
+	db, err := sqlite.Open(sqlitetest.Dir(t))
 	if err != nil {
 		t.Fatal(err)
 	}

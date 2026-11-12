@@ -8,6 +8,7 @@ import (
 	"github.com/pjunod/monarr/internal/domain"
 	"github.com/pjunod/monarr/internal/infra/bus"
 	"github.com/pjunod/monarr/internal/infra/sqlite"
+	"github.com/pjunod/monarr/internal/infra/sqlite/sqlitetest"
 	"github.com/pjunod/monarr/internal/ports"
 )
 
@@ -47,7 +48,7 @@ func seriesV1() domain.MediaItem {
 }
 
 func TestRefreshItemUpdatesMetadataAndGrowsTree(t *testing.T) {
-	db, err := sqlite.Open(t.TempDir())
+	db, err := sqlite.Open(sqlitetest.Dir(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -189,7 +190,7 @@ func TestUpdateItemEditsPlacement(t *testing.T) {
 }
 
 func TestSeasonAndEpisodeMonitoring(t *testing.T) {
-	db, err := sqlite.Open(t.TempDir())
+	db, err := sqlite.Open(sqlitetest.Dir(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -277,7 +278,7 @@ func TestAddMonitorPresets(t *testing.T) {
 		{"latest", false, true},
 		{"none", false, false},
 	} {
-		db, err := sqlite.Open(t.TempDir())
+		db, err := sqlite.Open(sqlitetest.Dir(t))
 		if err != nil {
 			t.Fatal(err)
 		}

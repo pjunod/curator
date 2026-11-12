@@ -6,13 +6,12 @@ import (
 	"database/sql/driver"
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
 	"sync/atomic"
 	"testing"
 
 	"github.com/pjunod/monarr/internal/infra/sqlite"
 	sqlitegen "github.com/pjunod/monarr/internal/infra/sqlite/gen"
+	"github.com/pjunod/monarr/internal/infra/sqlite/sqlitetest"
 	sqliteDriver "modernc.org/sqlite"
 )
 
@@ -215,20 +214,12 @@ func eachStorageFault(t *testing.T, run func(t *testing.T, f *storageFault)) {
 	}
 }
 
-// migratedTestDB opens a private copy of the package's migrated schema
-// template (acquisition_test.go), as setup does, without migrating again:
-// goose keeps global state that parallel fault points would race on.
+// migratedTestDB opens a private copy of the migrated schema template, as
+// setup does, without migrating again: goose keeps global state that parallel
+// fault points would race on.
 func migratedTestDB(t *testing.T) *sqlite.DB {
 	t.Helper()
-	schema, err := migratedAcquisitionSchema()
-	if err != nil {
-		t.Fatal(err)
-	}
-	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, sqlite.FileName), schema, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	db, err := sqlite.Open(dir)
+	db, err := sqlite.Open(sqlitetest.Dir(t))
 	if err != nil {
 		t.Fatal(err)
 	}

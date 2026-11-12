@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pjunod/monarr/internal/domain"
 	"github.com/pjunod/monarr/internal/infra/sqlite"
 	"github.com/pjunod/monarr/internal/ports"
 )
@@ -226,11 +227,12 @@ func TestPayloadDirInsideARootFolderIsNeverRemoved(t *testing.T) {
 	svc, db, itemID := setupUsenet(t, client)
 	ctx := context.Background()
 
-	roots, err := db.ListRootFolders(ctx)
-	if err != nil || len(roots) == 0 {
-		t.Skipf("no root folder in the fixture (%v)", err)
+	// The fixture has no root folder; without one this guard never ran.
+	root, err := db.AddRootFolder(ctx, t.TempDir(), domain.KindMixed)
+	if err != nil {
+		t.Fatal(err)
 	}
-	inside := filepath.Join(roots[0].Path, "Some.Release")
+	inside := filepath.Join(root.Path, "Some.Release")
 	if err := os.MkdirAll(inside, 0o755); err != nil {
 		t.Fatal(err)
 	}

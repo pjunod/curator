@@ -6,9 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
-	"sync"
 	"testing"
 	"time"
 
@@ -341,62 +338,6 @@ func TestPipelineV2StoreReadFailuresNeverBecomeEmptySuccess(t *testing.T) {
 	if after := pipelineSnapshot(t, db); after != before {
 		t.Fatal("a read changed durable state")
 	}
-}
-
-// migratedSQLiteTemplate is one migrated database, copied for each fault
-// point of a write matrix instead of migrating hundreds of fresh databases.
-var migratedSQLiteTemplate struct {
-	once sync.Once
-	dir  string
-	err  error
-}
-
-func TestMain(m *testing.M) {
-	code := m.Run()
-	if migratedSQLiteTemplate.dir != "" {
-		_ = os.RemoveAll(migratedSQLiteTemplate.dir)
-	}
-	os.Exit(code)
-}
-
-// openMigratedCopy opens a private copy of the migrated template.
-func openMigratedCopy(t *testing.T) *DB {
-	t.Helper()
-	migratedSQLiteTemplate.once.Do(func() {
-		dir, err := os.MkdirTemp("", "sqlite-migrated-")
-		if err != nil {
-			migratedSQLiteTemplate.err = err
-			return
-		}
-		migratedSQLiteTemplate.dir = dir
-		db, err := Open(dir)
-		if err == nil {
-			err = db.Migrate(context.Background())
-			if closeErr := db.Close(); err == nil {
-				err = closeErr
-			}
-		}
-		migratedSQLiteTemplate.err = err
-	})
-	if migratedSQLiteTemplate.err != nil {
-		t.Fatal(migratedSQLiteTemplate.err)
-	}
-	raw, err := os.ReadFile(filepath.Join(migratedSQLiteTemplate.dir, FileName))
-	if err != nil {
-		t.Fatal(err)
-	}
-	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, FileName), raw, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	db, err := Open(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	// The copy is already migrated; Migrate is not run again because goose
-	// keeps global state that parallel fault points would race on.
-	t.Cleanup(func() { _ = db.Close() })
-	return db
 }
 
 // eachWriteFault runs op once unfaulted on a fresh fixture to count its
