@@ -1,5 +1,37 @@
 # Monarr — Project Status
 
+## A salvage import never strands its download in downloaded — 2026-11-12 · v0.46.2
+
+**Status:** built, targeted tests and lint run (see the commit report) · branch
+`claude/overdue-downloaded` from `origin/main` d3b351a · no PR · not merged,
+not deployed.
+
+**Field case:** download 1196 (Strangers.With.Candy.S01E10, Runner job 2799 on
+nuc4) sat in `downloaded` about 7 h past its deadline. Runner had failed it
+`failed{publish}` with salvage pending, and its receipt still says so. The job
+is no longer in Runner's queue. The salvage publication (737) was imported
+and removed, and Cinema shows it. Runner job 2710 is a different transfer (the
+season pack), and no Curator row points at it. Nothing waits on Runner here.
+
+**Root cause:** (1) The salvage import hit a sealed plan from epoch 0 and
+reopened the attempt with `BeginImportRetry`. Its `writeImportState` moved the
+Runner-failed row to `downloaded` (a 6 h deadline). The salvage then imported
+in epoch 1, but only a completed publication sets the row's state (contract
+3.1), so nothing ever moved the row again. (2) The overdue exit's
+`publicationOwnsExit` counted epoch 0's stage as open custody. That stage is
+still `prepared` because placement reconciliation leaves it for the title's
+next import or for disposal. So every poll skipped the row before it reached
+the "Runner's terminal is recorded" branch.
+
+**Fix:** `writeImportState` records only the handoff step for a row whose
+publications are all salvage, and keeps the row's state and error.
+`publicationOwnsExit` no longer lets a finished attempt (outcome completed)
+own the exit. The leftover stage stays in the placement journal. Tests
+`TestOverdueDownloadedSalvageRowTakesRunnersTerminal` (the row's exact shape)
+and `TestOverdueSalvageImportRetryKeepsTheRowFailed` both fail without the fix.
+After a deploy, 1196 exits at the next poll as `failed{publish}` (blameless).
+Its re-grab is filtered because the episode is in the library.
+
 ## Overdue exit cancels a still-listed stalled job in Runner — 2026-11-12 · v0.46.1
 
 **Status:** built, targeted tests and lint run (see the commit report) · branch

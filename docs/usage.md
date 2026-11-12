@@ -1438,6 +1438,16 @@ fails or times out (3 seconds) it is logged and ignored, never retried, and
 the failure and re-grab stand. A job absent from Runner's queue is not
 cancelled.
 
+A salvage import never moves its download out of *failed* (v0.46.2). When
+Runner fails a job but offers what it could save (salvage), the download stays
+failed while Curator imports the salvage, including on a retry; History and
+the handoff trace show the import. Until v0.46.2 a retried salvage import put
+the download back in *downloaded*, where it sat past its deadline for good. A
+download stranded that way now takes Runner's recorded failure at its
+deadline. A finished import never holds a download's exit open: a leftover
+stage from an earlier import attempt stays in Library review for you to keep
+or dispose of, but it no longer pins the download.
+
 ### Held, provisional and publications in Activity
 
 - **Held by Runner** is its own section. The row says what Runner is waiting

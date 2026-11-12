@@ -265,9 +265,18 @@ func importPlanComplete(ctx context.Context, tx *sql.Tx, a ImportAttempt) (bool,
 
 // writeImportState reads handoff JSON on W inside the same transaction as the
 // control transition; it never overwrites it with a worker's stale snapshot.
+//
+// Only a completed publication decides the row (contract section 3.1): a row
+// whose publications are all salvage (Runner failed it and it was replaced)
+// keeps its state — failed — and its error, and gets only the handoff step.
+// Until v0.46.2 an import retry of a salvage moved such a row to downloaded,
+// where nothing ever moved it again (download 1196, 2026-11-12).
 func writeImportState(ctx context.Context, tx *sql.Tx, key ImportAttemptKey, state, step, detail string) error {
 	var raw string
-	if err := tx.QueryRowContext(ctx, `SELECT handoff_log FROM downloads WHERE id=? AND generation_key=?`, key.DownloadID, key.GenerationKey).Scan(&raw); err != nil {
+	var salvageOnly bool
+	if err := tx.QueryRowContext(ctx, `SELECT handoff_log,
+		EXISTS(SELECT 1 FROM publications p WHERE p.download_id=d.id) AND NOT EXISTS(SELECT 1 FROM publications p WHERE p.download_id=d.id AND p.kind='completed')
+		FROM downloads d WHERE id=? AND generation_key=?`, key.DownloadID, key.GenerationKey).Scan(&raw, &salvageOnly); err != nil {
 		return err
 	}
 	var handoff []HandoffEntry
@@ -280,6 +289,10 @@ func writeImportState(ctx context.Context, tx *sql.Tx, key ImportAttemptKey, sta
 	}
 	data, err := json.Marshal(handoff)
 	if err != nil {
+		return err
+	}
+	if salvageOnly {
+		_, err = tx.ExecContext(ctx, `UPDATE downloads SET handoff_log=?,updated_at=? WHERE id=? AND generation_key=?`, string(data), now, key.DownloadID, key.GenerationKey)
 		return err
 	}
 	_, err = tx.ExecContext(ctx, `UPDATE downloads SET state=?,progress=CASE WHEN ?='imported' THEN 1 ELSE progress END,error='',handoff_log=?,updated_at=? WHERE id=? AND generation_key=?`, state, state, string(data), now, key.DownloadID, key.GenerationKey)
