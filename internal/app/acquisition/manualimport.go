@@ -35,6 +35,9 @@ type ScannedFile struct {
 	// the runner delivery it is part of.
 	Subtitles   int                 `json:"subtitles,omitempty"`
 	Publication *ScannedPublication `json:"publication,omitempty"`
+	// Skipped says why an entry of the one-level listing cannot be offered
+	// (a symlink, an unreadable file); such an entry is not selectable.
+	Skipped string `json:"skipped,omitempty"`
 }
 
 // ScanImportPath lists the media files Monarr can see under a path — the
@@ -329,18 +332,8 @@ func (s *Service) QueueManualImport(ctx context.Context, req ManualImportRequest
 	if err != nil {
 		return 0, err
 	}
-	if req.RemoveOriginal {
-		if id != 0 || req.ReviewLegacy {
-			return 0, fmt.Errorf("remove original applies only to a standalone import of loose files")
-		}
-		for _, path := range admittedPaths {
-			if _, claimed, claimErr := s.publicationClaiming(ctx, path); claimErr != nil || claimed {
-				if claimErr != nil {
-					return 0, claimErr
-				}
-				return 0, fmt.Errorf("%s is part of a runner delivery; place it through Resolve, which cleans it up under its own rules", path)
-			}
-		}
+	if req.RemoveOriginal && (id != 0 || req.ReviewLegacy) {
+		return 0, fmt.Errorf("remove original applies only to a standalone import of loose files")
 	}
 	admittedGenerations := make(map[string]string, len(admittedPaths))
 	for _, path := range admittedPaths {
@@ -409,6 +402,17 @@ func (s *Service) QueueManualImport(ctx context.Context, req ManualImportRequest
 			}
 			return 0, fmt.Errorf("selected file changed before import admission: %s", path)
 		}
+	}
+	var sourceIdentities map[string]string
+	if req.RemoveOriginal {
+		// Decided inside the target and storage locks, with the admission:
+		// what Remove original may take, and the exact files it may take.
+		refusal, refusalErr := s.removeOriginalAdmission(ctx, admittedPaths)
+		if refusalErr != nil {
+			unlockAdmission()
+			return 0, refusalErr
+		}
+		sourceIdentities = refusal
 	}
 	if req.ReviewLegacy {
 		legacy, reviewErr := s.db.StorageReviewPath(ctx, req.Path)
@@ -494,7 +498,7 @@ func (s *Service) QueueManualImport(ctx context.Context, req ManualImportRequest
 		ReviewPath:        req.Path,
 		ReviewFiles:       handoffReviewFiles(req.ReviewLegacyFiles),
 		TargetMediaItemID: req.MediaItemID, TargetCopyID: req.CopyID, TargetIdentity: targetIdentity,
-		EpisodeTargets: targets, RemoveOriginal: req.RemoveOriginal,
+		EpisodeTargets: targets, RemoveOriginal: req.RemoveOriginal, SourceIdentities: sourceIdentities,
 	})
 	dl, err = s.db.CommitManualImportAdmission(ctx, dl)
 	if err != nil {

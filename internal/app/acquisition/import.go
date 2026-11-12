@@ -70,9 +70,9 @@ type ImportResult struct {
 	// than finishing: the remaining files were never attempted, and the
 	// download must not be treated as done.
 	Blocked error
-	// Sidecars lists the subtitle sources a standalone manual import placed
-	// beside its videos (they leave with them when Remove original is set).
-	Sidecars []string
+	// Sidecars lists the subtitles a standalone manual import placed beside
+	// its videos (they leave with them when Remove original is set).
+	Sidecars []sqlite.HandoffRemoval
 }
 
 // ErrImportBlocked marks an import that stopped on something about the
@@ -1197,12 +1197,7 @@ func (s *Service) importBookFile(ctx context.Context, item domain.MediaItem, sco
 
 func (s *Service) importEpisodeFile(ctx context.Context, item domain.MediaItem, scope importScope, profile quality.Profile, epStates map[int64]episodeState, src string, p parser.Parsed, q quality.Quality, releaseTitle string, manual bool) (placement, error) {
 	scope.Manual = manual
-	season, eps := p.Season, p.Episodes
-	if len(eps) == 0 {
-		if fx, ok := filename.Extract(filepath.Base(src)); ok {
-			season, eps = fx.Season, fx.Episodes
-		}
-	}
+	season, eps := nameEpisodes(p, filepath.Base(src))
 	if len(eps) == 0 || season < 0 {
 		return placement{}, importPolicyRefusalf("cannot determine episodes from %q", filepath.Base(src))
 	}

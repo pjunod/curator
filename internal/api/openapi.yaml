@@ -1883,6 +1883,22 @@ paths:
           description: Invalid filter or pagination.
 
   /queue/{id}:
+    get:
+      operationId: getQueueItem
+      summary: One Activity row, whatever its state
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer, format: int64 } }
+      responses:
+        "200":
+          description: The row.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/QueueItem" }
+        "404":
+          description: No such row.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
     delete:
       operationId: removeQueueItem
       summary: Remove a queue row (optionally from the client too)
@@ -1979,20 +1995,58 @@ paths:
               properties:
                 path: { type: string, description: The file's path relative to the publication. }
                 action: { type: string, description: "place | discard | keep" }
-                mediaItemId:
-                  type: integer
-                  format: int64
-                  description: place only - the item to place it into (default the download's own). Another item only while nothing of this delivery is placed.
-                copyId: { type: integer, format: int64, description: place only - the copy or edition; 0 = the primary. }
-                season: { type: integer, description: place only - the season of episodes. }
-                episodes:
-                  type: array
-                  description: place only - the episode(s) this file is, overriding its name.
-                  items: { type: integer }
       responses:
         "204": { description: Recorded; a place is queued for import. }
         "400":
           description: Not an unresolved file of this publication, or an unknown action.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "404":
+          description: Unknown row or publication.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /queue/{id}/publications/{publicationId}/files/place:
+    post:
+      operationId: placePublicationFiles
+      summary: Place one or more files of a runner delivery into an item, as chosen episodes
+      description: >
+        Resolve's place for several files at once (Import file… on the item
+        page): one admission, one import. mediaItemId may name another item
+        only while nothing of this delivery is in the library; the download
+        then follows it. Refused while an import of this delivery runs.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer, format: int64 } }
+        - { name: publicationId, in: path, required: true, schema: { type: integer, format: int64 } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [files]
+              properties:
+                mediaItemId: { type: integer, format: int64, description: "Target item; absent = the download's own." }
+                copyId: { type: integer, format: int64, description: Target copy or edition; 0 = the primary. }
+                files:
+                  type: array
+                  minItems: 1
+                  items:
+                    type: object
+                    required: [path]
+                    properties:
+                      path: { type: string, description: The file's path relative to the publication. }
+                      season: { type: integer }
+                      episodes:
+                        type: array
+                        description: The episode(s) this file is, overriding its name.
+                        items: { type: integer }
+      responses:
+        "204": { description: Recorded and queued for import. }
+        "400":
+          description: A file that is not unresolved, a refused move, a running import, or an unknown episode or copy.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -2071,9 +2125,10 @@ paths:
           description: >
             1 lists only the files directly in path (the item page's Import
             file… browser), each with its subtitle count and, for a file
-            inside a runner delivery, that delivery. Absent or 0 walks the
-            whole tree.
-          schema: { type: integer, minimum: 0, maximum: 1 }
+            inside a runner delivery, that delivery, plus an entry with
+            skipped set for each entry it could not offer. Absent walks the
+            whole tree; any other value is refused.
+          schema: { type: integer }
       responses:
         "200":
           description: Files found (empty array means nothing importable there).
@@ -5125,6 +5180,9 @@ components:
           type: integer
           description: Subtitle files that travel with this video (depth=1 only).
         publication: { $ref: "#/components/schemas/ScannedPublication" }
+        skipped:
+          type: string
+          description: Why this entry cannot be imported (a symlink, an unreadable file); depth=1 only.
 
     ScannedPublication:
       type: object
@@ -5182,6 +5240,7 @@ components:
         existing: { type: string, description: Quality of the file there now. }
         reason: { type: string }
         mode: { type: string, description: "runner | hardlink | copy | rename | copy_remove" }
+        note: { type: string, description: What else placing it does (a runner delivery moved here from another title). }
         subtitles: { type: integer }
         publication: { $ref: "#/components/schemas/ScannedPublication" }
         error: { type: string, description: Why this file cannot be imported as chosen. }

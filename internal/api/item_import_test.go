@@ -45,4 +45,22 @@ func TestItemImportScanAndPlanHTTP(t *testing.T) {
 		t.Fatal("planning moved the file")
 	}
 	e.post(t, "/api/v1/import/plan", fmt.Sprintf(`{"mediaItemId":%d,"files":[]}`, itemID)).expect(t, http.StatusBadRequest)
+	e.post(t, "/api/v1/import/plan", fmt.Sprintf(`{"mediaItemId":%d,"copyId":999,"files":[{"path":%q}]}`, itemID, movie)).expect(t, http.StatusBadRequest)
+	e.get(t, "/api/v1/import/scan?depth=2&path="+url.QueryEscape(dir)).expect(t, http.StatusBadRequest)
+	e.post(t, "/api/v1/queue/1/publications/1/files/place", `{"files":[]}`).expect(t, http.StatusBadRequest)
+	e.post(t, "/api/v1/queue/1/publications/99/files/place", `{"files":[{"path":"a.mkv"}]}`).expect(t, http.StatusNotFound)
+}
+
+// A page that started an import follows its row to the end, in any state.
+func TestGetQueueItemHTTP(t *testing.T) {
+	e := newAPIEnv(t)
+	acqAddClient(t, e, "qbittorrent")
+	itemID := e.addMovie(t)
+	id := acqGrab(t, e, itemID)
+	var row apigen.QueueItem
+	e.get(t, fmt.Sprintf("/api/v1/queue/%d", id)).expect(t, http.StatusOK).into(t, &row)
+	if row.Id != id || row.MediaItemId != itemID {
+		t.Fatalf("row = %+v", row)
+	}
+	e.get(t, "/api/v1/queue/99999").expect(t, http.StatusNotFound)
 }

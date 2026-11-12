@@ -114,9 +114,85 @@ func unreadableImportPath(dir string, err error) error {
 	return fmt.Errorf("path not accessible: Curator cannot read %s (%v). If the download client sees this folder under a different path, add a remote path mapping to that client in Settings → Acquisition so Curator reads it where it is mounted here", dir, err)
 }
 
+// ErrInvalidImportPlan marks a plan request that cannot be answered as asked
+// (no item, no files, a copy that is not the item's).
+var ErrInvalidImportPlan = errors.New("invalid import plan")
+
+// nameEpisodes is the season and episode(s) a file's name says, read the way
+// the import reads it (the parser first, then the file-name extractor).
+func nameEpisodes(p parser.Parsed, base string) (int, []int) {
+	if len(p.Episodes) > 0 {
+		return p.Season, p.Episodes
+	}
+	if fx, ok := filename.Extract(base); ok {
+		return fx.Season, fx.Episodes
+	}
+	return p.Season, nil
+}
+
+// publicationLookup answers "which runner delivery is this file part of"
+// for many files of one request: the completed roots, the publications and
+// each publication's file rows are read once.
+type publicationLookup struct {
+	s     *Service
+	roots []string
+	pubs  []sqlite.Publication
+	dirs  []string
+	files map[int64]map[string]sqlite.PublicationFile
+}
+
+func (s *Service) newPublicationLookup(ctx context.Context) (*publicationLookup, error) {
+	roots, err := s.completedRoots(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	pubs, err := s.db.ListPublicationPaths(ctx)
+	if err != nil {
+		return nil, err
+	}
+	l := &publicationLookup{s: s, roots: roots, pubs: pubs, files: map[int64]map[string]sqlite.PublicationFile{}}
+	for _, p := range pubs {
+		l.dirs = append(l.dirs, storagePath(filepath.Clean(p.Path), roots))
+	}
+	return l, nil
+}
+
+// find returns the publication a file is inside, and its file row when the
+// manifest names it (Outcome "" when it does not).
+func (l *publicationLookup) find(ctx context.Context, abs string) (*ScannedPublication, error) {
+	target := storagePath(filepath.Clean(abs), l.roots)
+	for i, p := range l.pubs {
+		if !within(l.dirs[i], target) {
+			continue
+		}
+		rel, err := filepath.Rel(l.dirs[i], target)
+		if err != nil {
+			rel = filepath.Base(abs)
+		}
+		out := &ScannedPublication{DownloadID: p.DownloadID, PublicationID: p.ID, Path: filepath.ToSlash(rel)}
+		rows, ok := l.files[p.ID]
+		if !ok {
+			list, err := l.s.db.ListPublicationFiles(ctx, p.ID)
+			if err != nil {
+				return nil, err
+			}
+			rows = make(map[string]sqlite.PublicationFile, len(list))
+			for _, r := range list {
+				rows[r.Path] = r
+			}
+			l.files[p.ID] = rows
+		}
+		out.Outcome = rows[out.Path].Outcome
+		return out, nil
+	}
+	return nil, nil
+}
+
 // ScanImportFolder lists the media files directly in dir (one level, no
 // descent), each with the subtitles that would travel with it and, for a
-// file inside a runner delivery, that delivery.
+// file inside a runner delivery, that delivery. An entry it cannot offer (a
+// symlink, an unreadable file) is listed with the reason instead of being
+// left out.
 func (s *Service) ScanImportFolder(ctx context.Context, dir string) ([]ScannedFile, error) {
 	dir = strings.TrimSpace(dir)
 	if dir == "" {
@@ -134,52 +210,41 @@ func (s *Service) ScanImportFolder(ctx context.Context, dir string) ([]ScannedFi
 	if err != nil {
 		return nil, unreadableImportPath(dir, err)
 	}
+	lookup, err := s.newPublicationLookup(ctx)
+	if err != nil {
+		return nil, err
+	}
+	counts := subtitleCounts(dir)
 	out := []ScannedFile{}
 	for _, e := range entries {
 		p := filepath.Join(dir, e.Name())
 		if e.IsDir() || (!filename.IsVideo(p) && !filename.IsBook(p)) || isReleaseSample(p) {
 			continue
 		}
-		files, err := s.ScanImportPath(ctx, p)
-		if err != nil {
+		skipped := ScannedFile{Path: p, Name: e.Name(), Season: -1, Episodes: []int{}, Kind: "video"}
+		if filename.IsBook(p) {
+			skipped.Kind = "book"
+		}
+		if e.Type()&os.ModeSymlink != 0 {
+			skipped.Skipped = "a symlink; Curator imports only regular files (import the file it points to)"
+			out = append(out, skipped)
 			continue
 		}
-		out = append(out, files...)
-	}
-	counts := subtitleCounts(dir)
-	for i := range out {
-		out[i].Subtitles = counts[out[i].Name]
-		pub, err := s.scannedPublication(ctx, out[i].Path)
-		if err != nil {
-			return nil, err
+		files, err := s.ScanImportPath(ctx, p)
+		if err != nil || len(files) == 0 {
+			skipped.Skipped = "not a readable regular file"
+			if err != nil {
+				skipped.Skipped = err.Error()
+			}
+			out = append(out, skipped)
+			continue
 		}
-		out[i].Publication = pub
-	}
-	return out, nil
-}
-
-// scannedPublication finds the runner delivery a file is part of, if any.
-func (s *Service) scannedPublication(ctx context.Context, abs string) (*ScannedPublication, error) {
-	pub, ok, err := s.publicationClaiming(ctx, abs)
-	if err != nil || !ok {
-		return nil, err
-	}
-	roots, err := s.completedRoots(ctx, nil)
-	if err != nil {
-		return nil, err
-	}
-	rel, err := filepath.Rel(storagePath(filepath.Clean(pub.Path), roots), storagePath(filepath.Clean(abs), roots))
-	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		rel = filepath.Base(abs)
-	}
-	out := &ScannedPublication{DownloadID: pub.DownloadID, PublicationID: pub.ID, Path: filepath.ToSlash(rel)}
-	rows, err := s.db.ListPublicationFiles(ctx, pub.ID)
-	if err != nil {
-		return nil, err
-	}
-	for _, r := range rows {
-		if r.Path == out.Path {
-			out.Outcome = r.Outcome
+		for _, f := range files {
+			f.Subtitles = counts[f.Name]
+			if f.Publication, err = lookup.find(ctx, f.Path); err != nil {
+				return nil, err
+			}
+			out = append(out, f)
 		}
 	}
 	return out, nil
@@ -194,10 +259,10 @@ func subtitleFolder(name string) bool {
 	return false
 }
 
-// folderSubtitles lists the subtitles that belong to the videos directly in
-// dir, relative to it: those beside them, in a Subs folder, or in a folder
-// of a Subs folder (Subs/<video>/2_English.srt). Other folders are other
-// releases and are not looked at.
+// folderSubtitles lists the subtitles that may belong to the videos directly
+// in dir, relative to it: those beside them, in a Subs folder, or in a
+// folder of a Subs folder (Subs/<video>/2_English.srt). Other folders are
+// other releases and are not looked at.
 func folderSubtitles(dir string) []string {
 	var out []string
 	entries, err := os.ReadDir(dir)
@@ -206,7 +271,7 @@ func folderSubtitles(dir string) []string {
 	}
 	for _, e := range entries {
 		if !e.IsDir() {
-			if isSubtitleFile(e.Name()) {
+			if e.Type().IsRegular() && isSubtitleFile(e.Name()) {
 				out = append(out, e.Name())
 			}
 			continue
@@ -221,7 +286,7 @@ func folderSubtitles(dir string) []string {
 		for _, f := range inner {
 			rel := e.Name() + "/" + f.Name()
 			if !f.IsDir() {
-				if isSubtitleFile(f.Name()) {
+				if f.Type().IsRegular() && isSubtitleFile(f.Name()) {
 					out = append(out, rel)
 				}
 				continue
@@ -231,7 +296,7 @@ func folderSubtitles(dir string) []string {
 				continue
 			}
 			for _, d := range deep {
-				if !d.IsDir() && isSubtitleFile(d.Name()) {
+				if d.Type().IsRegular() && isSubtitleFile(d.Name()) {
 					out = append(out, rel+"/"+d.Name())
 				}
 			}
@@ -248,15 +313,39 @@ func folderVideos(dir string) []string {
 	}
 	var out []string
 	for _, e := range entries {
-		if !e.IsDir() && filename.IsVideo(e.Name()) && !isReleaseSample(filepath.Join(dir, e.Name())) {
+		if e.Type().IsRegular() && filename.IsVideo(e.Name()) && !isReleaseSample(filepath.Join(dir, e.Name())) {
 			out = append(out, e.Name())
 		}
 	}
 	return out
 }
 
-// subtitleCounts says how many subtitle files go with each video in dir,
-// by the association a runner delivery's subtitles use.
+// looseSubtitleVideo is the video a subtitle in a loose folder belongs to.
+// A loose folder (a downloads folder) holds unrelated files side by side, so
+// a subtitle beside the videos belongs only to the video its name starts
+// with; one in a Subs folder is matched as in a runner delivery.
+func looseSubtitleVideo(rel string, videos []publicationVideo) (publicationVideo, bool) {
+	if path.Dir(rel) != "." {
+		return subtitleVideo(rel, videos)
+	}
+	stem := strings.ToLower(pathStem(rel))
+	best, bestLen, ties := publicationVideo{}, 0, 0
+	for _, v := range videos {
+		vstem := strings.ToLower(pathStem(v.rel))
+		if !strings.HasPrefix(stem, vstem) {
+			continue
+		}
+		switch {
+		case len(vstem) > bestLen:
+			best, bestLen, ties = v, len(vstem), 1
+		case len(vstem) == bestLen:
+			ties++
+		}
+	}
+	return best, bestLen > 0 && ties == 1
+}
+
+// subtitleCounts says how many subtitle files go with each video in dir.
 func subtitleCounts(dir string) map[string]int {
 	counts := map[string]int{}
 	subs := folderSubtitles(dir)
@@ -272,7 +361,7 @@ func subtitleCounts(dir string) map[string]int {
 		files = append(files, ports.ManifestFile{Path: sub})
 	}
 	for _, unit := range subtitleUnits(files) {
-		if v, ok := subtitleVideo(unit[0].Path, videos); ok {
+		if v, ok := looseSubtitleVideo(unit[0].Path, videos); ok {
 			counts[v.rel] += len(unit)
 		}
 	}
@@ -281,9 +370,11 @@ func subtitleCounts(dir string) map[string]int {
 
 // placeManualSubtitles places the subtitles of each video a standalone
 // manual import placed, beside it and named after it, using the runner
-// delivery's association and naming. A subtitle that cannot be placed is
-// logged and left; it never fails the import. It returns the sources placed.
-func (s *Service) placeManualSubtitles(ctx context.Context, result ImportResult) []string {
+// delivery's naming. A subtitle that cannot be placed is logged and left; it
+// never fails the import. A cancelled import stops here too. It returns
+// each placed subtitle's source and library path, with the source's identity
+// as it was copied.
+func (s *Service) placeManualSubtitles(ctx context.Context, result ImportResult) []sqlite.HandoffRemoval {
 	byDir := map[string]map[string]string{} // source folder → video name → library path
 	for _, f := range result.Files {
 		if !f.Imported || f.Path == "" || f.SourcePath == "" {
@@ -295,7 +386,7 @@ func (s *Service) placeManualSubtitles(ctx context.Context, result ImportResult)
 		}
 		byDir[dir][filepath.Base(f.SourcePath)] = f.Path
 	}
-	var placed []string
+	var placed []sqlite.HandoffRemoval
 	for dir, libraryOf := range byDir {
 		subs := folderSubtitles(dir)
 		if len(subs) == 0 {
@@ -311,7 +402,10 @@ func (s *Service) placeManualSubtitles(ctx context.Context, result ImportResult)
 		}
 		used := map[string]bool{}
 		for _, unit := range subtitleUnits(files) {
-			video, ok := subtitleVideo(unit[0].Path, videos)
+			if ctx.Err() != nil {
+				return placed
+			}
+			video, ok := looseSubtitleVideo(unit[0].Path, videos)
 			if !ok || video.library == "" {
 				continue
 			}
@@ -338,13 +432,20 @@ func (s *Service) placeManualSubtitles(ctx context.Context, result ImportResult)
 			for _, f := range unit {
 				src := filepath.Join(dir, filepath.FromSlash(f.Path))
 				dest := filepath.Join(libDir, name+strings.ToLower(path.Ext(f.Path)))
+				info, err := os.Lstat(src)
+				if err != nil {
+					continue
+				}
 				if same, _ := sameFileBytes(ctx, src, dest); !same {
 					if err := placeSubtitle(ctx, src, dest, ""); err != nil {
+						if ctx.Err() != nil {
+							return placed
+						}
 						s.log.Info("import: subtitle not placed", "file", src, "why", err)
 						continue
 					}
 				}
-				placed = append(placed, src)
+				placed = append(placed, sqlite.HandoffRemoval{Source: src, Library: dest, Identity: removalIdentity(info)})
 			}
 		}
 	}
@@ -379,46 +480,6 @@ func sameFileBytes(ctx context.Context, a, b string) (bool, error) {
 	return da == db, nil
 }
 
-// removeManualOriginals removes the sources of a standalone manual import
-// that asked for it, once the import completed: each video only when its
-// library copy is in place with the same size (the placement proved the
-// bytes as it wrote them, or the library file is a link to the same object),
-// and the subtitles that travelled with them. Same filesystem, this makes
-// the import a rename; across volumes, a copy, verify and unlink.
-func (s *Service) removeManualOriginals(ctx context.Context, dl sqlite.Download, result ImportResult) {
-	var removed, kept []string
-	remove := func(src string) {
-		if err := os.Remove(src); err != nil && !errors.Is(err, os.ErrNotExist) {
-			kept = append(kept, src+": "+err.Error())
-			return
-		}
-		removed = append(removed, src)
-	}
-	for _, f := range result.Files {
-		if !f.Imported || f.Path == "" || f.SourcePath == "" || filepath.Clean(f.Path) == filepath.Clean(f.SourcePath) {
-			continue
-		}
-		src, srcErr := os.Lstat(f.SourcePath)
-		lib, libErr := os.Lstat(f.Path)
-		if srcErr != nil || libErr != nil || !src.Mode().IsRegular() || !lib.Mode().IsRegular() || src.Size() != lib.Size() {
-			kept = append(kept, f.SourcePath+": its library copy could not be confirmed")
-			continue
-		}
-		remove(f.SourcePath)
-	}
-	for _, sub := range result.Sidecars {
-		remove(sub)
-	}
-	if len(removed) > 0 || len(kept) > 0 {
-		_ = s.db.AddHistory(ctx, HistoryManualOriginalsRemoved, dl.MediaItemID, dl.ReleaseTitle,
-			map[string]any{"removed": removed, "kept": kept})
-		s.log.Info("manual import: originals removed", "download", dl.ID, "removed", len(removed), "kept", len(kept))
-	}
-}
-
-// HistoryManualOriginalsRemoved records what Remove original removed.
-const HistoryManualOriginalsRemoved = "manual_import_originals_removed"
-
 // ItemImportFile is one selected file and, for a series, the episode(s) a
 // person chose (empty: read from the name).
 type ItemImportFile struct {
@@ -446,118 +507,218 @@ type ItemImportPlanFile struct {
 	Existing    string              `json:"existing,omitempty"`
 	Reason      string              `json:"reason,omitempty"`
 	Mode        string              `json:"mode,omitempty"` // runner | hardlink | copy | rename | copy_remove
+	Note        string              `json:"note,omitempty"`
 	Subtitles   int                 `json:"subtitles"`
 	Publication *ScannedPublication `json:"publication,omitempty"`
 	Error       string              `json:"error,omitempty"`
 }
 
+// planContext is what every line of one plan shares, read once.
+type planContext struct {
+	item      domain.MediaItem
+	profile   quality.Profile
+	root      string
+	disk      sqlite.CopyDiskState
+	epStates  map[int64]episodeState
+	remove    bool
+	lookup    *publicationLookup
+	subtitles map[string]map[string]int // folder → video name → count
+	downloads map[int64]placeVerdict    // per runner delivery: may it be placed here
+	folders   []string                  // library folders (Remove original's refusal)
+}
+
 // PlanItemImport answers the confirm step without moving anything: per
 // file, the exact destination from the naming template, what happens to a
 // file already there (replaced when the new one ranks higher in the profile,
-// otherwise kept beside it), and how the bytes get there. It mirrors the
-// manual import's own rules; the import decides again when it runs.
+// otherwise kept beside it), how the bytes get there, and every refusal the
+// import itself would make. It uses the import's own rules and readers.
 func (s *Service) PlanItemImport(ctx context.Context, req ItemImportPlanRequest) ([]ItemImportPlanFile, error) {
 	if req.MediaItemID == 0 || len(req.Files) == 0 {
-		return nil, fmt.Errorf("an item and at least one file are required")
+		return nil, fmt.Errorf("%w: an item and at least one file are required", ErrInvalidImportPlan)
 	}
 	item, err := s.db.GetMediaItemFull(ctx, req.MediaItemID)
 	if err != nil {
 		return nil, err
 	}
-	dest, profileID := item.Path, item.QualityProfileID
+	pc := &planContext{item: item, root: item.Path, remove: req.RemoveOriginal,
+		subtitles: map[string]map[string]int{}, downloads: map[int64]placeVerdict{}}
+	profileID := item.QualityProfileID
 	if req.CopyID != 0 {
 		cp, err := s.db.GetMediaCopy(ctx, item.ID, req.CopyID)
 		if err != nil {
-			return nil, fmt.Errorf("copy %d is not a copy of this item", req.CopyID)
+			return nil, fmt.Errorf("%w: copy %d is not a copy of this item", ErrInvalidImportPlan, req.CopyID)
 		}
 		profileID = cp.QualityProfileID
 		if cp.Path != "" {
-			dest = cp.Path
+			pc.root = cp.Path
 		}
 	}
-	if dest == "" {
+	if pc.root == "" {
 		return nil, ErrNoLibraryFolder
 	}
-	profile, err := s.db.GetProfile(ctx, profileID)
-	if err != nil {
+	if pc.profile, err = s.db.GetProfile(ctx, profileID); err != nil {
 		return nil, err
 	}
-	var epStates map[int64]episodeState
 	if item.Kind == domain.KindSeries {
-		if epStates, err = s.episodeStates(ctx, item, req.CopyID); err != nil {
+		if pc.epStates, err = s.episodeStates(ctx, item, req.CopyID); err != nil {
 			return nil, err
 		}
 	}
-	disk, err := s.db.DiskStateForItem(ctx, item.ID, req.CopyID)
-	if err != nil {
+	if pc.disk, err = s.db.DiskStateForItem(ctx, item.ID, req.CopyID); err != nil {
 		return nil, err
+	}
+	if pc.lookup, err = s.newPublicationLookup(ctx); err != nil {
+		return nil, err
+	}
+	if req.RemoveOriginal {
+		if pc.folders, err = s.db.LibraryFolders(ctx); err != nil {
+			return nil, err
+		}
 	}
 	out := make([]ItemImportPlanFile, 0, len(req.Files))
 	for _, f := range req.Files {
-		line := s.planItemFile(ctx, item, profile, dest, disk, epStates, req.RemoveOriginal, f)
+		line, err := s.planItemFile(ctx, pc, f)
+		if err != nil {
+			return nil, err
+		}
 		out = append(out, line)
 	}
 	return out, nil
 }
 
-func (s *Service) planItemFile(ctx context.Context, item domain.MediaItem, profile quality.Profile, root string, disk sqlite.CopyDiskState, epStates map[int64]episodeState, removeOriginal bool, f ItemImportFile) ItemImportPlanFile {
+type placeVerdict struct {
+	note    string
+	refusal error
+}
+
+// verdictFor says whether a runner delivery's files may be placed into this
+// item, by the same fence the placement applies: no note for its own item, a
+// note when the delivery moves here, a refusal when it may not move.
+func (s *Service) verdictFor(ctx context.Context, pc *planContext, downloadID int64) (placeVerdict, error) {
+	if v, ok := pc.downloads[downloadID]; ok {
+		return v, nil
+	}
+	note, refusal, err := s.placeVerdict(ctx, pc, downloadID)
+	if err != nil {
+		return placeVerdict{}, err
+	}
+	pc.downloads[downloadID] = placeVerdict{note, refusal}
+	return pc.downloads[downloadID], nil
+}
+
+func (s *Service) placeVerdict(ctx context.Context, pc *planContext, downloadID int64) (note string, refusal error, err error) {
+	dl, err := s.db.GetDownload(ctx, downloadID)
+	if err != nil {
+		return "", nil, err
+	}
+	if dl.MediaItemID == pc.item.ID {
+		return "", nil, nil
+	}
+	pubs, err := s.db.ListPublicationsForDownload(ctx, downloadID)
+	if err != nil {
+		return "", nil, err
+	}
+	var rows []sqlite.PublicationFile
+	for _, p := range pubs {
+		list, err := s.db.ListPublicationFiles(ctx, p.ID)
+		if err != nil {
+			return "", nil, err
+		}
+		rows = append(rows, list...)
+	}
+	if fence := s.placementFence(ctx, dl, rows); fence != nil {
+		if errors.Is(fence, ErrInvalidResolution) {
+			return "", fence, nil
+		}
+		return "", nil, fence
+	}
+	title := fmt.Sprintf("item %d", dl.MediaItemID)
+	if other, err := s.db.GetMediaItemFull(ctx, dl.MediaItemID); err == nil {
+		title = other.Title
+	}
+	return fmt.Sprintf("this runner delivery was grabbed for %s; placing moves it, and its other files, to this item", title), nil, nil
+}
+
+func (s *Service) planItemFile(ctx context.Context, pc *planContext, f ItemImportFile) (ItemImportPlanFile, error) {
+	item := pc.item
 	src := filepath.Clean(f.Path)
 	base := filepath.Base(src)
 	line := ItemImportPlanFile{Path: src, Season: -1, Episodes: []int{}}
 	info, err := os.Lstat(src)
 	if err != nil || !info.Mode().IsRegular() {
-		line.Error = "not a readable file"
+		line.Error = "not a regular file (a symlink or a folder)"
 		if err != nil {
 			line.Error = unreadableImportPath(src, err).Error()
 		}
-		return line
+		return line, nil
 	}
 	if !deliveryImportablePath(item.Kind, src) {
 		line.Error = "not media of this item's kind"
-		return line
+		return line, nil
 	}
-	line.Subtitles = subtitleCounts(filepath.Dir(src))[base]
-	pub, err := s.scannedPublication(ctx, src)
+	dir := filepath.Dir(src)
+	if pc.subtitles[dir] == nil {
+		pc.subtitles[dir] = subtitleCounts(dir)
+	}
+	pub, err := pc.lookup.find(ctx, src)
 	if err != nil {
-		line.Error = err.Error()
-		return line
+		return line, err
 	}
 	line.Publication = pub
 	if pub != nil {
 		switch {
 		case pub.DownloadID == 0:
 			line.Error = "this runner delivery has no Activity row to place it from"
-			return line
-		case pub.Outcome != "" && pub.Outcome != "unresolved" && pub.Outcome != "pending":
+			return line, nil
+		case pub.Outcome == "":
+			line.Error = "runner's manifest for this delivery does not name this file, so it cannot be placed"
+			return line, nil
+		case pub.Outcome != "unresolved" && pub.Outcome != "pending":
 			line.Error = "runner's delivery already recorded this file as " + pub.Outcome + "; it cannot be placed again"
-			return line
+			return line, nil
+		}
+		v, err := s.verdictFor(ctx, pc, pub.DownloadID)
+		if err != nil {
+			return line, err
+		}
+		if v.refusal != nil {
+			line.Error = strings.TrimPrefix(v.refusal.Error(), ErrInvalidResolution.Error()+": ")
+			return line, nil
+		}
+		line.Note = v.note
+	} else {
+		line.Subtitles = pc.subtitles[dir][base]
+		if pc.remove {
+			if why, err := s.removeOriginalRefusal(ctx, src, pc.folders); err != nil {
+				return line, err
+			} else if why != "" {
+				line.Error = "Remove original is refused: " + why
+				return line, nil
+			}
 		}
 	}
 
+	parsed := parser.Parse(base)
 	var q quality.Quality
 	if item.Kind == domain.KindBook {
 		q = quality.Quality{Source: quality.Source(filename.BookQualitySource(src))}
 	} else {
-		q = parser.Parse(base).Quality
+		q = parsed.Quality
 	}
 	line.Quality = q.Display()
 
 	var have *quality.Quality
-	verified, audio := disk.SourceVerified, disk.Audio
+	verified, audio := pc.disk.SourceVerified, pc.disk.Audio
 	langs := importLanguages(base, src)
 	switch item.Kind {
 	case domain.KindSeries:
 		season, eps := f.Season, f.Episodes
 		if len(eps) == 0 {
-			if fx, ok := filename.Extract(base); ok {
-				season, eps = fx.Season, fx.Episodes
-			} else if p := parser.Parse(base); len(p.Episodes) > 0 {
-				season, eps = p.Season, p.Episodes
-			}
+			season, eps = nameEpisodes(parsed, base)
 		}
-		if len(eps) == 0 {
+		if len(eps) == 0 || season < 0 {
 			line.Error = "choose the episode this file is; its name does not say"
-			return line
+			return line, nil
 		}
 		line.Season, line.Episodes = season, append([]int(nil), eps...)
 		title := ""
@@ -565,9 +726,9 @@ func (s *Service) planItemFile(ctx context.Context, item domain.MediaItem, profi
 			id, err := s.db.GetEpisodeID(ctx, item.ID, season, ep)
 			if err != nil {
 				line.Error = episodeToken(season, []int{ep}) + " is not an episode of this series"
-				return line
+				return line, nil
 			}
-			st := epStates[id]
+			st := pc.epStates[id]
 			if st.Have != nil && (have == nil || quality.Better(*have, *st.Have)) {
 				have, verified, audio = st.Have, st.Verified, st.Audio
 			}
@@ -575,25 +736,25 @@ func (s *Service) planItemFile(ctx context.Context, item domain.MediaItem, profi
 				title = episodeTitle(item, season, ep)
 			}
 		}
-		line.Destination = episodeDestination(root, item, src, q, season, eps, title)
+		line.Destination = episodeDestination(pc.root, item, src, q, season, eps, title)
 	case domain.KindBook:
-		have = disk.Best
+		have = pc.disk.Best
 		langs = nil
-		line.Destination = filepath.Join(root, naming.BookFileName(item.Author, item.Title)+strings.ToLower(filepath.Ext(src)))
+		line.Destination = filepath.Join(pc.root, naming.BookFileName(item.Author, item.Title)+strings.ToLower(filepath.Ext(src)))
 	default:
-		have = disk.Best
-		line.Destination = movieDestination(root, item, src, q)
+		have = pc.disk.Best
+		line.Destination = movieDestination(pc.root, item, src, q)
 	}
 
 	switch {
 	case have == nil:
 		line.Action, line.Reason = "new", "nothing is there yet"
-	case profile.Upgrade(q, langs, *have, verified, audio) || (quality.Better(q, *have) && (item.Kind == domain.KindBook || profile.LanguageAcceptable(langs))):
+	case pc.profile.Upgrade(q, langs, *have, verified, audio) || (quality.Better(q, *have) && (item.Kind == domain.KindBook || pc.profile.LanguageAcceptable(langs))):
 		line.Action, line.Existing = "replace", have.Display()
-		line.Reason = fmt.Sprintf("%s ranks above the %s here in the %s profile; the old file is removed once this one is placed", q.Display(), have.Display(), profile.Name)
+		line.Reason = fmt.Sprintf("%s ranks above the %s here in the %s profile; the old file is removed once this one is placed", q.Display(), have.Display(), pc.profile.Name)
 	default:
 		line.Action, line.Existing = "beside", have.Display()
-		line.Reason = fmt.Sprintf("%s does not rank above the %s here in the %s profile; it is kept beside it", q.Display(), have.Display(), profile.Name)
+		line.Reason = fmt.Sprintf("%s does not rank above the %s here in the %s profile; it is kept beside it", q.Display(), have.Display(), pc.profile.Name)
 		if _, err := os.Lstat(line.Destination); err == nil {
 			line.Reason += " under a [manual-…] name, since a file already has this one"
 		}
@@ -604,16 +765,16 @@ func (s *Service) planItemFile(ctx context.Context, item domain.MediaItem, profi
 		line.Mode = "runner"
 	case sameStorage(src, line.Destination):
 		line.Mode = "hardlink"
-		if removeOriginal {
+		if pc.remove {
 			line.Mode = "rename"
 		}
 	default:
 		line.Mode = "copy"
-		if removeOriginal {
+		if pc.remove {
 			line.Mode = "copy_remove"
 		}
 	}
-	return line
+	return line, nil
 }
 
 func episodeTitle(item domain.MediaItem, season, ep int) string {
@@ -631,8 +792,9 @@ func episodeTitle(item domain.MediaItem, season, ep int) string {
 }
 
 // sameStorage reports that src and dest (or dest's nearest existing folder)
-// are on one filesystem, so a placement can be a link instead of a copy.
-func sameStorage(src, dest string) bool {
+// are on one filesystem, so a placement can be a link instead of a copy. A
+// variable so tests can stand in for a second volume.
+var sameStorage = func(src, dest string) bool {
 	a, err := os.Stat(src)
 	if err != nil {
 		return false
@@ -647,4 +809,22 @@ func sameStorage(src, dest string) bool {
 			return false
 		}
 	}
+}
+
+// handoffEpisodeTargets merges the episode choices of every manual entry of
+// a download's trace, the newest winning per path.
+func handoffEpisodeTargets(handoff []sqlite.HandoffEntry) map[string]sqlite.HandoffEpisodeTarget {
+	var out map[string]sqlite.HandoffEpisodeTarget
+	for _, entry := range handoff {
+		if entry.Step != stepManualQueued {
+			continue
+		}
+		for p, t := range entry.EpisodeTargets {
+			if out == nil {
+				out = map[string]sqlite.HandoffEpisodeTarget{}
+			}
+			out[filepath.Clean(p)] = t
+		}
+	}
+	return out
 }

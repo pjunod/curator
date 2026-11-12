@@ -214,6 +214,11 @@ func (s *Service) runPublicationImport(ctx context.Context, dl sqlite.Download, 
 	}
 	// ManualApproval is honoured on this path (contract section 6): the row
 	// waits for a person, and approving it imports this publication.
+	if !approved && s.placementOutstanding(ctx, dl, pub) {
+		// A person's placement of this publication's files is their approval:
+		// a pass after a failure or a restart carries it out.
+		approved = true
+	}
 	if cfg.ManualApproval && !approved {
 		if pub.Kind == "completed" && dl.State != "awaiting_import" {
 			s.advance(ctx, &dl, "awaiting_import", 1, "", stepAwaiting, "held for your approval before import")
@@ -276,20 +281,27 @@ func (s *Service) runPublicationImport(ctx context.Context, dl sqlite.Download, 
 		}
 	}
 	manual := dl.Intent == GrabIntentManualAdditional
-	var episodeTargets map[string]sqlite.HandoffEpisodeTarget
-	if approved {
-		for i := len(dl.Handoff) - 1; i >= 0; i-- {
-			if dl.Handoff[i].Step == stepManualQueued && len(dl.Handoff[i].Paths) > 0 {
-				selected, manual = nil, true
-				episodeTargets = dl.Handoff[i].EpisodeTargets
-				for _, p := range dl.Handoff[i].Paths {
-					if _, ok := byAbs[filepath.Clean(p)]; ok {
-						selected = append(selected, filepath.Clean(p))
-					}
-				}
-				break
+	// A person's episode choices hold for every attempt, approved or not: a
+	// retry after a failure must not fall back to the name.
+	episodeTargets := handoffEpisodeTargets(dl.Handoff)
+	for i := len(dl.Handoff) - 1; i >= 0; i-- {
+		entry := dl.Handoff[i]
+		if entry.Step != stepManualQueued || len(entry.Paths) == 0 {
+			continue
+		}
+		var mine []string
+		for _, p := range entry.Paths {
+			if _, ok := byAbs[filepath.Clean(p)]; ok {
+				mine = append(mine, filepath.Clean(p))
 			}
 		}
+		// An approved run imports exactly the newest selection; so does any
+		// run when that selection is a person's placement of this
+		// publication's files (a pass after a failure or a restart).
+		if approved {
+			selected, manual = mine, true
+		}
+		break
 	}
 	if len(selected) == 0 {
 		// Everything importable is already resolved, or there is nothing to
@@ -1214,25 +1226,9 @@ func (s *Service) publicationClaiming(ctx context.Context, path string) (sqlite.
 // place it (import exactly that file), discard it (discarded{rejected}; the
 // bytes leave only through the per-file cleanup), or keep it as it is.
 func (s *Service) ResolvePublicationFile(ctx context.Context, downloadID, publicationID int64, relPath, action string) error {
-	return s.ResolvePublicationFileTo(ctx, downloadID, publicationID, relPath, action, PlaceTarget{})
-}
-
-// PlaceTarget is where a Resolve "place" puts the file when a person chose
-// it (Import file… on an item page): the item and copy, and the episode(s)
-// a series file is. Zero values keep the download's own target and let the
-// file's name decide the episode.
-type PlaceTarget struct {
-	MediaItemID int64
-	CopyID      int64
-	Season      int
-	Episodes    []int
-}
-
-// ResolvePublicationFileTo is ResolvePublicationFile with a chosen target
-// for "place". A publication of which nothing is placed yet may be placed
-// into another item (the download follows it); once any of its media is in
-// the library, its files stay with that item.
-func (s *Service) ResolvePublicationFileTo(ctx context.Context, downloadID, publicationID int64, relPath, action string, target PlaceTarget) error {
+	if action == "place" {
+		return s.PlacePublicationFiles(ctx, downloadID, publicationID, PlaceRequest{Files: []PlaceFile{{Path: relPath, Season: -1}}})
+	}
 	pub, err := s.db.GetPublication(ctx, publicationID)
 	if err != nil {
 		return err
@@ -1260,67 +1256,6 @@ func (s *Service) ResolvePublicationFileTo(ctx context.Context, downloadID, publ
 		return err
 	}
 	switch action {
-	case "place":
-		itemID, copyID := dl.MediaItemID, dl.CopyID
-		if target.MediaItemID != 0 {
-			itemID, copyID = target.MediaItemID, target.CopyID
-		}
-		item, err := s.db.GetMediaItemFull(ctx, itemID)
-		if err != nil {
-			return err
-		}
-		if !deliveryImportablePath(item.Kind, relPath) {
-			return fmt.Errorf("%w: only media of this item's kind can be placed; keep or discard %q", ErrInvalidResolution, relPath)
-		}
-		if itemID != dl.MediaItemID {
-			for _, f := range files {
-				if f.Outcome == "placed" && isPublicationMedia(f.Path) {
-					return fmt.Errorf("%w: this runner delivery already placed %s into another title; its files stay with that title", ErrInvalidResolution, f.Path)
-				}
-			}
-		}
-		if copyID != 0 {
-			if _, err := s.db.GetMediaCopy(ctx, itemID, copyID); err != nil {
-				return fmt.Errorf("%w: copy %d is not a copy of this item", ErrInvalidResolution, copyID)
-			}
-		}
-		abs := filepath.Clean(filepath.Join(pub.Path, filepath.FromSlash(relPath)))
-		entry := sqlite.HandoffEntry{Step: stepManualQueued, At: time.Now().UnixMilli(),
-			Detail: "operator placed " + relPath + " from Resolve", Paths: []string{abs},
-			TargetMediaItemID: itemID, TargetCopyID: copyID}
-		if len(target.Episodes) > 0 {
-			if item.Kind != domain.KindSeries {
-				return fmt.Errorf("%w: episodes apply only to a series", ErrInvalidResolution)
-			}
-			if err := s.knownEpisodes(ctx, item.ID, target.Season, target.Episodes); err != nil {
-				return fmt.Errorf("%w: %w", ErrInvalidResolution, err)
-			}
-			entry.Detail = fmt.Sprintf("operator placed %s as %s", relPath, episodeToken(target.Season, target.Episodes))
-			entry.EpisodeTargets = map[string]sqlite.HandoffEpisodeTarget{abs: {Season: target.Season, Episodes: append([]int(nil), target.Episodes...)}}
-		}
-		if itemID != dl.MediaItemID || copyID != dl.CopyID {
-			dl.MediaItemID, dl.CopyID = itemID, copyID
-			if err := s.db.UpdateDownloadTarget(ctx, dl); err != nil {
-				return err
-			}
-		}
-		dl.Handoff = append(dl.Handoff, entry)
-		if err := s.db.UpdateDownloadHandoff(ctx, dl); err != nil {
-			return err
-		}
-		if err := s.db.SetPublicationState(ctx, pub.ID, "discovered", ""); err != nil {
-			return err
-		}
-		var cfg ports.ClientConfig
-		if dl.ClientID != 0 {
-			if cfg, err = s.db.GetDownloadClient(ctx, dl.ClientID); err != nil {
-				return err
-			}
-		}
-		if !s.enqueuePublicationImportApproved(ctx, dl, cfg, pub.ID, true) {
-			return fmt.Errorf("import worker is unavailable or full; retry")
-		}
-		return nil
 	case "discard":
 		file.Outcome, file.DiscardReason, file.Reason = "discarded", "rejected", "discarded by an operator in Resolve"
 	case "keep":
@@ -1352,6 +1287,191 @@ func (s *Service) ResolvePublicationFileTo(ctx context.Context, downloadID, publ
 		if res.Skipped != "" {
 			return fmt.Errorf("%w; deletion waits: %s", ErrDiscardedButKept, res.Skipped)
 		}
+	}
+	return nil
+}
+
+// PlaceFile is one runner-delivery file a person places, relative to the
+// publication, with the episode(s) it is (none: its name decides).
+type PlaceFile struct {
+	Path     string
+	Season   int
+	Episodes []int
+}
+
+// PlaceRequest places files of one publication into an item and copy (zero:
+// the download's own). Every file goes in one admission and one import, so
+// a season pack's files picked together are placed together.
+type PlaceRequest struct {
+	MediaItemID int64
+	CopyID      int64
+	Files       []PlaceFile
+}
+
+// errImportBusy refuses a placement while this delivery's import runs: the
+// selection it would record must not race the running attempt's.
+var errImportBusy = fmt.Errorf("%w: an import of this delivery is running; place once it has finished", ErrInvalidResolution)
+
+// PlacePublicationFiles is Resolve's place for one or more files of a
+// publication, optionally into another item (the download follows it) while
+// nothing of the delivery is in the library yet. Everything is validated
+// under the download lock first; the target, the selection and the
+// publication's return to discovered are then written in one transaction,
+// and the import is queued as an explicit retry.
+func (s *Service) PlacePublicationFiles(ctx context.Context, downloadID, publicationID int64, req PlaceRequest) error {
+	if len(req.Files) == 0 {
+		return fmt.Errorf("%w: no files to place", ErrInvalidResolution)
+	}
+	pub, err := s.db.GetPublication(ctx, publicationID)
+	if err != nil {
+		return err
+	}
+	if pub.DownloadID != downloadID {
+		return ErrNotFound
+	}
+	unlock, ok := s.tryLockDownload(downloadID)
+	if !ok {
+		return errImportBusy
+	}
+	defer unlock()
+	if s.ImportRunning(downloadID) {
+		return errImportBusy
+	}
+	dl, err := s.db.GetDownload(ctx, downloadID)
+	if err != nil {
+		return err
+	}
+	files, err := s.db.ListPublicationFiles(ctx, pub.ID)
+	if err != nil {
+		return err
+	}
+	itemID, copyID := dl.MediaItemID, dl.CopyID
+	if req.MediaItemID != 0 {
+		itemID, copyID = req.MediaItemID, req.CopyID
+	}
+	item, err := s.db.GetMediaItemFull(ctx, itemID)
+	if err != nil {
+		return err
+	}
+	if copyID != 0 {
+		if _, err := s.db.GetMediaCopy(ctx, itemID, copyID); err != nil {
+			return fmt.Errorf("%w: copy %d is not a copy of this item", ErrInvalidResolution, copyID)
+		}
+	}
+	if itemID != dl.MediaItemID {
+		if err := s.placementFence(ctx, dl, files); err != nil {
+			return err
+		}
+	}
+	byPath := make(map[string]sqlite.PublicationFile, len(files))
+	for _, f := range files {
+		byPath[f.Path] = f
+	}
+	entry := sqlite.HandoffEntry{Step: stepManualQueued, At: time.Now().UnixMilli(), Placement: true,
+		TargetMediaItemID: itemID, TargetCopyID: copyID}
+	var names []string
+	seen := map[string]bool{}
+	for _, f := range req.Files {
+		row, ok := byPath[f.Path]
+		if !ok || (row.Outcome != "unresolved" && row.Outcome != "pending") {
+			return fmt.Errorf("%w: %q is not an unresolved file of this publication", ErrInvalidResolution, f.Path)
+		}
+		if seen[f.Path] {
+			return fmt.Errorf("%w: %q is listed twice", ErrInvalidResolution, f.Path)
+		}
+		seen[f.Path] = true
+		if !deliveryImportablePath(item.Kind, f.Path) {
+			return fmt.Errorf("%w: only media of this item's kind can be placed; keep or discard %q", ErrInvalidResolution, f.Path)
+		}
+		abs := filepath.Clean(filepath.Join(pub.Path, filepath.FromSlash(f.Path)))
+		entry.Paths = append(entry.Paths, abs)
+		name := f.Path
+		if len(f.Episodes) > 0 {
+			if item.Kind != domain.KindSeries {
+				return fmt.Errorf("%w: episodes apply only to a series", ErrInvalidResolution)
+			}
+			if err := s.knownEpisodes(ctx, item.ID, f.Season, f.Episodes); err != nil {
+				return fmt.Errorf("%w: %s: %w", ErrInvalidResolution, f.Path, err)
+			}
+			if entry.EpisodeTargets == nil {
+				entry.EpisodeTargets = map[string]sqlite.HandoffEpisodeTarget{}
+			}
+			entry.EpisodeTargets[abs] = sqlite.HandoffEpisodeTarget{Season: f.Season, Episodes: append([]int(nil), f.Episodes...)}
+			name += " as " + episodeToken(f.Season, f.Episodes)
+		}
+		names = append(names, name)
+	}
+	entry.Detail = "operator placed " + strings.Join(names, ", ")
+	if itemID != dl.MediaItemID {
+		entry.Detail += fmt.Sprintf(" (moved from item %d)", dl.MediaItemID)
+	}
+	var cfg ports.ClientConfig
+	if dl.ClientID != 0 {
+		if cfg, err = s.db.GetDownloadClient(ctx, dl.ClientID); err != nil {
+			return err
+		}
+	}
+	dl.MediaItemID, dl.CopyID = itemID, copyID
+	dl.Handoff = append(dl.Handoff, entry)
+	if err := s.db.CommitPublicationPlacement(ctx, dl, pub.ID); err != nil {
+		return err
+	}
+	if !s.enqueuePublicationImportApproved(ctx, dl, cfg, pub.ID, true) {
+		// The placement is recorded: whichever pass imports this publication
+		// next imports exactly these files into this target.
+		return fmt.Errorf("placement recorded, but the import worker is busy; start it with Import in Activity")
+	}
+	return nil
+}
+
+// placementOutstanding reports that the newest manual selection of a
+// download is a person's placement naming a file of this publication that is
+// not resolved yet.
+func (s *Service) placementOutstanding(ctx context.Context, dl sqlite.Download, pub sqlite.Publication) bool {
+	for i := len(dl.Handoff) - 1; i >= 0; i-- {
+		entry := dl.Handoff[i]
+		if entry.Step != stepManualQueued || len(entry.Paths) == 0 {
+			continue
+		}
+		if !entry.Placement {
+			return false
+		}
+		rows, err := s.db.ListPublicationFiles(ctx, pub.ID)
+		if err != nil {
+			return false
+		}
+		open := map[string]bool{}
+		for _, r := range rows {
+			if r.Outcome == "unresolved" || r.Outcome == "pending" {
+				open[filepath.Clean(filepath.Join(pub.Path, filepath.FromSlash(r.Path)))] = true
+			}
+		}
+		for _, p := range entry.Paths {
+			if open[filepath.Clean(p)] {
+				return true
+			}
+		}
+		return false
+	}
+	return false
+}
+
+// placementFence refuses to move a delivery to another item once any of it
+// is in the library: a file a publication recorded as placed, or a
+// placement any attempt of this download committed (a partial or failed one
+// included).
+func (s *Service) placementFence(ctx context.Context, dl sqlite.Download, files []sqlite.PublicationFile) error {
+	for _, f := range files {
+		if f.Outcome == "placed" && isPublicationMedia(f.Path) {
+			return fmt.Errorf("%w: this runner delivery already placed %s into its own title; its files stay with that title", ErrInvalidResolution, f.Path)
+		}
+	}
+	n, err := s.db.CountCommittedPlacements(ctx, dl.ID, dl.GenerationKey)
+	if err != nil {
+		return err
+	}
+	if n > 0 {
+		return fmt.Errorf("%w: this runner delivery already put %d file(s) into its own title; its files stay with that title", ErrInvalidResolution, n)
 	}
 	return nil
 }

@@ -125,6 +125,12 @@ func (s *Service) StartImporters(ctx context.Context) {
 		} else if n > 0 {
 			s.log.Info("marked delivery attempts interrupted by the previous process", "attempts", n)
 		}
+		// A Remove original journaled by the previous process is finished.
+		s.importWG.Add(1)
+		go func() {
+			defer s.importWG.Done()
+			s.resumeOriginalRemovals(ctx)
+		}()
 	})
 	workers := importWorkerCount(os.Getenv("MONARR_IMPORT_WORKERS"))
 	for i := 0; i < workers; i++ {

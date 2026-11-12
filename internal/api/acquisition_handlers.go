@@ -1059,7 +1059,11 @@ func (s *Server) BlocklistQueueItem(w http.ResponseWriter, r *http.Request, id i
 // can see under a path (the manual-import preview).
 func (s *Server) ScanImportPath(w http.ResponseWriter, r *http.Request, params apigen.ScanImportPathParams) {
 	scan := s.deps.Acquisition.ScanImportPath
-	if params.Depth != nil && *params.Depth == 1 {
+	if params.Depth != nil {
+		if *params.Depth != 1 {
+			writeError(w, http.StatusBadRequest, "depth must be 1 (one folder) or absent (the whole tree)")
+			return
+		}
 		scan = s.deps.Acquisition.ScanImportFolder
 	}
 	files, err := scan(r.Context(), params.Path)
@@ -1082,6 +1086,10 @@ func (s *Server) ScanImportPath(w http.ResponseWriter, r *http.Request, params a
 		if f.Subtitles > 0 {
 			n := f.Subtitles
 			out[len(out)-1].Subtitles = &n
+		}
+		if f.Skipped != "" {
+			skipped := f.Skipped
+			out[len(out)-1].Skipped = &skipped
 		}
 	}
 	writeJSON(w, http.StatusOK, out)
@@ -1119,12 +1127,16 @@ func (s *Server) PlanImport(w http.ResponseWriter, r *http.Request) {
 		req.Files = append(req.Files, file)
 	}
 	plan, err := s.deps.Acquisition.PlanItemImport(r.Context(), req)
-	if err != nil {
-		if errors.Is(err, acquisition.ErrNotFound) || errors.Is(err, sql.ErrNoRows) {
-			writeError(w, http.StatusNotFound, "not found")
-			return
-		}
+	switch {
+	case err == nil:
+	case errors.Is(err, acquisition.ErrNotFound), errors.Is(err, sqlite.ErrNotFound), errors.Is(err, sql.ErrNoRows):
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	case errors.Is(err, acquisition.ErrInvalidImportPlan), errors.Is(err, acquisition.ErrNoLibraryFolder):
 		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	default:
+		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, plan)
@@ -2441,6 +2453,57 @@ func (s *Server) fillPipelineV2(item *apigen.QueueItem, d sqlite.Download, pubs 
 	item.Publications = &list
 }
 
+// PlacePublicationFiles implements POST /queue/{id}/publications/{publicationId}/files/place.
+func (s *Server) PlacePublicationFiles(w http.ResponseWriter, r *http.Request, id, publicationId int64) {
+	var in apigen.PlacePublicationFilesJSONRequestBody
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&in); err != nil || len(in.Files) == 0 {
+		writeError(w, http.StatusBadRequest, "files are required")
+		return
+	}
+	req := acquisition.PlaceRequest{}
+	if in.MediaItemId != nil {
+		req.MediaItemID = *in.MediaItemId
+	}
+	if in.CopyId != nil {
+		req.CopyID = *in.CopyId
+	}
+	for _, f := range in.Files {
+		file := acquisition.PlaceFile{Path: f.Path, Season: -1}
+		if f.Season != nil {
+			file.Season = *f.Season
+		}
+		if f.Episodes != nil {
+			file.Episodes = *f.Episodes
+		}
+		req.Files = append(req.Files, file)
+	}
+	if err := s.deps.Acquisition.PlacePublicationFiles(r.Context(), id, publicationId, req); err != nil {
+		if errors.Is(err, acquisition.ErrInvalidResolution) {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		s.acqErr(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// GetQueueItem implements GET /queue/{id}: one row in any state, so a page
+// that started an import can follow it to the end.
+func (s *Server) GetQueueItem(w http.ResponseWriter, r *http.Request, id int64) {
+	dl, err := s.deps.Store.GetDownload(r.Context(), id)
+	if err != nil {
+		s.acqErr(w, err)
+		return
+	}
+	out, err := s.queueItems(r.Context(), []sqlite.Download{dl})
+	if err != nil {
+		s.acqErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, out[0])
+}
+
 // ResolvePublicationFile records a person's decision on one unresolved
 // publication file.
 func (s *Server) ResolvePublicationFile(w http.ResponseWriter, r *http.Request, id, publicationId int64) {
@@ -2449,20 +2512,7 @@ func (s *Server) ResolvePublicationFile(w http.ResponseWriter, r *http.Request, 
 		writeError(w, http.StatusBadRequest, "path and action are required")
 		return
 	}
-	target := acquisition.PlaceTarget{Season: -1}
-	if in.MediaItemId != nil {
-		target.MediaItemID = *in.MediaItemId
-	}
-	if in.CopyId != nil {
-		target.CopyID = *in.CopyId
-	}
-	if in.Season != nil {
-		target.Season = *in.Season
-	}
-	if in.Episodes != nil {
-		target.Episodes = *in.Episodes
-	}
-	if err := s.deps.Acquisition.ResolvePublicationFileTo(r.Context(), id, publicationId, in.Path, in.Action, target); err != nil {
+	if err := s.deps.Acquisition.ResolvePublicationFile(r.Context(), id, publicationId, in.Path, in.Action); err != nil {
 		if errors.Is(err, acquisition.ErrInvalidResolution) {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
