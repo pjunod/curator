@@ -127,12 +127,28 @@ func (d *DB) AddNotifier(ctx context.Context, n ports.NotifierConfig) (int64, er
 func notifierToPort(r sqlitegen.Notifier) ports.NotifierConfig {
 	var settings map[string]string
 	_ = json.Unmarshal([]byte(r.Settings), &settings)
+	var features []string
+	_ = json.Unmarshal([]byte(r.Features), &features)
 	return ports.NotifierConfig{
 		ID: r.ID, Type: r.Type, Name: r.Name, Settings: settings,
 		OnGrab: r.OnGrab != 0, OnImport: r.OnImport != 0,
 		OnFailed: r.OnFailed != 0, OnHealth: r.OnHealth != 0,
-		Enabled: r.Enabled != 0,
+		Enabled: r.Enabled != 0, Features: features,
 	}
+}
+
+// SetNotifierFeatures stores what the notifier's far side said it supports
+// (contract amendment 5.3).
+func (d *DB) SetNotifierFeatures(ctx context.Context, id int64, features []string) error {
+	if features == nil {
+		features = []string{}
+	}
+	raw, err := json.Marshal(features)
+	if err != nil {
+		return err
+	}
+	_, err = d.W.ExecContext(ctx, `UPDATE notifiers SET features=? WHERE id=?`, string(raw), id)
+	return err
 }
 
 // ListNotifiers returns every stored notifier.
@@ -216,6 +232,7 @@ type Delivery struct {
 	WaitingOn       string               `json:"waitingOn,omitempty"`
 	VisibleAt       int64                `json:"visibleAt,omitempty"`
 	ItemIDs         []int64              `json:"itemIds,omitempty"`
+	OperationID     string               `json:"operationId,omitempty"`
 }
 
 // RequestKey is the key Cinema sees for this attempt: "<key>/<attempt>".
@@ -234,7 +251,7 @@ func deliveryFrom(r sqlitegen.NotifierDelivery) Delivery {
 		NextAt: r.NextAt, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
 		PublicationID: r.PublicationID, Directory: r.Directory, IdempotencyKey: r.IdempotencyKey,
 		Attempt: r.Attempt, RemoteRequestID: r.RemoteRequestID, RemoteState: r.RemoteState,
-		WaitingOn: r.WaitingOn, VisibleAt: r.VisibleAt,
+		WaitingOn: r.WaitingOn, VisibleAt: r.VisibleAt, OperationID: r.OperationID,
 	}
 	_ = json.Unmarshal([]byte(r.ExpectedFilesJson), &d.ExpectedFiles)
 	_ = json.Unmarshal([]byte(r.ItemIdsJson), &d.ItemIDs)
@@ -255,6 +272,8 @@ type OutboxWrite struct {
 	ExpectedFiles  []ports.ExpectedFile
 	Event          string
 	Payload        string
+	// OperationID keys a Re-match's sub-delivery (op/<id>/<dir-hash>).
+	OperationID string
 }
 
 // insertOutboxTx writes outbox rows inside the caller's transaction.
@@ -269,13 +288,13 @@ func insertOutboxTx(ctx context.Context, tx *sql.Tx, rows []OutboxWrite, now int
 			expected = string(raw)
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO notifier_deliveries
-			(notifier_id, download_id, publication_id, directory, idempotency_key, expected_files_json, event, payload, next_at, created_at, updated_at)
-			VALUES (?,?,?,?,?,?,?,?,?,?,?)
+			(notifier_id, download_id, publication_id, directory, idempotency_key, expected_files_json, event, payload, next_at, created_at, updated_at, operation_id)
+			VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
 			ON CONFLICT (notifier_id, idempotency_key) WHERE idempotency_key != '' DO UPDATE SET
 				expected_files_json=excluded.expected_files_json, payload=excluded.payload, status='pending', attempts=0,
 				attempt=attempt+1, last_error='', result='', remote_request_id='', remote_state='', waiting_on='',
 				visible_at=0, item_ids_json='[]', next_at=excluded.next_at, created_at=excluded.created_at, updated_at=excluded.updated_at`,
-			o.NotifierID, o.DownloadID, o.PublicationID, o.Directory, o.IdempotencyKey, expected, o.Event, o.Payload, now, now, now); err != nil {
+			o.NotifierID, o.DownloadID, o.PublicationID, o.Directory, o.IdempotencyKey, expected, o.Event, o.Payload, now, now, now, o.OperationID); err != nil {
 			return err
 		}
 	}

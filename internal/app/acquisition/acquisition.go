@@ -150,6 +150,8 @@ type Service struct {
 	recoveryMu        sync.Mutex
 	recoveryReceiptMu sync.Mutex
 	recoveryCancels   map[string]context.CancelFunc
+	rematchMu         sync.Mutex
+	rematchCancels    map[string]context.CancelFunc
 	db                *sqlite.DB
 	bus               *bus.Bus
 	log               *slog.Logger

@@ -1,0 +1,521 @@
+package acquisition
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/pjunod/monarr/internal/domain"
+	"github.com/pjunod/monarr/internal/domain/quality"
+	"github.com/pjunod/monarr/internal/infra/sqlite"
+	"github.com/pjunod/monarr/internal/ports"
+)
+
+type rematchFixture struct {
+	svc  *Service
+	db   *sqlite.DB
+	show int64 // setup's series, Test Show (2020), S01E01-E02
+	root domain.RootFolder
+}
+
+func newRematchFixture(t *testing.T) rematchFixture {
+	t.Helper()
+	svc, db, show := setup(t, nil, nil)
+	root, err := db.AddRootFolder(context.Background(), filepath.Join(t.TempDir(), "movies"), domain.KindMixed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(root.Path, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return rematchFixture{svc: svc, db: db, show: show, root: root}
+}
+
+func (f rematchFixture) movie(t *testing.T, title string, year int, tmdb int64, origin string) domain.MediaItem {
+	t.Helper()
+	ctx := context.Background()
+	item := domain.MediaItem{Kind: domain.KindMovie, Title: title, SortTitle: strings.ToLower(title), Year: year,
+		IDs: domain.ExternalIDs{TMDB: tmdb}, Monitored: true, RootFolderID: f.root.ID,
+		Path: filepath.Join(f.root.Path, title+" ("+strconv.Itoa(year)+")")}
+	id, err := f.db.CreateMediaItem(ctx, item)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if origin != "" {
+		if err := f.db.SetMediaItemOrigin(ctx, id, origin); err != nil {
+			t.Fatal(err)
+		}
+	}
+	item.ID = id
+	return item
+}
+
+// file records a library file with a quality and, optionally, its source
+// release.
+func (f rematchFixture) file(t *testing.T, itemID int64, path, body, guid string, eps ...int64) int64 {
+	t.Helper()
+	ctx := context.Background()
+	writeFile(t, path, body)
+	id, err := f.db.UpsertFile(ctx, itemID, 0, path, int64(len(body)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.db.SetFileQuality(ctx, id, quality.FromString("Bluray-2160p")); err != nil {
+		t.Fatal(err)
+	}
+	if guid != "" {
+		if _, err := f.db.W.ExecContext(ctx, `UPDATE media_files SET source_guid=?, source_indexer_id=1, source_release=? WHERE id=?`, guid, "Dune.1984.2160p.BluRay-GRP", id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(eps) > 0 {
+		if err := f.db.ReplaceFileEpisodeLinks(ctx, id, eps); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return id
+}
+
+// run executes a preview the way the API does and waits for the end.
+func (f rematchFixture) run(t *testing.T, req RematchRequest, p RematchPreview) RematchStatus {
+	t.Helper()
+	ctx := context.Background()
+	req.RequestID = "req-" + p.Fingerprint
+	req.SourceRevision, req.TargetRevision, req.PlanFingerprint = p.SourceRevision, p.TargetRevision, p.Fingerprint
+	op, err := f.svc.StartRematch(ctx, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return f.wait(t, op.ID)
+}
+
+func (f rematchFixture) wait(t *testing.T, id string) RematchStatus {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		st, err := f.svc.GetRematch(context.Background(), id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		switch st.State {
+		case "complete", "cancelled", "failed":
+			// The goroutine releases the leases just after.
+			time.Sleep(20 * time.Millisecond)
+			return st
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("re-match %s did not finish", id)
+	return RematchStatus{}
+}
+
+// The wrong title: Dune (1984) was adopted for a folder that is Dune
+// (2021). The file moves to a new item in a folder with the {tmdb-N} hint,
+// the emptied adopted item is removed, history records it on the target, and
+// Cinema gets one operation-keyed sub-delivery naming the removed path.
+func TestRematchToNewTitleRenamesAndRemovesAdoptedSource(t *testing.T) {
+	f := newRematchFixture(t)
+	ctx := context.Background()
+	if _, err := f.db.AddNotifier(ctx, ports.NotifierConfig{Type: "plurx", Name: "cinema", Settings: map[string]string{"url": "http://c", "apiKey": "k"}, OnImport: true, Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	src := f.movie(t, "Dune", 1984, 841, "adopted")
+	oldPath := filepath.Join(src.Path, "Dune (1984) [Bluray-2160p].mkv")
+	fileID := f.file(t, src.ID, oldPath, "dune bytes", "")
+	writeFile(t, strings.TrimSuffix(oldPath, ".mkv")+".en.srt", "subs")
+
+	newTitle := domain.MediaItem{Kind: domain.KindMovie, Title: "Dune", Year: 2021, IDs: domain.ExternalIDs{TMDB: 438631}, RootFolderID: f.root.ID}
+	req := RematchRequest{SourceItemID: src.ID, NewTarget: &newTitle}
+	p, err := f.svc.PreviewRematch(ctx, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(p.Moves) != 1 || p.Moves[0].Mode != "rename" || !strings.Contains(p.Moves[0].To, "Dune (2021) {tmdb-438631}") {
+		t.Fatalf("moves = %+v, want one rename into the tagged folder", p.Moves)
+	}
+	if p.Target.InLibrary || !p.Target.FolderChosen || p.SourceOutcome != "removed" {
+		t.Fatalf("preview = %+v, want a new title, a chosen folder and the adopted source removed", p)
+	}
+	if len(p.Moves[0].Sidecars) != 1 || p.Moves[0].Sidecars[0].To != strings.TrimSuffix(p.Moves[0].To, ".mkv")+".en.srt" {
+		t.Fatalf("sidecars = %+v, want the subtitle renamed with the video", p.Moves[0].Sidecars)
+	}
+	if !strings.Contains(p.Cinema, "does not support removed paths") {
+		t.Fatalf("cinema = %q, want the old-cinema warning before it runs", p.Cinema)
+	}
+	if _, err := os.Stat(oldPath); err != nil {
+		t.Fatal("the preview touched the file")
+	}
+
+	// The API adds the title through the normal add path, then executes.
+	targetID, err := f.db.CreateMediaItem(ctx, domain.MediaItem{Kind: domain.KindMovie, Title: "Dune", SortTitle: "dune", Year: 2021,
+		IDs: domain.ExternalIDs{TMDB: 438631}, Monitored: true, RootFolderID: f.root.ID, Path: filepath.Join(f.root.Path, "Dune (2021)")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.NewTarget, req.TargetItemID = nil, targetID
+	st := f.run(t, req, p)
+	if st.State != "complete" {
+		t.Fatalf("state = %s (%s), want complete", st.State, st.LastError)
+	}
+	newPath := p.Moves[0].To
+	if b, err := os.ReadFile(newPath); err != nil || string(b) != "dune bytes" {
+		t.Fatalf("new file: %q %v", b, err)
+	}
+	if _, err := os.Stat(oldPath); !os.IsNotExist(err) {
+		t.Fatal("the old path still exists")
+	}
+	if _, err := os.Stat(p.Moves[0].Sidecars[0].To); err != nil {
+		t.Fatal("the subtitle did not travel with the video")
+	}
+	target, err := f.db.GetMediaItemFull(ctx, targetID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(target.Files) != 1 || target.Files[0].ID != fileID || target.Files[0].Path != newPath || !strings.HasSuffix(target.Path, "{tmdb-438631}") {
+		t.Fatalf("target = %+v / %+v, want the file row moved and the tagged folder", target.Path, target.Files)
+	}
+	if _, err := f.db.GetMediaItemFull(ctx, src.ID); err == nil {
+		t.Fatal("the emptied adopted item was kept")
+	}
+	if _, err := os.Stat(src.Path); !os.IsNotExist(err) {
+		t.Fatal("the emptied folder was kept")
+	}
+	var n int
+	_ = f.db.R.QueryRowContext(ctx, `SELECT COUNT(*) FROM history_events WHERE type='rematched' AND media_item_id=?`, targetID).Scan(&n)
+	if n != 1 {
+		t.Fatalf("rematched history on the target = %d, want 1", n)
+	}
+	deliveries, err := f.db.OperationDeliveries(ctx, st.ID)
+	if err != nil || len(deliveries) != 1 {
+		t.Fatalf("deliveries = %+v %v, want one sub-delivery", deliveries, err)
+	}
+	d := deliveries[0]
+	if !strings.HasPrefix(d.IdempotencyKey, "op/"+st.ID+"/") || d.Event != "moved" || d.Directory != f.root.Path || len(d.ExpectedFiles) != 1 {
+		t.Fatalf("delivery = %+v, want op-keyed moved request at the root with the placed file", d)
+	}
+	var n2 ports.Notification
+	_ = json.Unmarshal([]byte(d.Payload), &n2)
+	if n2.Import == nil || len(n2.Import.RemovedPaths) != 1 || n2.Import.RemovedPaths[0] != oldPath || n2.Import.FromItemID != src.ID {
+		t.Fatalf("payload = %+v, want the removed path and the source item", n2.Import)
+	}
+}
+
+// The right title is already in the library: the file merges into it beside
+// its file, the user-added source stays wanted, and the release that
+// produced the file is blocklisted for the source through the replacement
+// path (intent rematch, complete).
+func TestRematchMergesIntoExistingItemAndBlocklistsVacatedRelease(t *testing.T) {
+	f := newRematchFixture(t)
+	ctx := context.Background()
+	src := f.movie(t, "Dune", 1984, 841, "")
+	fileID := f.file(t, src.ID, filepath.Join(src.Path, "Dune (1984) [Bluray-2160p].mkv"), "4k", "guid-1")
+	dst := f.movie(t, "Dune", 2021, 438631, "")
+	f.file(t, dst.ID, filepath.Join(dst.Path, "Dune (2021) [WEBDL-1080p].mkv"), "1080", "")
+
+	req := RematchRequest{SourceItemID: src.ID, TargetItemID: dst.ID}
+	p, err := f.svc.PreviewRematch(ctx, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.SourceOutcome != "stays" || !strings.Contains(p.SourceReason, "you added it") || len(p.Blocklist) != 1 || !p.BlocklistOn {
+		t.Fatalf("preview = %+v, want the source kept and the release blocklisted", p)
+	}
+	if !strings.Contains(p.Moves[0].Note, "kept beside") || p.Target.FolderChosen {
+		t.Fatalf("move = %+v, want it kept beside the existing file in the existing folder", p.Moves[0])
+	}
+	st := f.run(t, req, p)
+	if st.State != "complete" {
+		t.Fatalf("state = %s (%s)", st.State, st.LastError)
+	}
+	target, _ := f.db.GetMediaItemFull(ctx, dst.ID)
+	if len(target.Files) != 2 {
+		t.Fatalf("target files = %d, want 2", len(target.Files))
+	}
+	source, err := f.db.GetMediaItemFull(ctx, src.ID)
+	if err != nil || len(source.Files) != 0 {
+		t.Fatalf("source = %+v %v, want it kept, with no files", source.Files, err)
+	}
+	var blocked, ops int
+	_ = f.db.R.QueryRowContext(ctx, `SELECT COUNT(*) FROM release_blacklist_identity WHERE media_item_id=? AND guid='guid-1'`, src.ID).Scan(&blocked)
+	_ = f.db.R.QueryRowContext(ctx, `SELECT COUNT(*) FROM replacement_operations WHERE intent='rematch' AND state='complete' AND media_item_id=?`, src.ID).Scan(&ops)
+	if blocked != 1 || ops != 1 {
+		t.Fatalf("blocklist = %d, replacement ops = %d; want the release blocklisted for the source", blocked, ops)
+	}
+	_ = fileID
+}
+
+// Series: Move to… one file to another episode of the same show; and to
+// another show that lacks the episode, which needs a pick and is left out
+// until given one. A file covering two episodes maps to both.
+func TestRematchSeriesEpisodeMapAndPicker(t *testing.T) {
+	f := newRematchFixture(t)
+	ctx := context.Background()
+	show, _ := f.db.GetMediaItemFull(ctx, f.show)
+	ep := func(item domain.MediaItem, s, e int) int64 {
+		got, ok := findEpisode(item, s, e)
+		if !ok {
+			t.Fatalf("no S%dE%d", s, e)
+		}
+		return got.ID
+	}
+	e1, e2 := ep(show, 1, 1), ep(show, 1, 2)
+	one := f.file(t, f.show, filepath.Join(show.Path, "Season 01", "Test Show - S01E01 - Pilot [Bluray-2160p].mkv"), "e1", "guid-e1", e1)
+
+	// Same show, different episode.
+	req := RematchRequest{SourceItemID: f.show, TargetItemID: f.show, FileIDs: []int64{one}, Choices: []RematchChoice{{FileID: one, Season: 1, Episodes: []int{2}}}}
+	p, err := f.svc.PreviewRematch(ctx, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(p.Moves) != 1 || !strings.Contains(p.Moves[0].To, "S01E02 - Finale") || p.SourceOutcome != "stays" || len(p.Blocklist) != 1 {
+		t.Fatalf("preview = %+v, want S01E01 renamed to S01E02, the show kept, the release blocklisted", p)
+	}
+	if st := f.run(t, req, p); st.State != "complete" {
+		t.Fatalf("state = %s (%s)", st.State, st.LastError)
+	}
+	show, _ = f.db.GetMediaItemFull(ctx, f.show)
+	if len(show.Files) != 1 || len(show.Files[0].EpisodeIDs) != 1 || show.Files[0].EpisodeIDs[0] != e2 {
+		t.Fatalf("files = %+v, want the file linked to S01E02 only", show.Files)
+	}
+
+	// Another show with only S01E01: a double-episode file needs a pick.
+	other := domain.MediaItem{Kind: domain.KindSeries, Title: "Other Show", SortTitle: "other show", Year: 2021, IDs: domain.ExternalIDs{TMDB: 200}, Monitored: true,
+		Path: filepath.Join(f.root.Path, "Other Show (2021)"), Seasons: []domain.Season{{Number: 1, Episodes: []domain.Episode{
+			{SeasonNumber: 1, EpisodeNumber: 1, Title: "One"}, {SeasonNumber: 1, EpisodeNumber: 3, Title: "Three"}, {SeasonNumber: 1, EpisodeNumber: 4, Title: "Four"}}}}}
+	otherID, err := f.db.CreateMediaItem(ctx, other)
+	if err != nil {
+		t.Fatal(err)
+	}
+	double := f.file(t, f.show, filepath.Join(show.Path, "Season 01", "Test Show - S01E01-E02 [Bluray-2160p].mkv"), "e1e2", "", e1, e2)
+	req = RematchRequest{SourceItemID: f.show, TargetItemID: otherID, FileIDs: []int64{double}}
+	p, err = f.svc.PreviewRematch(ctx, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(p.Moves) != 0 || len(p.LeftOut) != 1 || !p.LeftOut[0].NeedsPick || !strings.Contains(p.LeftOut[0].Problem, "S01E02") || len(p.Episodes) != 3 {
+		t.Fatalf("preview = %+v, want the double file left out with a picker of 3 episodes", p)
+	}
+	req.Choices = []RematchChoice{{FileID: double, Season: 1, Episodes: []int{3, 4}}}
+	p, err = f.svc.PreviewRematch(ctx, req)
+	if err != nil || len(p.Moves) != 1 || !strings.Contains(p.Moves[0].To, "S01E03-E04") {
+		t.Fatalf("preview = %+v %v, want the file mapped to S01E03-E04", p, err)
+	}
+	if st := f.run(t, req, p); st.State != "complete" {
+		t.Fatalf("state = %s (%s)", st.State, st.LastError)
+	}
+	moved, _ := f.db.GetMediaItemFull(ctx, otherID)
+	if len(moved.Files) != 1 || len(moved.Files[0].EpisodeIDs) != 2 {
+		t.Fatalf("other show files = %+v, want one file on two episodes", moved.Files)
+	}
+}
+
+// Fences: a download in flight blocks the preview (named, retryable) and the
+// execution (409 rematch_blocked); a library change since the preview is
+// refused as stale.
+func TestRematchFenceRefusals(t *testing.T) {
+	f := newRematchFixture(t)
+	ctx := context.Background()
+	src := f.movie(t, "Dune", 1984, 841, "")
+	f.file(t, src.ID, filepath.Join(src.Path, "Dune (1984) [Bluray-2160p].mkv"), "x", "")
+	dst := f.movie(t, "Dune", 2021, 438631, "")
+	now := time.Now().UnixMilli()
+	res, err := f.db.W.ExecContext(ctx, `INSERT INTO downloads(media_item_id,release_title,protocol,state,added_at,updated_at) VALUES(?,?,?,?,?,?)`, dst.ID, "Dune.2021", "torrent", "downloading", now, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dlID, _ := res.LastInsertId()
+	req := RematchRequest{SourceItemID: src.ID, TargetItemID: dst.ID}
+	p, err := f.svc.PreviewRematch(ctx, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Blocked == nil || p.Blocked.Reason != "download" || p.Blocked.ItemID != dst.ID || !p.Blocked.Retry || !strings.Contains(p.Blocked.Message, "Dune") {
+		t.Fatalf("blocked = %+v, want the target's download named", p.Blocked)
+	}
+	req.RequestID, req.SourceRevision, req.TargetRevision, req.PlanFingerprint = "r1", p.SourceRevision, p.TargetRevision, p.Fingerprint
+	var blocked *RematchBlockedError
+	if _, err := f.svc.StartRematch(ctx, req); !errors.As(err, &blocked) {
+		t.Fatalf("err = %v, want rematch_blocked", err)
+	}
+	if _, err := f.db.W.ExecContext(ctx, `UPDATE downloads SET state='imported' WHERE id=?`, dlID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.db.W.ExecContext(ctx, `UPDATE media_items SET title='Dune!' WHERE id=?`, src.ID); err != nil {
+		t.Fatal(err)
+	}
+	req.RequestID = "r2"
+	if _, err := f.svc.StartRematch(ctx, req); !errors.Is(err, ErrRematchStalePreview) {
+		t.Fatalf("err = %v, want a stale preview refused", err)
+	}
+}
+
+// Across volumes: a verified copy, the original removed only after commit.
+// Stop before commit puts already-moved files back and leaves the source
+// untouched; a cancelled copy leaves no temp file.
+func TestRematchCrossVolumeCopyAndStop(t *testing.T) {
+	f := newRematchFixture(t)
+	ctx := context.Background()
+	old := sameStorage
+	sameStorage = func(string, string) bool { return false }
+	t.Cleanup(func() { sameStorage = old })
+	src := f.movie(t, "Dune", 1984, 841, "")
+	oldPath := filepath.Join(src.Path, "Dune (1984) [Bluray-2160p].mkv")
+	f.file(t, src.ID, oldPath, strings.Repeat("d", 1<<20), "")
+	dst := f.movie(t, "Dune", 2021, 438631, "")
+	req := RematchRequest{SourceItemID: src.ID, TargetItemID: dst.ID}
+	p, err := f.svc.PreviewRematch(ctx, req)
+	if err != nil || p.Moves[0].Mode != "copy" {
+		t.Fatalf("preview = %+v %v, want a copy", p.Moves, err)
+	}
+	st := f.run(t, req, p)
+	if st.State != "complete" || st.BytesDone != 1<<20 || st.BytesTotal != 1<<20 {
+		t.Fatalf("status = %+v, want complete with every byte counted", st.RematchOperation)
+	}
+	if _, err := os.Stat(oldPath); !os.IsNotExist(err) {
+		t.Fatal("the original was kept after a committed copy")
+	}
+
+	// A cancelled copy: nothing left behind, source intact.
+	cctx, cancel := context.WithCancel(ctx)
+	cancel()
+	srcFile := writeFile(t, filepath.Join(t.TempDir(), "a.mkv"), "abc")
+	temp := filepath.Join(t.TempDir(), ".a.partial")
+	if _, err := copyVerified(cctx, srcFile, temp, temp+".final", nil); err == nil {
+		t.Fatal("a cancelled copy succeeded")
+	}
+	if _, err := os.Stat(temp); !os.IsNotExist(err) {
+		t.Fatal("a cancelled copy left its temp file")
+	}
+
+	// Stop after one file moved, before commit: it goes back.
+	sameStorage = old
+	movedBack := writeFile(t, filepath.Join(dst.Path, "Dune (2021) [Bluray-2160p].mkv"), "")
+	_ = os.Remove(movedBack)
+	src2 := f.movie(t, "Arrival", 2016, 329865, "")
+	a := filepath.Join(src2.Path, "Arrival (2016) [Bluray-2160p].mkv")
+	f.file(t, src2.ID, a, "arrival", "")
+	dst2 := f.movie(t, "Arrival", 2017, 999, "")
+	req = RematchRequest{SourceItemID: src2.ID, TargetItemID: dst2.ID}
+	p, _ = f.svc.PreviewRematch(ctx, req)
+	req.RequestID, req.SourceRevision, req.TargetRevision, req.PlanFingerprint = "stop", p.SourceRevision, p.TargetRevision, p.Fingerprint
+	op, err := f.svc.startRematchLocked(ctx, req, p.Fingerprint)
+	if err != nil {
+		t.Fatal(err)
+	}
+	moves, _ := f.db.ListRematchMoves(ctx, op.ID)
+	if err := f.svc.moveRematchFile(ctx, &moves[0], &rematchProgress{s: f.svc, id: op.ID}); err != nil {
+		t.Fatal(err)
+	}
+	moves[0].State = "rematch_moved"
+	_ = f.db.PutRematchMove(ctx, moves[0])
+	if err := f.svc.CancelRematch(ctx, op.ID); err != nil {
+		t.Fatal(err)
+	}
+	f.svc.runRematch(ctx, op.ID)
+	got, _ := f.svc.GetRematch(ctx, op.ID)
+	if got.State != "cancelled" {
+		t.Fatalf("state = %s, want cancelled", got.State)
+	}
+	if b, err := os.ReadFile(a); err != nil || string(b) != "arrival" {
+		t.Fatal("Stop did not put the moved file back")
+	}
+	item, _ := f.db.GetMediaItemFull(ctx, src2.ID)
+	if len(item.Files) != 1 || item.Files[0].Path != a {
+		t.Fatalf("source files = %+v, want the row untouched", item.Files)
+	}
+}
+
+// A restart mid-operation resumes from the journal by what it observes: a
+// rename that happened before the crash is committed, not redone; a source
+// that changed since the preview is failed for review, never moved.
+func TestRematchResumesAfterCrash(t *testing.T) {
+	f := newRematchFixture(t)
+	ctx := context.Background()
+	src := f.movie(t, "Dune", 1984, 841, "")
+	a := f.file(t, src.ID, filepath.Join(src.Path, "Dune (1984) [Bluray-2160p].mkv"), "a", "")
+	b := f.file(t, src.ID, filepath.Join(src.Path, "Dune (1984) [WEBDL-1080p].mkv"), "b", "")
+	if err := f.db.SetFileQuality(ctx, b, quality.FromString("WEBDL-1080p")); err != nil {
+		t.Fatal(err)
+	}
+	dst := f.movie(t, "Dune", 2021, 438631, "")
+	req := RematchRequest{SourceItemID: src.ID, TargetItemID: dst.ID}
+	p, err := f.svc.PreviewRematch(ctx, req)
+	if err != nil || len(p.Moves) != 2 {
+		t.Fatalf("preview = %+v %v", p.Moves, err)
+	}
+	req.RequestID, req.SourceRevision, req.TargetRevision, req.PlanFingerprint = "crash", p.SourceRevision, p.TargetRevision, p.Fingerprint
+	op, err := f.svc.startRematchLocked(ctx, req, p.Fingerprint)
+	if err != nil {
+		t.Fatal(err)
+	}
+	moves, _ := f.db.ListRematchMoves(ctx, op.ID)
+	var moveA, moveB sqlite.RematchMove
+	for _, m := range moves {
+		if m.FileID == a {
+			moveA = m
+		} else {
+			moveB = m
+		}
+	}
+	// The crash: A was renamed but the journal still says planned; B was
+	// rewritten by someone else.
+	_ = os.MkdirAll(filepath.Dir(moveA.Target), 0o755)
+	if err := os.Rename(moveA.Source, moveA.Target); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(10 * time.Millisecond)
+	writeFile(t, moveB.Source, "b changed")
+
+	f.svc.resumeRematches(ctx)
+	st, _ := f.svc.GetRematch(ctx, op.ID)
+	if st.State != "complete" {
+		t.Fatalf("state = %s (%s), want complete", st.State, st.LastError)
+	}
+	var result rematchResult
+	_ = json.Unmarshal(st.Result, &result)
+	if len(result.Moved) != 1 || len(result.Failed) != 1 || result.Failed[0].From != moveB.Source {
+		t.Fatalf("result = %+v, want A moved and B failed for review", result)
+	}
+	if body, _ := os.ReadFile(moveB.Source); string(body) != "b changed" {
+		t.Fatal("a changed source was moved")
+	}
+	target, _ := f.db.GetMediaItemFull(ctx, dst.ID)
+	source, _ := f.db.GetMediaItemFull(ctx, src.ID)
+	if len(target.Files) != 1 || target.Files[0].Path != moveA.Target || len(source.Files) != 1 {
+		t.Fatalf("target %+v source %+v, want A in the target and B left with the source", target.Files, source.Files)
+	}
+}
+
+// Two titles' leases are taken sorted and all-or-none, so two holders cannot
+// deadlock; a held title makes the other wait, then busy.
+func TestLockImportTargetsSortedAllOrNone(t *testing.T) {
+	svc, _, _ := setup(t, nil, nil)
+	ctx := context.Background()
+	held, release := svc.lockImportTarget(ctx, 7)
+	defer release()
+	if _, _, err := svc.lockImportTargets(ctx, 50*time.Millisecond, 9, 7); !errors.Is(err, ErrImportTargetBusy) {
+		t.Fatalf("err = %v, want busy while 7 is held", err)
+	}
+	// 9 was released when 7 could not be taken.
+	if _, r, ok := svc.tryLockImportTarget(ctx, 9); !ok {
+		t.Fatal("title 9 stayed held after a refused pair")
+	} else {
+		r()
+	}
+	_ = held
+	release()
+	both, releaseBoth, err := svc.lockImportTargets(ctx, time.Second, 9, 7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer releaseBoth()
+	if h, ok := heldTarget(both); !ok || !h.covers(7) || !h.covers(9) || h.covers(8) {
+		t.Fatalf("held = %+v, want both titles covered", h)
+	}
+}

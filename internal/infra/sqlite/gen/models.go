@@ -449,6 +449,7 @@ type MediaItem struct {
 	Monitor          string
 	MonitorSince     string
 	MonitorSeason    int64
+	Origin           string
 }
 
 type Notifier struct {
@@ -461,6 +462,7 @@ type Notifier struct {
 	OnFailed int64
 	OnHealth int64
 	Enabled  int64
+	Features string
 }
 
 type NotifierDelivery struct {
@@ -486,6 +488,7 @@ type NotifierDelivery struct {
 	WaitingOn         string
 	VisibleAt         int64
 	ItemIdsJson       string
+	OperationID       string
 }
 
 type PipelineTiming struct {
@@ -592,6 +595,22 @@ type ReleaseBlacklistIdentity struct {
 	IndexerID   int64
 	Reason      string
 	AddedAt     int64
+}
+
+type RematchOperation struct {
+	OperationID  string
+	RequestID    string
+	Fingerprint  string
+	State        string
+	SourceItemID int64
+	TargetItemID int64
+	Plan         string
+	Result       string
+	BytesDone    int64
+	BytesTotal   int64
+	LastError    string
+	CreatedAt    int64
+	UpdatedAt    int64
 }
 
 type ReplacementFileObservation struct {

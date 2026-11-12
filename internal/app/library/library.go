@@ -499,6 +499,31 @@ func (s *Service) existingByAnyID(ctx context.Context, req AddRequest) error {
 	return nil
 }
 
+// Hydrate reads a title from its provider as Add would, without storing
+// anything: a Re-match preview of a title not yet in the library needs its
+// episodes (ADR 0027).
+func (s *Service) Hydrate(ctx context.Context, req AddRequest) (domain.MediaItem, error) {
+	if req.Kind == domain.KindBook {
+		if s.books == nil {
+			return domain.MediaItem{}, ports.ErrProviderNotConfigured
+		}
+		item, err := s.books.GetBook(ctx, req.OLID)
+		item.Source = "openlibrary"
+		return item, err
+	}
+	item, err := s.hydrateAdd(ctx, req)
+	if err != nil {
+		return item, err
+	}
+	if item.IDs.TMDB == 0 {
+		item.IDs.TMDB = req.TMDBID
+	}
+	if item.IDs.TVDB == 0 {
+		item.IDs.TVDB = req.TVDBID
+	}
+	return item, nil
+}
+
 func (s *Service) hydrateAdd(ctx context.Context, req AddRequest) (domain.MediaItem, error) {
 	switch req.HydrationSource {
 	case "":
