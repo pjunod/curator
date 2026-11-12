@@ -526,7 +526,7 @@ One migration refuses rather than guesses, and names what blocks it.
   let each named request finish or **Cancel deletion request**; then deploy
   again. `SELECT batch_id FROM runner_delivery_explicit_delete_batches WHERE
   abandoned_at=0` lists them.
-Migration 0079 (v0.46.0) refuses nothing: a publication an earlier build
+Migration 0079 (v0.47.0) refuses nothing: a publication an earlier build
 (v0.45.x) recorded with a `v1_record` manifest keeps its stored body and
 drains through its import and per-file cleanup; only removed ones are
 normalised. A database older than 0072 migrates straight through to the

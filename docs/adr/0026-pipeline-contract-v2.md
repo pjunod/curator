@@ -287,7 +287,7 @@ restart, and publications left in Resolve for their subtitles and `.nfo`s.
     payload published at a removed publication's path is a new publication,
     never attached to the removed one.
 
-## Addendum — M6b, the v1 strings and the v1 manifest source go (v0.46.0)
+## Addendum — M6b, the v1 strings and the v1 manifest source go (v0.47.0)
 
 31. **Curator reads Runner's typed terminal only.** The `translate()` branch for
     `job_pp_finished`, the ordered history reader and the receipt lookup no

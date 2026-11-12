@@ -1,11 +1,12 @@
 # Monarr — Project Status
 
-## Pipeline contract v2, M6b (curator part): the v1 strings and the v1 manifest source go — 2026-11-08 · v0.46.0 (rebased onto main 0ab7d0d, 2026-11-12)
+## Pipeline contract v2, M6b (curator part): the v1 strings and the v1 manifest source go — 2026-11-08 · v0.47.0 (rebased onto main d3b351a, 2026-11-12)
 
 **Status:** branch `claude/pipeline-v2-m6b-curator`, rebased onto `origin/main`
-0ab7d0d (item status, which also carries VERSION 0.46.0 — see the version
-note below; overdue exits, adoption, completed-root guard, record closure,
-historical approvals all kept) · owner: Claude (Sonnet builder) · pushed,
+d3b351a (v0.46.1: item status, the overdue queue-only cancel, the
+payload-mismatch continue for series/movie packs and audiobook
+all-or-nothing, plus overdue exits, adoption, completed-root guard, record
+closure and historical approvals, all kept) · owner: Claude (Sonnet builder) · pushed,
 **no PR** (by instruction), not reviewed, not merged, not deployed.
 
 **Merge after runner M6b is deployed** (Curator now reads only typed
@@ -16,9 +17,14 @@ only removed ones are normalised.
 **Migration renumbered 2026-11-12:** main took `0077_unwedge_legacy_imports.sql`, so
 this branch's `retire_v1_record` became **0078**, and is now **0079**
 (`migration0079.go`, `retireV1RecordVersion = 79`) because main's
-`claude/item-status` took `0078_item_status.sql`. VERSION stays 0.46.0 by
-instruction, although main is already 0.46.0 (item status): **conflict for
-Paul** — CLAUDE.md wants a bump for a user-visible change (0.47.0).
+`claude/item-status` took `0078_item_status.sql`. VERSION is 0.47.0 (minor
+over main's 0.46.1).
+
+Manifest source check after the rebase: `verifyBookParts` (audiobook
+all-or-nothing) and the placement digest checks read the expected digests
+and sizes the publication import binds from `publicationManifest` — the
+directory's `.runner-manifest.json` through `readManifestFile`, or a stored
+body when the file is gone — so every check agrees on one manifest.
 
 Built (plan M6 curator item 1, IMPL_CURATOR section 9):
 

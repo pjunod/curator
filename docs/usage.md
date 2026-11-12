@@ -1668,7 +1668,7 @@ Recognized obfuscated video keeps its source filename and receives a native
 container extension at its library destination. Cancellation rolls back any
 published placement that has not yet committed library metadata.
 
-## Upgrading past the v1 record (v0.46.0)
+## Upgrading past the v1 record (v0.47.0)
 
 Curator reads only Runner's typed terminal and each publication's
 `.runner-manifest.json`; the old `pp_status` / `final_dir` strings and the
