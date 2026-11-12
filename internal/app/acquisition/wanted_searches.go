@@ -485,7 +485,7 @@ func (s *Service) executeWantedTarget(ctx context.Context, run sqlite.WantedSear
 			}
 		}
 	}()
-	tally, err := s.searchAndGrabBestScoped(searchCtx, w, enabled, allowed, beforeGrab)
+	tally, err := s.searchAndGrabBestScoped(withSearchTrigger(searchCtx, "wanted"), w, enabled, allowed, beforeGrab)
 	close(done)
 	// Read before stopSearch cancels it unconditionally: only a cancellation
 	// that arrived during the search means the search was cut short.

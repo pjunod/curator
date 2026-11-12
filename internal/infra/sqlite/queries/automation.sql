@@ -91,8 +91,15 @@ SELECT * FROM notifier_deliveries
 UPDATE notifier_deliveries
    SET attempts = ?, last_error = ?, result = ?, status = ?, next_at = ?,
        attempt = ?, remote_request_id = ?, remote_state = ?, waiting_on = ?,
-       visible_at = ?, item_ids_json = ?, updated_at = ?
+       visible_at = ?, item_ids_json = ?, file_results_json = ?, updated_at = ?
  WHERE id = ?;
+
+-- name: ListItemDeliveries :many
+-- An item's Cinema sub-deliveries, newest first (the status panel).
+SELECT * FROM notifier_deliveries
+ WHERE media_item_id = ? AND idempotency_key != ''
+ ORDER BY id DESC
+ LIMIT ?;
 
 -- name: ListDeliveries :many
 SELECT * FROM notifier_deliveries
@@ -106,14 +113,14 @@ SELECT * FROM notifier_deliveries
 -- name: RetryDelivery :one
 UPDATE notifier_deliveries
    SET status = 'pending', attempts = 0, result = '', next_at = ?, updated_at = ?,
-       attempt = attempt + 1, remote_request_id = '', remote_state = '', waiting_on = ''
+       attempt = attempt + 1, remote_request_id = '', remote_state = '', waiting_on = '', file_results_json = '[]'
  WHERE id = ? AND notifier_id = ? AND status = 'failed'
 RETURNING *;
 
 -- name: RetryFailedDeliveries :execrows
 UPDATE notifier_deliveries
    SET status = 'pending', attempts = 0, result = '', next_at = ?, updated_at = ?,
-       attempt = attempt + 1, remote_request_id = '', remote_state = '', waiting_on = ''
+       attempt = attempt + 1, remote_request_id = '', remote_state = '', waiting_on = '', file_results_json = '[]'
  WHERE notifier_id = ? AND status = 'failed';
 
 -- name: DeleteDeliveriesForNotifier :exec

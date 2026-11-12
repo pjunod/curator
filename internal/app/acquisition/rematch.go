@@ -508,11 +508,11 @@ func (s *Service) planRematch(ctx context.Context, req RematchRequest) (*rematch
 	}
 	p.Fingerprint = rematchFingerprint(plan)
 	n := len(p.Moves)
-	p.Summary = fmt.Sprintf("Move %d file%s", n, plural(n))
+	p.Summary = fmt.Sprintf("Move %d file%s", n, pluralS(n))
 	return plan, nil
 }
 
-func plural(n int) string {
+func pluralS(n int) string {
 	if n == 1 {
 		return ""
 	}
@@ -879,7 +879,7 @@ func (s *Service) rematchSourceOutcome(ctx context.Context, plan *rematchPlan, m
 	case origin != "adopted":
 		p.SourceReason = "stays in the library as wanted: you added it"
 	case remaining > 0:
-		p.SourceReason = fmt.Sprintf("stays in the library: it still has %d file%s", remaining, plural(remaining))
+		p.SourceReason = fmt.Sprintf("stays in the library: it still has %d file%s", remaining, pluralS(remaining))
 	case downloads > 0:
 		p.SourceReason = "stays in the library: it has downloads in Activity"
 	default:
@@ -1913,7 +1913,7 @@ func (s *Service) rematchOutbox(ctx context.Context, opID string, source, target
 		paths = append(paths, f.Path)
 	}
 	whole := ports.Notification{Event: "moved", Title: "Re-matched: " + target.Title,
-		Body:   fmt.Sprintf("%d file%s moved from %s to %s", len(placed), plural(len(placed)), source.Title, target.Title),
+		Body:   fmt.Sprintf("%d file%s moved from %s to %s", len(placed), pluralS(len(placed)), source.Title, target.Title),
 		Fields: map[string]string{"from": source.Title, "to": target.Title},
 		Import: &ports.ImportInfo{MediaItemID: target.ID, FromItemID: source.ID, Paths: paths, Dirs: uniqueDirs(paths), Kind: string(target.Kind),
 			Title: target.Title, TmdbID: target.IDs.TMDB, ImdbID: target.IDs.IMDB, RemovedPaths: removed}}

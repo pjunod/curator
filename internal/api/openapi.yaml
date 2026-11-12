@@ -1911,6 +1911,14 @@ paths:
           in: query
           required: false
           schema: { type: boolean }
+        - name: blocklist
+          in: query
+          required: false
+          description: >
+            With fromClient: also blocklist the release (the item page's
+            Cancel download), so automation does not grab it again. Activity's
+            Remove leaves it off: a removal is not a verdict on the release.
+          schema: { type: boolean }
       responses:
         "204": { description: Removed. }
         "404":
@@ -2443,6 +2451,81 @@ paths:
               schema: { $ref: "#/components/schemas/AutoSearchResult" }
         "404":
           description: No such item.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /library/{id}/status:
+    get:
+      operationId: getLibraryItemStatus
+      summary: Where this item stands, from search to cinema
+      description: >
+        A read projection over the search records, download rows,
+        publications and cinema sub-deliveries. A movie or book returns six
+        stages (searched, downloading, processed, moved, cinema_notified,
+        in_cinema), the current download with Runner's own rate and ETA, and
+        earlier attempts. A series returns season summaries; with `season`
+        it returns that season's episodes, each with its own stages. "In
+        cinema" is confirmed at visibleAt; an item with no record returns
+        the last known facts.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+        - name: season
+          in: query
+          required: false
+          schema: { type: integer }
+      responses:
+        "200":
+          description: The item's status.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ItemStatus" }
+        "404":
+          description: No such item.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /library/{id}/status/confirm:
+    post:
+      operationId: confirmLibraryItemInCinema
+      summary: Ask cinema to confirm this item's files
+      description: >
+        Queues a scan request per folder, with the item's current files as
+        the expected files, through the same notification outbox an import
+        writes. The read-back then confirms each file or names what is
+        missing. The request key is stable per item (or per episode), so
+        asking again refreshes the same request instead of adding one.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+        - name: episode
+          in: query
+          required: false
+          description: An episode id; only that episode's files are named.
+          schema: { type: integer, format: int64 }
+      responses:
+        "202":
+          description: Requests queued.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [queued]
+                properties:
+                  queued: { type: integer, description: Folder requests queued. }
+        "404":
+          description: No such item.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "409":
+          description: No readable files, or no cinema notifier to ask.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -5374,6 +5457,127 @@ components:
       required: [path]
       properties:
         path: { type: string }
+
+    ItemStatus:
+      type: object
+      required: [mediaItemId, kind, generatedAt, active, done, headline]
+      properties:
+        mediaItemId: { type: integer, format: int64 }
+        kind: { type: string }
+        generatedAt: { type: integer, format: int64, description: Unix ms. }
+        active: { type: boolean, description: A download is moving; poll every 2 s. }
+        done: { type: boolean, description: Every stage is done; the panel collapses to one line. }
+        headline: { $ref: "#/components/schemas/StatusHeadline" }
+        stages:
+          type: array
+          items: { $ref: "#/components/schemas/StatusStage" }
+        download: { $ref: "#/components/schemas/StatusDownload" }
+        cinema: { $ref: "#/components/schemas/StatusCinema" }
+        attempts:
+          type: array
+          items: { $ref: "#/components/schemas/StatusAttempt" }
+        seasons:
+          type: array
+          items: { $ref: "#/components/schemas/StatusSeason" }
+        episodes:
+          type: array
+          items: { $ref: "#/components/schemas/StatusEpisode" }
+
+    StatusHeadline:
+      type: object
+      required: [state, title]
+      properties:
+        state: { type: string, enum: [done, active, waiting, failed, todo] }
+        title: { type: string }
+        detail: { type: string }
+        at: { type: integer, format: int64, description: Unix ms the client formats beside the title. }
+
+    StatusStage:
+      type: object
+      required: [key, state]
+      properties:
+        key: { type: string, enum: [searched, downloading, processed, moved, cinema_notified, in_cinema] }
+        state: { type: string, enum: [done, active, waiting, failed, todo] }
+        at: { type: integer, format: int64, description: Unix ms; absent when there is no time to show. }
+        detail: { type: string }
+        actions:
+          type: array
+          description: Actions that apply to this stage.
+          items:
+            type: string
+            enum: [search, interactive_search, open_activity, cancel_download, retry_import, resend_cinema, confirm_cinema]
+
+    StatusDownload:
+      type: object
+      required: [id, release, state, bytes, total, progress]
+      properties:
+        id: { type: integer, format: int64 }
+        release: { type: string }
+        indexer: { type: string }
+        state: { type: string }
+        bytes: { type: integer, format: int64 }
+        total: { type: integer, format: int64 }
+        progress: { type: number }
+        rateBps: { type: integer, format: int64, description: "Runner's rate_bps, relayed." }
+        etaSeconds: { type: integer, format: int64, description: remaining_bytes / rate_bps. }
+        stage: { type: string, description: "Runner's post-processing stage." }
+        stageSince: { type: integer, format: int64 }
+        episodes: { type: integer, description: Episodes covered; more than one is a season pack. }
+
+    StatusCinema:
+      type: object
+      required: [deliveryId, notifierId, status]
+      properties:
+        deliveryId: { type: integer, format: int64 }
+        notifierId: { type: integer, format: int64 }
+        status: { type: string }
+        waitingOn: { type: string }
+        visibleAt: { type: integer, format: int64 }
+        itemIds:
+          type: array
+          items: { type: integer, format: int64 }
+        error: { type: string }
+
+    StatusAttempt:
+      type: object
+      required: [downloadId, release, at, outcome]
+      properties:
+        downloadId: { type: integer, format: int64 }
+        release: { type: string }
+        indexer: { type: string }
+        at: { type: integer, format: int64 }
+        outcome: { type: string }
+        reason: { type: string }
+
+    StatusSeason:
+      type: object
+      required: [season, episodes, inCinema, onDisk, active, summary]
+      properties:
+        season: { type: integer }
+        episodes: { type: integer }
+        inCinema: { type: integer }
+        onDisk: { type: integer }
+        active: { type: boolean }
+        summary: { type: string }
+        download: { $ref: "#/components/schemas/StatusDownload" }
+
+    StatusEpisode:
+      type: object
+      required: [episodeId, season, episode, wantableId, summary, inPack, stages]
+      properties:
+        episodeId: { type: integer, format: int64 }
+        season: { type: integer }
+        episode: { type: integer }
+        title: { type: string }
+        wantableId: { type: string, description: Scopes Search now to this episode (POST /wanted/searches, scope target). }
+        summary: { type: string }
+        at: { type: integer, format: int64, description: Unix ms the client formats beside the summary. }
+        inPack: { type: boolean }
+        downloadId: { type: integer, format: int64, description: The download this episode's track follows. }
+        cinema: { $ref: "#/components/schemas/StatusCinema" }
+        stages:
+          type: array
+          items: { $ref: "#/components/schemas/StatusStage" }
 
     AutoSearchResult:
       type: object

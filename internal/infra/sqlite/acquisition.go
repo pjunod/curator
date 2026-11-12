@@ -494,6 +494,11 @@ type Download struct {
 	DeadlineAt          time.Time
 	StateEnteredAt      time.Time
 	RunnerStage         string // last post-processing stage Runner reported
+	RunnerStageAt       time.Time
+	// Runner's own transfer numbers, relayed unchanged: bytes per second and
+	// bytes still to fetch (0 = not reported). The ETA is their ratio.
+	RateBps        int64
+	RemainingBytes int64
 }
 
 type ManualGrabRequest struct {
@@ -538,7 +543,8 @@ func downloadFromRow(r sqlitegen.Download) Download {
 	dl.RunnerFetchCause, dl.RunnerBlamesRelease, dl.RunnerSalvage = r.RunnerFetchCause, r.RunnerBlamesRelease != 0, r.RunnerSalvage
 	dl.RunnerFetchedJSON, dl.Provisional = r.RunnerFetchedJson, r.Provisional != 0
 	dl.RunnerOutcomeAt, dl.DeadlineAt, dl.StateEnteredAt = msTime(r.RunnerOutcomeAt), msTime(r.DeadlineAt), msTime(r.StateEnteredAt)
-	dl.RunnerStage = r.RunnerStage
+	dl.RunnerStage, dl.RunnerStageAt = r.RunnerStage, msTime(r.RunnerStageAt)
+	dl.RateBps, dl.RemainingBytes = r.RateBps, r.RemainingBytes
 	if r.CopyID.Valid {
 		dl.CopyID = r.CopyID.Int64
 	}
@@ -1036,6 +1042,19 @@ func (d *DB) DeleteDownload(ctx context.Context, id int64) error {
 	}
 	if n, err := d.Write.DismissImportedDownload(ctx, id); err != nil || n > 0 {
 		return err
+	}
+	if dl.State == "failed" && dl.RunnerSalvage == "pending" {
+		// Runner has said a salvage publication is coming for this row; the
+		// row is how it is attributed when it arrives, so it is hidden, not
+		// deleted (a publication arriving for a deleted row has no owner).
+		var salvage int
+		if err := d.R.QueryRowContext(ctx, `SELECT COUNT(*) FROM publications WHERE download_id=? AND kind='salvage'`, id).Scan(&salvage); err != nil {
+			return err
+		}
+		if salvage == 0 {
+			_, err := d.W.ExecContext(ctx, `UPDATE downloads SET activity_dismissed=1 WHERE id=?`, id)
+			return err
+		}
 	}
 	n, err := d.Write.DeleteDownload(ctx, id)
 	if err == nil && n == 0 {

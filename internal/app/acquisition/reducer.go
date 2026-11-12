@@ -214,6 +214,12 @@ func (s *Service) applyStatus(ctx context.Context, dl sqlite.Download, cfg ports
 	}
 	now := time.Now()
 	w := sqlite.RunnerStatusWrite{DownloadID: dl.ID, Transfer: dl.Transfer, Progress: st.Progress, Stage: st.Stage}
+	if st.RateBps != nil {
+		w.RateBps = max(0, *st.RateBps)
+	}
+	if st.RemainingBytes != nil {
+		w.RemainingBytes = max(0, *st.RemainingBytes)
+	}
 	if st.Progress == 0 && dl.Progress > 0 {
 		w.Progress = dl.Progress
 	}
@@ -312,6 +318,15 @@ func (s *Service) recordTerminalWith(ctx context.Context, dl sqlite.Download, cf
 			return false, nil
 		}
 		mapped := ports.MapRemotePath(cfg.PathMappings, pub.Path)
+		if container, err := s.isPayloadContainer(ctx, mapped); err != nil {
+			return false, err // roots unreadable: the fact is read again
+		} else if container {
+			// A completed root or its storage container is never one
+			// payload: refused, like a completion without its publication;
+			// the real path arrives with history or the deliveries feed.
+			s.log.Warn("runner publication path refused: it is a completed root or its storage container", "download", dl.ID, "path", mapped, "source", source)
+			return false, nil
+		}
 		w.State, w.Progress, w.SavePath, w.ImportPath = "downloaded", 1, pub.Path, mapped
 		w.Publication = s.publicationWrite(dl.ID, mapped, *pub, "completed")
 		detail := fmt.Sprintf("%s finished; publication at %s", clientLabel(cfg), pub.Path)
@@ -499,6 +514,12 @@ func (s *Service) recordSalvage(ctx context.Context, dl sqlite.Download, cfg por
 	if strings.TrimSpace(mapped) == "" {
 		return nil
 	}
+	if container, err := s.isPayloadContainer(ctx, mapped); err != nil {
+		return err
+	} else if container {
+		s.log.Warn("runner salvage path refused: it is a completed root or its storage container", "download", dl.ID, "path", mapped, "source", source)
+		return nil
+	}
 	if existing, ok, err := s.db.PublicationByPath(ctx, mapped); err != nil {
 		return err
 	} else if ok {
@@ -624,6 +645,8 @@ func (s *Service) reconcileRunnerClient(ctx context.Context, cfg ports.ClientCon
 	s.detectGone(ctx, cfg, feeds, rows, seen)
 	s.confirmAdmissions(ctx, cfg, feeds, rows, seen)
 	s.sweepDeadlines(ctx, cfg, feeds)
+	// (f) every other overdue row exits on Runner's word.
+	s.exitOverdue(ctx, cfg, feeds, byTransfer, byHandle)
 	// Waiting publications (a directory not yet carrying its manifest) are
 	// re-checked on every poll.
 	if pubs, err := s.db.ImportablePublications(ctx, cfg.ID); err == nil {

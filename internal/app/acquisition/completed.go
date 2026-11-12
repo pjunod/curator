@@ -252,7 +252,10 @@ func (s *Service) scanCompletedLocked(ctx context.Context) error {
 	}
 	publications := make(map[string]sqlite.Publication, len(pubPaths))
 	for _, p := range pubPaths {
-		if p.State != "removed" {
+		// A record at a root or its storage container is not a payload's
+		// (payloadContainer): it claims nothing, so it cannot fence every
+		// folder beside it.
+		if p.State != "removed" && !payloadContainer(p.Path, roots) {
 			publications[storagePath(filepath.Clean(p.Path), roots)] = p
 		}
 	}
@@ -534,7 +537,7 @@ func classifyCompleted(e *CompletedEntry, remove map[int64]bool) {
 	r := e.Receipts[0]
 	if r.DeliveryManaged {
 		e.DeliveryManaged = true
-		e.Status, e.Reason = "cleanup_pending", "Publication cleanup is per file; unresolved files remain available in Resolve"
+		e.Status, e.Reason = "cleanup_pending", "Publication cleanup is per file; each file leaves by its recorded outcome"
 		return
 	}
 	if !r.Live {
@@ -576,9 +579,9 @@ func classifyPublication(e *CompletedEntry, pub sqlite.Publication) {
 	case pub.State == "discovered" || pub.State == "importing":
 		e.Status, e.Reason = "awaiting_import", "Publication is waiting for import"
 	case pub.State == "import_failed":
-		e.Status, e.Reason = "failed", "Publication import failed; unresolved files remain available in Resolve"
+		e.Status, e.Reason = "failed", "Publication import failed; its files are decided and leave by the per-file cleanup"
 	default:
-		e.Status, e.Reason = "cleanup_pending", "Publication cleanup is per file; unresolved files remain available in Resolve"
+		e.Status, e.Reason = "cleanup_pending", "Publication cleanup is per file; each file leaves by its recorded outcome"
 	}
 	if e.LegacyReview {
 		e.Reason += " — the storage under it was replaced: held for review, nothing is deleted automatically"

@@ -297,8 +297,9 @@ func (s *Service) runPublicationImport(ctx context.Context, dl sqlite.Download, 
 		}
 		// An approved run imports exactly the newest selection; so does any
 		// run when that selection is a person's placement of this
-		// publication's files (a pass after a failure or a restart).
-		if approved {
+		// publication's files (a pass after a failure, a restart, or a
+		// fresh attempt epoch after a refused plan).
+		if approved || len(mine) > 0 {
 			selected, manual = mine, true
 		}
 		break
@@ -366,6 +367,23 @@ func (s *Service) runPublicationImport(ctx context.Context, dl sqlite.Download, 
 		prec = ictx.Value(precedenceKey{}).(*precedence)
 	}
 	result, importErr := s.importDownloadFiles(ictx, dl, pub.Path, selected, manual)
+	if importErr != nil && errors.Is(importErr, sqlite.ErrImportPlanChanged) && !errors.Is(importErr, context.Canceled) {
+		// The attempt epoch was sealed by an earlier attempt that never
+		// completed (an older build's selection, a crash mid-import): its
+		// plan cannot bind this one, and the same epoch would refuse every
+		// retry ("explicit retry required") forever. As a stage is scratch
+		// (ADR 0026 decision 18), so is the uncommitted plan: the next attempt
+		// opens a fresh epoch. The return is counted, so the attempt cap
+		// bounds it.
+		reason := importErr.Error()
+		if _, err := s.db.BeginImportRetry(context.WithoutCancel(ctx), dl.ID, dl.GenerationKey); err != nil {
+			reason += "; a fresh attempt could not be opened yet: " + err.Error()
+		} else {
+			reason += "; the next attempt starts a fresh epoch"
+		}
+		s.returnPublication(ctx, &dl, pub, reason, true)
+		return importErr
+	}
 	if importErr != nil && (errors.Is(importErr, context.Canceled) || errors.Is(importErr, ErrImportControl)) {
 		s.returnPublication(ctx, &dl, pub, importErr.Error(), false)
 		return importErr
@@ -854,7 +872,7 @@ func ImportOutbox(notifiers []ports.NotifierConfig, e ImportCompleted, generatio
 			continue
 		}
 		if !ports.QueuedNotifier(cfg) {
-			out = append(out, sqlite.OutboxWrite{NotifierID: cfg.ID, DownloadID: e.DownloadID, PublicationID: e.PublicationID,
+			out = append(out, sqlite.OutboxWrite{NotifierID: cfg.ID, DownloadID: e.DownloadID, MediaItemID: e.MediaItemID, PublicationID: e.PublicationID,
 				Event: "import", Payload: string(wholePayload)})
 			continue
 		}
@@ -865,7 +883,7 @@ func ImportOutbox(notifiers []ports.NotifierConfig, e ImportCompleted, generatio
 			if err != nil {
 				return nil, nil, err
 			}
-			out = append(out, sqlite.OutboxWrite{NotifierID: cfg.ID, DownloadID: e.DownloadID, PublicationID: e.PublicationID,
+			out = append(out, sqlite.OutboxWrite{NotifierID: cfg.ID, DownloadID: e.DownloadID, MediaItemID: e.MediaItemID, PublicationID: e.PublicationID,
 				Directory: dir, IdempotencyKey: SubDeliveryKey(transfer, generation, dir), ExpectedFiles: expected,
 				Event: "import", Payload: string(payload)})
 			subs = true
@@ -1138,20 +1156,16 @@ func (s *Service) MarkHistoricalCohort(ctx context.Context) (int, error) {
 	}
 	n := 0
 	for _, root := range roots {
-		entries, err := os.ReadDir(root)
+		dirs, err := payloadDirs(root)
 		if err != nil {
 			s.log.Warn("historical cohort: completed root unreadable; it is not marked", "root", root, "err", err)
 			continue
 		}
-		for _, e := range entries {
-			if !e.IsDir() {
-				continue
-			}
-			path := filepath.Join(root, e.Name())
+		for _, path := range dirs {
 			if claimed[path] {
 				continue
 			}
-			info, err := e.Info()
+			info, err := os.Stat(path)
 			if err != nil || time.Since(info.ModTime()) < historicalMinAge {
 				continue
 			}
@@ -1214,6 +1228,9 @@ func (s *Service) publicationClaiming(ctx context.Context, path string) (sqlite.
 	}
 	target := storagePath(path, roots)
 	for _, p := range pubs {
+		if payloadContainer(p.Path, roots) {
+			continue // not a payload's record: it claims nothing beside it
+		}
 		dir := storagePath(filepath.Clean(p.Path), roots)
 		if dir == target || within(dir, target) || within(target, dir) {
 			return p, true, nil

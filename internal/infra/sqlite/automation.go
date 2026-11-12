@@ -242,6 +242,23 @@ type Delivery struct {
 	OperationID     string               `json:"operationId,omitempty"`
 	// RemovedSent: the last POST of this moved request carried removed_paths.
 	RemovedSent bool `json:"removedSent,omitempty"`
+	MediaItemID     int64                `json:"mediaItemId,omitempty"`
+	// FileResults is Cinema's answer for each expected file at the last
+	// read-back, so an episode of a season pack has its own in-cinema state.
+	FileResults []DeliveryFileResult `json:"fileResults,omitempty"`
+}
+
+// DeliveryFileResult is Cinema's read-back for one expected file:
+// placed{item_id, bytes, mtime_ns}, skipped{reason} or missing. Matched is
+// set when a placed file has the bytes and mtime_ns the import left it with.
+type DeliveryFileResult struct {
+	Path    string `json:"path"`
+	State   string `json:"state"` // placed | skipped | missing
+	ItemID  int64  `json:"itemId,omitempty"`
+	Bytes   int64  `json:"bytes,omitempty"`
+	MtimeNs int64  `json:"mtimeNs,omitempty"`
+	Reason  string `json:"reason,omitempty"`
+	Matched bool   `json:"matched"`
 }
 
 // RequestKey is the key Cinema sees for this attempt: "<key>/<attempt>".
@@ -260,10 +277,11 @@ func deliveryFrom(r sqlitegen.NotifierDelivery) Delivery {
 		NextAt: r.NextAt, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
 		PublicationID: r.PublicationID, Directory: r.Directory, IdempotencyKey: r.IdempotencyKey,
 		Attempt: r.Attempt, RemoteRequestID: r.RemoteRequestID, RemoteState: r.RemoteState,
-		WaitingOn: r.WaitingOn, VisibleAt: r.VisibleAt, OperationID: r.OperationID, RemovedSent: r.RemovedSent != 0,
+		WaitingOn: r.WaitingOn, VisibleAt: r.VisibleAt, OperationID: r.OperationID, RemovedSent: r.RemovedSent != 0, MediaItemID: r.MediaItemID,
 	}
 	_ = json.Unmarshal([]byte(r.ExpectedFilesJson), &d.ExpectedFiles)
 	_ = json.Unmarshal([]byte(r.ItemIdsJson), &d.ItemIDs)
+	_ = json.Unmarshal([]byte(r.FileResultsJson), &d.FileResults)
 	return d
 }
 
@@ -275,6 +293,7 @@ func deliveryFrom(r sqlitegen.NotifierDelivery) Delivery {
 type OutboxWrite struct {
 	NotifierID     int64
 	DownloadID     int64
+	MediaItemID    int64
 	PublicationID  int64
 	Directory      string
 	IdempotencyKey string
@@ -297,13 +316,13 @@ func insertOutboxTx(ctx context.Context, tx *sql.Tx, rows []OutboxWrite, now int
 			expected = string(raw)
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO notifier_deliveries
-			(notifier_id, download_id, publication_id, directory, idempotency_key, expected_files_json, event, payload, next_at, created_at, updated_at, operation_id)
-			VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+			(notifier_id, download_id, media_item_id, publication_id, directory, idempotency_key, expected_files_json, event, payload, next_at, created_at, updated_at, operation_id)
+			VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
 			ON CONFLICT (notifier_id, idempotency_key) WHERE idempotency_key != '' DO UPDATE SET
 				expected_files_json=excluded.expected_files_json, payload=excluded.payload, status='pending', attempts=0,
 				attempt=attempt+1, last_error='', result='', remote_request_id='', remote_state='', waiting_on='',
-				visible_at=0, item_ids_json='[]', next_at=excluded.next_at, created_at=excluded.created_at, updated_at=excluded.updated_at`,
-			o.NotifierID, o.DownloadID, o.PublicationID, o.Directory, o.IdempotencyKey, expected, o.Event, o.Payload, now, now, now, o.OperationID); err != nil {
+				visible_at=0, item_ids_json='[]', file_results_json='[]', next_at=excluded.next_at, created_at=excluded.created_at, updated_at=excluded.updated_at`,
+			o.NotifierID, o.DownloadID, o.MediaItemID, o.PublicationID, o.Directory, o.IdempotencyKey, expected, o.Event, o.Payload, now, now, now, o.OperationID); err != nil {
 			return err
 		}
 	}
@@ -393,6 +412,14 @@ func (d *DB) SettleDelivery(ctx context.Context, del Delivery, timing DeliveryTi
 		}
 		items = string(raw)
 	}
+	results := "[]"
+	if len(del.FileResults) > 0 {
+		raw, err := json.Marshal(del.FileResults)
+		if err != nil {
+			return err
+		}
+		results = string(raw)
+	}
 	tx, err := d.W.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -404,7 +431,7 @@ func (d *DB) SettleDelivery(ctx context.Context, del Delivery, timing DeliveryTi
 		Status: del.Status, NextAt: del.NextAt, Attempt: del.Attempt,
 		RemoteRequestID: del.RemoteRequestID, RemoteState: del.RemoteState,
 		WaitingOn: del.WaitingOn, VisibleAt: del.VisibleAt, ItemIdsJson: items,
-		UpdatedAt: now, ID: del.ID,
+		FileResultsJson: results, UpdatedAt: now, ID: del.ID,
 	}); err != nil {
 		return err
 	}
@@ -467,6 +494,19 @@ func (d *DB) ListDeliveries(ctx context.Context, notifierID, limit int64) ([]Del
 	rows, err := d.Read.ListDeliveries(ctx, sqlitegen.ListDeliveriesParams{
 		NotifierID: notifierID, Limit: limit,
 	})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]Delivery, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, deliveryFrom(r))
+	}
+	return out, nil
+}
+
+// ListItemDeliveries returns an item's sub-deliveries, newest first.
+func (d *DB) ListItemDeliveries(ctx context.Context, itemID, limit int64) ([]Delivery, error) {
+	rows, err := d.Read.ListItemDeliveries(ctx, sqlitegen.ListItemDeliveriesParams{MediaItemID: itemID, Limit: limit})
 	if err != nil {
 		return nil, err
 	}

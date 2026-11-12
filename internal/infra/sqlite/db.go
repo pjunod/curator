@@ -128,6 +128,8 @@ var requiredColumns = []struct{ table, column string }{
 	{"wantable_attempts", "download_id"}, {"runner_history_cursors", "incarnation"},
 	{"notifier_deliveries", "idempotency_key"}, {"notifier_deliveries", "attempt"}, {"notifier_deliveries", "visible_at"},
 	{"media_items", "origin"}, {"notifier_deliveries", "operation_id"}, {"notifiers", "features"},
+	{"downloads", "rate_bps"}, {"downloads", "remaining_bytes"}, {"downloads", "runner_stage_at"},
+	{"notifier_deliveries", "media_item_id"}, {"notifier_deliveries", "file_results_json"}, {"search_records", "trigger"},
 	{"runner_history_cursors", "deliveries_after"}, {"runner_history_cursors", "history_read"}, {"storage_change_review_paths", "path"},
 }
 

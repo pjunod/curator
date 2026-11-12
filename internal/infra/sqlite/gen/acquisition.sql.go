@@ -108,11 +108,13 @@ func (q *Queries) DeleteDownloadClient(ctx context.Context, id int64) (int64, er
 }
 
 const deleteFailedDownloads = `-- name: DeleteFailedDownloads :execrows
-DELETE FROM downloads WHERE state = 'failed' AND submission_phase NOT IN ('submitting','uncertain') AND parked_at=0 AND cleanup_pending=0 AND NOT EXISTS(SELECT 1 FROM publications p WHERE p.download_id=downloads.id AND p.state!='removed') AND NOT EXISTS(SELECT 1 FROM import_placements WHERE state IN ('prepared','committed','retained') AND (json_extract(data,'$.download_id')=downloads.id OR (COALESCE(json_extract(data,'$.download_id'),0)=0 AND json_extract(data,'$.item_id')=downloads.media_item_id AND json_extract(data,'$.release')=downloads.release_title))) AND NOT EXISTS(SELECT 1 FROM import_attempt_stages s WHERE s.download_id=downloads.id AND s.state='held') AND NOT EXISTS(SELECT 1 FROM import_attempt_controls c WHERE c.download_id=downloads.id AND c.outcome IN ('pending','cancelled')) AND NOT EXISTS(SELECT 1 FROM import_publication_authorizations a WHERE a.download_id=downloads.id AND (a.outcome='pending' OR a.resolution='retained_for_review'))
+DELETE FROM downloads WHERE state = 'failed' AND submission_phase NOT IN ('submitting','uncertain') AND parked_at=0 AND cleanup_pending=0 AND NOT EXISTS(SELECT 1 FROM publications p WHERE p.download_id=downloads.id AND p.state!='removed') AND NOT (runner_salvage='pending' AND NOT EXISTS(SELECT 1 FROM publications p WHERE p.download_id=downloads.id AND p.kind='salvage')) AND NOT EXISTS(SELECT 1 FROM import_placements WHERE state IN ('prepared','committed','retained') AND (json_extract(data,'$.download_id')=downloads.id OR (COALESCE(json_extract(data,'$.download_id'),0)=0 AND json_extract(data,'$.item_id')=downloads.media_item_id AND json_extract(data,'$.release')=downloads.release_title))) AND NOT EXISTS(SELECT 1 FROM import_attempt_stages s WHERE s.download_id=downloads.id AND s.state='held') AND NOT EXISTS(SELECT 1 FROM import_attempt_controls c WHERE c.download_id=downloads.id AND c.outcome IN ('pending','cancelled')) AND NOT EXISTS(SELECT 1 FROM import_publication_authorizations a WHERE a.download_id=downloads.id AND (a.outcome='pending' OR a.resolution='retained_for_review'))
 `
 
 // "Clear failed" has the same boundary: dismiss the Activity rows without
 // touching payloads, library records, blocklists, or download clients.
+// A Runner row whose salvage publication is still to come is only hidden
+// (below): its row is how that publication is attributed when it arrives.
 func (q *Queries) DeleteFailedDownloads(ctx context.Context) (int64, error) {
 	result, err := q.db.ExecContext(ctx, deleteFailedDownloads)
 	if err != nil {
@@ -173,11 +175,12 @@ func (q *Queries) DeleteProfile(ctx context.Context, id int64) (int64, error) {
 
 const deleteTerminalDownloadsBefore = `-- name: DeleteTerminalDownloadsBefore :execrows
 DELETE FROM downloads
-WHERE (state != 'imported' OR payload_removed = 1 OR (import_path = '' AND save_path = '' AND handle = '')) AND state IN ('imported', 'failed') AND submission_phase NOT IN ('submitting','uncertain') AND parked_at=0 AND cleanup_pending=0 AND downloads.updated_at < ? AND NOT EXISTS(SELECT 1 FROM publications p WHERE p.download_id=downloads.id AND p.state!='removed') AND NOT EXISTS(SELECT 1 FROM import_placements WHERE state IN ('prepared','committed','retained') AND (json_extract(data,'$.download_id')=downloads.id OR (COALESCE(json_extract(data,'$.download_id'),0)=0 AND json_extract(data,'$.item_id')=downloads.media_item_id AND json_extract(data,'$.release')=downloads.release_title))) AND NOT EXISTS(SELECT 1 FROM import_attempt_stages s WHERE s.download_id=downloads.id AND s.state='held') AND NOT EXISTS(SELECT 1 FROM import_attempt_controls c WHERE c.download_id=downloads.id AND c.outcome IN ('pending','cancelled')) AND NOT EXISTS(SELECT 1 FROM import_publication_authorizations a WHERE a.download_id=downloads.id AND (a.outcome='pending' OR a.resolution='retained_for_review'))
+WHERE (state != 'imported' OR payload_removed = 1 OR (import_path = '' AND save_path = '' AND handle = '')) AND state IN ('imported', 'failed') AND submission_phase NOT IN ('submitting','uncertain') AND parked_at=0 AND cleanup_pending=0 AND downloads.updated_at < ? AND NOT (runner_salvage='pending' AND NOT EXISTS(SELECT 1 FROM publications p WHERE p.download_id=downloads.id AND p.kind='salvage')) AND NOT EXISTS(SELECT 1 FROM publications p WHERE p.download_id=downloads.id AND p.state!='removed') AND NOT EXISTS(SELECT 1 FROM import_placements WHERE state IN ('prepared','committed','retained') AND (json_extract(data,'$.download_id')=downloads.id OR (COALESCE(json_extract(data,'$.download_id'),0)=0 AND json_extract(data,'$.item_id')=downloads.media_item_id AND json_extract(data,'$.release')=downloads.release_title))) AND NOT EXISTS(SELECT 1 FROM import_attempt_stages s WHERE s.download_id=downloads.id AND s.state='held') AND NOT EXISTS(SELECT 1 FROM import_attempt_controls c WHERE c.download_id=downloads.id AND c.outcome IN ('pending','cancelled')) AND NOT EXISTS(SELECT 1 FROM import_publication_authorizations a WHERE a.download_id=downloads.id AND (a.outcome='pending' OR a.resolution='retained_for_review'))
 `
 
 // Retention. Terminal rows only: whatever is still moving is never swept out
-// from under itself, however old it looks.
+// from under itself, however old it looks; nor is a Runner row whose salvage
+// is still to come (the hourly pass settles that from Runner).
 func (q *Queries) DeleteTerminalDownloadsBefore(ctx context.Context, updatedAt int64) (int64, error) {
 	result, err := q.db.ExecContext(ctx, deleteTerminalDownloadsBefore, updatedAt)
 	if err != nil {
@@ -187,11 +190,12 @@ func (q *Queries) DeleteTerminalDownloadsBefore(ctx context.Context, updatedAt i
 }
 
 const dismissFailedDownloadsWithLivePublication = `-- name: DismissFailedDownloadsWithLivePublication :execrows
-UPDATE downloads SET activity_dismissed=1 WHERE activity_dismissed=0 AND state='failed' AND EXISTS(SELECT 1 FROM publications p WHERE p.download_id=downloads.id AND p.state!='removed') AND submission_phase NOT IN ('submitting','uncertain') AND parked_at=0 AND cleanup_pending=0 AND NOT EXISTS(SELECT 1 FROM import_attempt_stages s WHERE s.download_id=downloads.id AND s.state='held') AND NOT EXISTS(SELECT 1 FROM import_attempt_controls c WHERE c.download_id=downloads.id AND c.outcome IN ('pending','cancelled')) AND NOT EXISTS(SELECT 1 FROM import_publication_authorizations a WHERE a.download_id=downloads.id AND (a.outcome='pending' OR a.resolution='retained_for_review'))
+UPDATE downloads SET activity_dismissed=1 WHERE activity_dismissed=0 AND state='failed' AND (EXISTS(SELECT 1 FROM publications p WHERE p.download_id=downloads.id AND p.state!='removed') OR (runner_salvage='pending' AND NOT EXISTS(SELECT 1 FROM publications p WHERE p.download_id=downloads.id AND p.kind='salvage'))) AND submission_phase NOT IN ('submitting','uncertain') AND parked_at=0 AND cleanup_pending=0 AND NOT EXISTS(SELECT 1 FROM import_attempt_stages s WHERE s.download_id=downloads.id AND s.state='held') AND NOT EXISTS(SELECT 1 FROM import_attempt_controls c WHERE c.download_id=downloads.id AND c.outcome IN ('pending','cancelled')) AND NOT EXISTS(SELECT 1 FROM import_publication_authorizations a WHERE a.download_id=downloads.id AND (a.outcome='pending' OR a.resolution='retained_for_review'))
 `
 
 // A publication cascades with its row: a row whose publication still has
 // files on disk is hidden, never deleted, so its cleanup evidence survives.
+// So is a Runner row whose salvage publication Runner has not published yet.
 func (q *Queries) DismissFailedDownloadsWithLivePublication(ctx context.Context) (int64, error) {
 	result, err := q.db.ExecContext(ctx, dismissFailedDownloadsWithLivePublication)
 	if err != nil {
@@ -240,7 +244,7 @@ func (q *Queries) DismissImportedDownloadsBefore(ctx context.Context, updatedAt 
 }
 
 const getDownload = `-- name: GetDownload :one
-SELECT id, media_item_id, copy_id, wantables, season, release_title, indexer, protocol, quality, size, client_id, handle, state, progress, error, save_path, import_path, handoff_log, added_at, transfer, payload_removed, match_evidence, runner_control, plan_id, candidate_key, submission_phase, execution_payload, reserved_episodes, parked_reason, parked_at, superseded, observation, cleanup_pending, updated_at, activity_dismissed, generation_key, intent, request_id, request_fingerprint, blacklist_override, delivery_expected, request_token_idempotent, manual_retry_at, manual_retry_attempts, manual_blocked_at, replacement_operation_id, source_guid, source_indexer_id, runner_instance_id, runner_admission_generation, runner_submission_retry_at, runner_submission_retry_attempts, runner_submission_blocked_at, provider_retry_after, exact_transfer_correlation, runner_outcome, runner_outcome_at, runner_outcome_seq, runner_outcome_reason, runner_fetch_cause, runner_blames_release, runner_salvage, runner_fetched_json, provisional, deadline_at, state_entered_at, runner_stage FROM downloads WHERE id = ?
+SELECT id, media_item_id, copy_id, wantables, season, release_title, indexer, protocol, quality, size, client_id, handle, state, progress, error, save_path, import_path, handoff_log, added_at, transfer, payload_removed, match_evidence, runner_control, plan_id, candidate_key, submission_phase, execution_payload, reserved_episodes, parked_reason, parked_at, superseded, observation, cleanup_pending, updated_at, activity_dismissed, generation_key, intent, request_id, request_fingerprint, blacklist_override, delivery_expected, request_token_idempotent, manual_retry_at, manual_retry_attempts, manual_blocked_at, replacement_operation_id, source_guid, source_indexer_id, runner_instance_id, runner_admission_generation, runner_submission_retry_at, runner_submission_retry_attempts, runner_submission_blocked_at, provider_retry_after, exact_transfer_correlation, runner_outcome, runner_outcome_at, runner_outcome_seq, runner_outcome_reason, runner_fetch_cause, runner_blames_release, runner_salvage, runner_fetched_json, provisional, deadline_at, state_entered_at, runner_stage, rate_bps, remaining_bytes, runner_stage_at FROM downloads WHERE id = ?
 `
 
 func (q *Queries) GetDownload(ctx context.Context, id int64) (Download, error) {
@@ -314,12 +318,15 @@ func (q *Queries) GetDownload(ctx context.Context, id int64) (Download, error) {
 		&i.DeadlineAt,
 		&i.StateEnteredAt,
 		&i.RunnerStage,
+		&i.RateBps,
+		&i.RemainingBytes,
+		&i.RunnerStageAt,
 	)
 	return i, err
 }
 
 const getDownloadByRequestID = `-- name: GetDownloadByRequestID :one
-SELECT id, media_item_id, copy_id, wantables, season, release_title, indexer, protocol, quality, size, client_id, handle, state, progress, error, save_path, import_path, handoff_log, added_at, transfer, payload_removed, match_evidence, runner_control, plan_id, candidate_key, submission_phase, execution_payload, reserved_episodes, parked_reason, parked_at, superseded, observation, cleanup_pending, updated_at, activity_dismissed, generation_key, intent, request_id, request_fingerprint, blacklist_override, delivery_expected, request_token_idempotent, manual_retry_at, manual_retry_attempts, manual_blocked_at, replacement_operation_id, source_guid, source_indexer_id, runner_instance_id, runner_admission_generation, runner_submission_retry_at, runner_submission_retry_attempts, runner_submission_blocked_at, provider_retry_after, exact_transfer_correlation, runner_outcome, runner_outcome_at, runner_outcome_seq, runner_outcome_reason, runner_fetch_cause, runner_blames_release, runner_salvage, runner_fetched_json, provisional, deadline_at, state_entered_at, runner_stage FROM downloads WHERE request_id = ?
+SELECT id, media_item_id, copy_id, wantables, season, release_title, indexer, protocol, quality, size, client_id, handle, state, progress, error, save_path, import_path, handoff_log, added_at, transfer, payload_removed, match_evidence, runner_control, plan_id, candidate_key, submission_phase, execution_payload, reserved_episodes, parked_reason, parked_at, superseded, observation, cleanup_pending, updated_at, activity_dismissed, generation_key, intent, request_id, request_fingerprint, blacklist_override, delivery_expected, request_token_idempotent, manual_retry_at, manual_retry_attempts, manual_blocked_at, replacement_operation_id, source_guid, source_indexer_id, runner_instance_id, runner_admission_generation, runner_submission_retry_at, runner_submission_retry_attempts, runner_submission_blocked_at, provider_retry_after, exact_transfer_correlation, runner_outcome, runner_outcome_at, runner_outcome_seq, runner_outcome_reason, runner_fetch_cause, runner_blames_release, runner_salvage, runner_fetched_json, provisional, deadline_at, state_entered_at, runner_stage, rate_bps, remaining_bytes, runner_stage_at FROM downloads WHERE request_id = ?
 `
 
 func (q *Queries) GetDownloadByRequestID(ctx context.Context, requestID string) (Download, error) {
@@ -393,6 +400,9 @@ func (q *Queries) GetDownloadByRequestID(ctx context.Context, requestID string) 
 		&i.DeadlineAt,
 		&i.StateEnteredAt,
 		&i.RunnerStage,
+		&i.RateBps,
+		&i.RemainingBytes,
+		&i.RunnerStageAt,
 	)
 	return i, err
 }
@@ -702,7 +712,7 @@ func (q *Queries) InsertProfile(ctx context.Context, arg InsertProfileParams) (i
 }
 
 const listActiveDownloads = `-- name: ListActiveDownloads :many
-SELECT id, media_item_id, copy_id, wantables, season, release_title, indexer, protocol, quality, size, client_id, handle, state, progress, error, save_path, import_path, handoff_log, added_at, transfer, payload_removed, match_evidence, runner_control, plan_id, candidate_key, submission_phase, execution_payload, reserved_episodes, parked_reason, parked_at, superseded, observation, cleanup_pending, updated_at, activity_dismissed, generation_key, intent, request_id, request_fingerprint, blacklist_override, delivery_expected, request_token_idempotent, manual_retry_at, manual_retry_attempts, manual_blocked_at, replacement_operation_id, source_guid, source_indexer_id, runner_instance_id, runner_admission_generation, runner_submission_retry_at, runner_submission_retry_attempts, runner_submission_blocked_at, provider_retry_after, exact_transfer_correlation, runner_outcome, runner_outcome_at, runner_outcome_seq, runner_outcome_reason, runner_fetch_cause, runner_blames_release, runner_salvage, runner_fetched_json, provisional, deadline_at, state_entered_at, runner_stage FROM downloads
+SELECT id, media_item_id, copy_id, wantables, season, release_title, indexer, protocol, quality, size, client_id, handle, state, progress, error, save_path, import_path, handoff_log, added_at, transfer, payload_removed, match_evidence, runner_control, plan_id, candidate_key, submission_phase, execution_payload, reserved_episodes, parked_reason, parked_at, superseded, observation, cleanup_pending, updated_at, activity_dismissed, generation_key, intent, request_id, request_fingerprint, blacklist_override, delivery_expected, request_token_idempotent, manual_retry_at, manual_retry_attempts, manual_blocked_at, replacement_operation_id, source_guid, source_indexer_id, runner_instance_id, runner_admission_generation, runner_submission_retry_at, runner_submission_retry_attempts, runner_submission_blocked_at, provider_retry_after, exact_transfer_correlation, runner_outcome, runner_outcome_at, runner_outcome_seq, runner_outcome_reason, runner_fetch_cause, runner_blames_release, runner_salvage, runner_fetched_json, provisional, deadline_at, state_entered_at, runner_stage, rate_bps, remaining_bytes, runner_stage_at FROM downloads
 WHERE state IN ('grabbed', 'submitting', 'downloading', 'held', 'downloaded', 'awaiting_import', 'importing')
 ORDER BY added_at DESC
 `
@@ -786,6 +796,9 @@ func (q *Queries) ListActiveDownloads(ctx context.Context) ([]Download, error) {
 			&i.DeadlineAt,
 			&i.StateEnteredAt,
 			&i.RunnerStage,
+			&i.RateBps,
+			&i.RemainingBytes,
+			&i.RunnerStageAt,
 		); err != nil {
 			return nil, err
 		}
@@ -842,7 +855,7 @@ func (q *Queries) ListDownloadClients(ctx context.Context) ([]DownloadClient, er
 }
 
 const listDownloadReservations = `-- name: ListDownloadReservations :many
-SELECT id, media_item_id, copy_id, wantables, season, release_title, indexer, protocol, quality, size, client_id, handle, state, progress, error, save_path, import_path, handoff_log, added_at, transfer, payload_removed, match_evidence, runner_control, plan_id, candidate_key, submission_phase, execution_payload, reserved_episodes, parked_reason, parked_at, superseded, observation, cleanup_pending, updated_at, activity_dismissed, generation_key, intent, request_id, request_fingerprint, blacklist_override, delivery_expected, request_token_idempotent, manual_retry_at, manual_retry_attempts, manual_blocked_at, replacement_operation_id, source_guid, source_indexer_id, runner_instance_id, runner_admission_generation, runner_submission_retry_at, runner_submission_retry_attempts, runner_submission_blocked_at, provider_retry_after, exact_transfer_correlation, runner_outcome, runner_outcome_at, runner_outcome_seq, runner_outcome_reason, runner_fetch_cause, runner_blames_release, runner_salvage, runner_fetched_json, provisional, deadline_at, state_entered_at, runner_stage FROM downloads WHERE superseded=0 AND
+SELECT id, media_item_id, copy_id, wantables, season, release_title, indexer, protocol, quality, size, client_id, handle, state, progress, error, save_path, import_path, handoff_log, added_at, transfer, payload_removed, match_evidence, runner_control, plan_id, candidate_key, submission_phase, execution_payload, reserved_episodes, parked_reason, parked_at, superseded, observation, cleanup_pending, updated_at, activity_dismissed, generation_key, intent, request_id, request_fingerprint, blacklist_override, delivery_expected, request_token_idempotent, manual_retry_at, manual_retry_attempts, manual_blocked_at, replacement_operation_id, source_guid, source_indexer_id, runner_instance_id, runner_admission_generation, runner_submission_retry_at, runner_submission_retry_attempts, runner_submission_blocked_at, provider_retry_after, exact_transfer_correlation, runner_outcome, runner_outcome_at, runner_outcome_seq, runner_outcome_reason, runner_fetch_cause, runner_blames_release, runner_salvage, runner_fetched_json, provisional, deadline_at, state_entered_at, runner_stage, rate_bps, remaining_bytes, runner_stage_at FROM downloads WHERE superseded=0 AND
 (state IN ('planned','grabbed','submitting','downloading','held','downloaded','awaiting_import','importing')
  OR submission_phase IN ('submitting','uncertain') OR parked_at>0 OR cleanup_pending=1)
 ORDER BY id
@@ -925,6 +938,9 @@ func (q *Queries) ListDownloadReservations(ctx context.Context) ([]Download, err
 			&i.DeadlineAt,
 			&i.StateEnteredAt,
 			&i.RunnerStage,
+			&i.RateBps,
+			&i.RemainingBytes,
+			&i.RunnerStageAt,
 		); err != nil {
 			return nil, err
 		}
@@ -940,7 +956,7 @@ func (q *Queries) ListDownloadReservations(ctx context.Context) ([]Download, err
 }
 
 const listDownloadsByIDs = `-- name: ListDownloadsByIDs :many
-SELECT id, media_item_id, copy_id, wantables, season, release_title, indexer, protocol, quality, size, client_id, handle, state, progress, error, save_path, import_path, handoff_log, added_at, transfer, payload_removed, match_evidence, runner_control, plan_id, candidate_key, submission_phase, execution_payload, reserved_episodes, parked_reason, parked_at, superseded, observation, cleanup_pending, updated_at, activity_dismissed, generation_key, intent, request_id, request_fingerprint, blacklist_override, delivery_expected, request_token_idempotent, manual_retry_at, manual_retry_attempts, manual_blocked_at, replacement_operation_id, source_guid, source_indexer_id, runner_instance_id, runner_admission_generation, runner_submission_retry_at, runner_submission_retry_attempts, runner_submission_blocked_at, provider_retry_after, exact_transfer_correlation, runner_outcome, runner_outcome_at, runner_outcome_seq, runner_outcome_reason, runner_fetch_cause, runner_blames_release, runner_salvage, runner_fetched_json, provisional, deadline_at, state_entered_at, runner_stage FROM downloads WHERE id IN (/*SLICE:ids*/?) ORDER BY id
+SELECT id, media_item_id, copy_id, wantables, season, release_title, indexer, protocol, quality, size, client_id, handle, state, progress, error, save_path, import_path, handoff_log, added_at, transfer, payload_removed, match_evidence, runner_control, plan_id, candidate_key, submission_phase, execution_payload, reserved_episodes, parked_reason, parked_at, superseded, observation, cleanup_pending, updated_at, activity_dismissed, generation_key, intent, request_id, request_fingerprint, blacklist_override, delivery_expected, request_token_idempotent, manual_retry_at, manual_retry_attempts, manual_blocked_at, replacement_operation_id, source_guid, source_indexer_id, runner_instance_id, runner_admission_generation, runner_submission_retry_at, runner_submission_retry_attempts, runner_submission_blocked_at, provider_retry_after, exact_transfer_correlation, runner_outcome, runner_outcome_at, runner_outcome_seq, runner_outcome_reason, runner_fetch_cause, runner_blames_release, runner_salvage, runner_fetched_json, provisional, deadline_at, state_entered_at, runner_stage, rate_bps, remaining_bytes, runner_stage_at FROM downloads WHERE id IN (/*SLICE:ids*/?) ORDER BY id
 `
 
 func (q *Queries) ListDownloadsByIDs(ctx context.Context, ids []int64) ([]Download, error) {
@@ -1030,6 +1046,9 @@ func (q *Queries) ListDownloadsByIDs(ctx context.Context, ids []int64) ([]Downlo
 			&i.DeadlineAt,
 			&i.StateEnteredAt,
 			&i.RunnerStage,
+			&i.RateBps,
+			&i.RemainingBytes,
+			&i.RunnerStageAt,
 		); err != nil {
 			return nil, err
 		}
@@ -1045,7 +1064,7 @@ func (q *Queries) ListDownloadsByIDs(ctx context.Context, ids []int64) ([]Downlo
 }
 
 const listFailedDownloadsSince = `-- name: ListFailedDownloadsSince :many
-SELECT id, media_item_id, copy_id, wantables, season, release_title, indexer, protocol, quality, size, client_id, handle, state, progress, error, save_path, import_path, handoff_log, added_at, transfer, payload_removed, match_evidence, runner_control, plan_id, candidate_key, submission_phase, execution_payload, reserved_episodes, parked_reason, parked_at, superseded, observation, cleanup_pending, updated_at, activity_dismissed, generation_key, intent, request_id, request_fingerprint, blacklist_override, delivery_expected, request_token_idempotent, manual_retry_at, manual_retry_attempts, manual_blocked_at, replacement_operation_id, source_guid, source_indexer_id, runner_instance_id, runner_admission_generation, runner_submission_retry_at, runner_submission_retry_attempts, runner_submission_blocked_at, provider_retry_after, exact_transfer_correlation, runner_outcome, runner_outcome_at, runner_outcome_seq, runner_outcome_reason, runner_fetch_cause, runner_blames_release, runner_salvage, runner_fetched_json, provisional, deadline_at, state_entered_at, runner_stage FROM downloads WHERE state='failed' AND superseded=0 AND added_at>=? ORDER BY id
+SELECT id, media_item_id, copy_id, wantables, season, release_title, indexer, protocol, quality, size, client_id, handle, state, progress, error, save_path, import_path, handoff_log, added_at, transfer, payload_removed, match_evidence, runner_control, plan_id, candidate_key, submission_phase, execution_payload, reserved_episodes, parked_reason, parked_at, superseded, observation, cleanup_pending, updated_at, activity_dismissed, generation_key, intent, request_id, request_fingerprint, blacklist_override, delivery_expected, request_token_idempotent, manual_retry_at, manual_retry_attempts, manual_blocked_at, replacement_operation_id, source_guid, source_indexer_id, runner_instance_id, runner_admission_generation, runner_submission_retry_at, runner_submission_retry_attempts, runner_submission_blocked_at, provider_retry_after, exact_transfer_correlation, runner_outcome, runner_outcome_at, runner_outcome_seq, runner_outcome_reason, runner_fetch_cause, runner_blames_release, runner_salvage, runner_fetched_json, provisional, deadline_at, state_entered_at, runner_stage, rate_bps, remaining_bytes, runner_stage_at FROM downloads WHERE state='failed' AND superseded=0 AND added_at>=? ORDER BY id
 `
 
 func (q *Queries) ListFailedDownloadsSince(ctx context.Context, addedAt int64) ([]Download, error) {
@@ -1125,6 +1144,9 @@ func (q *Queries) ListFailedDownloadsSince(ctx context.Context, addedAt int64) (
 			&i.DeadlineAt,
 			&i.StateEnteredAt,
 			&i.RunnerStage,
+			&i.RateBps,
+			&i.RemainingBytes,
+			&i.RunnerStageAt,
 		); err != nil {
 			return nil, err
 		}
@@ -1375,7 +1397,7 @@ func (q *Queries) ListHistoryPageForItem(ctx context.Context, arg ListHistoryPag
 }
 
 const listImportedWithPayload = `-- name: ListImportedWithPayload :many
-SELECT id, media_item_id, copy_id, wantables, season, release_title, indexer, protocol, quality, size, client_id, handle, state, progress, error, save_path, import_path, handoff_log, added_at, transfer, payload_removed, match_evidence, runner_control, plan_id, candidate_key, submission_phase, execution_payload, reserved_episodes, parked_reason, parked_at, superseded, observation, cleanup_pending, updated_at, activity_dismissed, generation_key, intent, request_id, request_fingerprint, blacklist_override, delivery_expected, request_token_idempotent, manual_retry_at, manual_retry_attempts, manual_blocked_at, replacement_operation_id, source_guid, source_indexer_id, runner_instance_id, runner_admission_generation, runner_submission_retry_at, runner_submission_retry_attempts, runner_submission_blocked_at, provider_retry_after, exact_transfer_correlation, runner_outcome, runner_outcome_at, runner_outcome_seq, runner_outcome_reason, runner_fetch_cause, runner_blames_release, runner_salvage, runner_fetched_json, provisional, deadline_at, state_entered_at, runner_stage FROM downloads
+SELECT id, media_item_id, copy_id, wantables, season, release_title, indexer, protocol, quality, size, client_id, handle, state, progress, error, save_path, import_path, handoff_log, added_at, transfer, payload_removed, match_evidence, runner_control, plan_id, candidate_key, submission_phase, execution_payload, reserved_episodes, parked_reason, parked_at, superseded, observation, cleanup_pending, updated_at, activity_dismissed, generation_key, intent, request_id, request_fingerprint, blacklist_override, delivery_expected, request_token_idempotent, manual_retry_at, manual_retry_attempts, manual_blocked_at, replacement_operation_id, source_guid, source_indexer_id, runner_instance_id, runner_admission_generation, runner_submission_retry_at, runner_submission_retry_attempts, runner_submission_blocked_at, provider_retry_after, exact_transfer_correlation, runner_outcome, runner_outcome_at, runner_outcome_seq, runner_outcome_reason, runner_fetch_cause, runner_blames_release, runner_salvage, runner_fetched_json, provisional, deadline_at, state_entered_at, runner_stage, rate_bps, remaining_bytes, runner_stage_at FROM downloads
 WHERE state = 'imported' AND payload_removed = 0 AND handle != ''
 ORDER BY added_at LIMIT ?
 `
@@ -1461,6 +1483,9 @@ func (q *Queries) ListImportedWithPayload(ctx context.Context, limit int64) ([]D
 			&i.DeadlineAt,
 			&i.StateEnteredAt,
 			&i.RunnerStage,
+			&i.RateBps,
+			&i.RemainingBytes,
+			&i.RunnerStageAt,
 		); err != nil {
 			return nil, err
 		}
@@ -1515,7 +1540,7 @@ func (q *Queries) ListIndexers(ctx context.Context) ([]Indexer, error) {
 }
 
 const listPlanDownloads = `-- name: ListPlanDownloads :many
-SELECT id, media_item_id, copy_id, wantables, season, release_title, indexer, protocol, quality, size, client_id, handle, state, progress, error, save_path, import_path, handoff_log, added_at, transfer, payload_removed, match_evidence, runner_control, plan_id, candidate_key, submission_phase, execution_payload, reserved_episodes, parked_reason, parked_at, superseded, observation, cleanup_pending, updated_at, activity_dismissed, generation_key, intent, request_id, request_fingerprint, blacklist_override, delivery_expected, request_token_idempotent, manual_retry_at, manual_retry_attempts, manual_blocked_at, replacement_operation_id, source_guid, source_indexer_id, runner_instance_id, runner_admission_generation, runner_submission_retry_at, runner_submission_retry_attempts, runner_submission_blocked_at, provider_retry_after, exact_transfer_correlation, runner_outcome, runner_outcome_at, runner_outcome_seq, runner_outcome_reason, runner_fetch_cause, runner_blames_release, runner_salvage, runner_fetched_json, provisional, deadline_at, state_entered_at, runner_stage FROM downloads WHERE plan_id=? ORDER BY id
+SELECT id, media_item_id, copy_id, wantables, season, release_title, indexer, protocol, quality, size, client_id, handle, state, progress, error, save_path, import_path, handoff_log, added_at, transfer, payload_removed, match_evidence, runner_control, plan_id, candidate_key, submission_phase, execution_payload, reserved_episodes, parked_reason, parked_at, superseded, observation, cleanup_pending, updated_at, activity_dismissed, generation_key, intent, request_id, request_fingerprint, blacklist_override, delivery_expected, request_token_idempotent, manual_retry_at, manual_retry_attempts, manual_blocked_at, replacement_operation_id, source_guid, source_indexer_id, runner_instance_id, runner_admission_generation, runner_submission_retry_at, runner_submission_retry_attempts, runner_submission_blocked_at, provider_retry_after, exact_transfer_correlation, runner_outcome, runner_outcome_at, runner_outcome_seq, runner_outcome_reason, runner_fetch_cause, runner_blames_release, runner_salvage, runner_fetched_json, provisional, deadline_at, state_entered_at, runner_stage, rate_bps, remaining_bytes, runner_stage_at FROM downloads WHERE plan_id=? ORDER BY id
 `
 
 func (q *Queries) ListPlanDownloads(ctx context.Context, planID sql.NullInt64) ([]Download, error) {
@@ -1595,6 +1620,9 @@ func (q *Queries) ListPlanDownloads(ctx context.Context, planID sql.NullInt64) (
 			&i.DeadlineAt,
 			&i.StateEnteredAt,
 			&i.RunnerStage,
+			&i.RateBps,
+			&i.RemainingBytes,
+			&i.RunnerStageAt,
 		); err != nil {
 			return nil, err
 		}
@@ -1642,7 +1670,7 @@ func (q *Queries) ListProfiles(ctx context.Context) ([]QualityProfile, error) {
 }
 
 const listQueuePage = `-- name: ListQueuePage :many
-SELECT id, media_item_id, copy_id, wantables, season, release_title, indexer, protocol, quality, size, client_id, handle, state, progress, error, save_path, import_path, handoff_log, added_at, transfer, payload_removed, match_evidence, runner_control, plan_id, candidate_key, submission_phase, execution_payload, reserved_episodes, parked_reason, parked_at, superseded, observation, cleanup_pending, updated_at, activity_dismissed, generation_key, intent, request_id, request_fingerprint, blacklist_override, delivery_expected, request_token_idempotent, manual_retry_at, manual_retry_attempts, manual_blocked_at, replacement_operation_id, source_guid, source_indexer_id, runner_instance_id, runner_admission_generation, runner_submission_retry_at, runner_submission_retry_attempts, runner_submission_blocked_at, provider_retry_after, exact_transfer_correlation, runner_outcome, runner_outcome_at, runner_outcome_seq, runner_outcome_reason, runner_fetch_cause, runner_blames_release, runner_salvage, runner_fetched_json, provisional, deadline_at, state_entered_at, runner_stage FROM downloads
+SELECT id, media_item_id, copy_id, wantables, season, release_title, indexer, protocol, quality, size, client_id, handle, state, progress, error, save_path, import_path, handoff_log, added_at, transfer, payload_removed, match_evidence, runner_control, plan_id, candidate_key, submission_phase, execution_payload, reserved_episodes, parked_reason, parked_at, superseded, observation, cleanup_pending, updated_at, activity_dismissed, generation_key, intent, request_id, request_fingerprint, blacklist_override, delivery_expected, request_token_idempotent, manual_retry_at, manual_retry_attempts, manual_blocked_at, replacement_operation_id, source_guid, source_indexer_id, runner_instance_id, runner_admission_generation, runner_submission_retry_at, runner_submission_retry_attempts, runner_submission_blocked_at, provider_retry_after, exact_transfer_correlation, runner_outcome, runner_outcome_at, runner_outcome_seq, runner_outcome_reason, runner_fetch_cause, runner_blames_release, runner_salvage, runner_fetched_json, provisional, deadline_at, state_entered_at, runner_stage, rate_bps, remaining_bytes, runner_stage_at FROM downloads
 WHERE activity_dismissed = 0 AND (? = ''
     OR (? = 'active' AND state NOT IN ('imported', 'failed'))
     OR state = ?)
@@ -1751,6 +1779,9 @@ func (q *Queries) ListQueuePage(ctx context.Context, arg ListQueuePageParams) ([
 			&i.DeadlineAt,
 			&i.StateEnteredAt,
 			&i.RunnerStage,
+			&i.RateBps,
+			&i.RemainingBytes,
+			&i.RunnerStageAt,
 		); err != nil {
 			return nil, err
 		}
@@ -1766,7 +1797,7 @@ func (q *Queries) ListQueuePage(ctx context.Context, arg ListQueuePageParams) ([
 }
 
 const listRecentDownloads = `-- name: ListRecentDownloads :many
-SELECT id, media_item_id, copy_id, wantables, season, release_title, indexer, protocol, quality, size, client_id, handle, state, progress, error, save_path, import_path, handoff_log, added_at, transfer, payload_removed, match_evidence, runner_control, plan_id, candidate_key, submission_phase, execution_payload, reserved_episodes, parked_reason, parked_at, superseded, observation, cleanup_pending, updated_at, activity_dismissed, generation_key, intent, request_id, request_fingerprint, blacklist_override, delivery_expected, request_token_idempotent, manual_retry_at, manual_retry_attempts, manual_blocked_at, replacement_operation_id, source_guid, source_indexer_id, runner_instance_id, runner_admission_generation, runner_submission_retry_at, runner_submission_retry_attempts, runner_submission_blocked_at, provider_retry_after, exact_transfer_correlation, runner_outcome, runner_outcome_at, runner_outcome_seq, runner_outcome_reason, runner_fetch_cause, runner_blames_release, runner_salvage, runner_fetched_json, provisional, deadline_at, state_entered_at, runner_stage FROM downloads WHERE activity_dismissed = 0 ORDER BY added_at DESC LIMIT 100
+SELECT id, media_item_id, copy_id, wantables, season, release_title, indexer, protocol, quality, size, client_id, handle, state, progress, error, save_path, import_path, handoff_log, added_at, transfer, payload_removed, match_evidence, runner_control, plan_id, candidate_key, submission_phase, execution_payload, reserved_episodes, parked_reason, parked_at, superseded, observation, cleanup_pending, updated_at, activity_dismissed, generation_key, intent, request_id, request_fingerprint, blacklist_override, delivery_expected, request_token_idempotent, manual_retry_at, manual_retry_attempts, manual_blocked_at, replacement_operation_id, source_guid, source_indexer_id, runner_instance_id, runner_admission_generation, runner_submission_retry_at, runner_submission_retry_attempts, runner_submission_blocked_at, provider_retry_after, exact_transfer_correlation, runner_outcome, runner_outcome_at, runner_outcome_seq, runner_outcome_reason, runner_fetch_cause, runner_blames_release, runner_salvage, runner_fetched_json, provisional, deadline_at, state_entered_at, runner_stage, rate_bps, remaining_bytes, runner_stage_at FROM downloads WHERE activity_dismissed = 0 ORDER BY added_at DESC LIMIT 100
 `
 
 func (q *Queries) ListRecentDownloads(ctx context.Context) ([]Download, error) {
@@ -1846,6 +1877,9 @@ func (q *Queries) ListRecentDownloads(ctx context.Context) ([]Download, error) {
 			&i.DeadlineAt,
 			&i.StateEnteredAt,
 			&i.RunnerStage,
+			&i.RateBps,
+			&i.RemainingBytes,
+			&i.RunnerStageAt,
 		); err != nil {
 			return nil, err
 		}
@@ -1861,7 +1895,7 @@ func (q *Queries) ListRecentDownloads(ctx context.Context) ([]Download, error) {
 }
 
 const listRetainedFailedDownloadsForRelease = `-- name: ListRetainedFailedDownloadsForRelease :many
-SELECT id, media_item_id, copy_id, wantables, season, release_title, indexer, protocol, quality, size, client_id, handle, state, progress, error, save_path, import_path, handoff_log, added_at, transfer, payload_removed, match_evidence, runner_control, plan_id, candidate_key, submission_phase, execution_payload, reserved_episodes, parked_reason, parked_at, superseded, observation, cleanup_pending, updated_at, activity_dismissed, generation_key, intent, request_id, request_fingerprint, blacklist_override, delivery_expected, request_token_idempotent, manual_retry_at, manual_retry_attempts, manual_blocked_at, replacement_operation_id, source_guid, source_indexer_id, runner_instance_id, runner_admission_generation, runner_submission_retry_at, runner_submission_retry_attempts, runner_submission_blocked_at, provider_retry_after, exact_transfer_correlation, runner_outcome, runner_outcome_at, runner_outcome_seq, runner_outcome_reason, runner_fetch_cause, runner_blames_release, runner_salvage, runner_fetched_json, provisional, deadline_at, state_entered_at, runner_stage FROM downloads WHERE state='failed' AND superseded=0 AND payload_removed=0
+SELECT id, media_item_id, copy_id, wantables, season, release_title, indexer, protocol, quality, size, client_id, handle, state, progress, error, save_path, import_path, handoff_log, added_at, transfer, payload_removed, match_evidence, runner_control, plan_id, candidate_key, submission_phase, execution_payload, reserved_episodes, parked_reason, parked_at, superseded, observation, cleanup_pending, updated_at, activity_dismissed, generation_key, intent, request_id, request_fingerprint, blacklist_override, delivery_expected, request_token_idempotent, manual_retry_at, manual_retry_attempts, manual_blocked_at, replacement_operation_id, source_guid, source_indexer_id, runner_instance_id, runner_admission_generation, runner_submission_retry_at, runner_submission_retry_attempts, runner_submission_blocked_at, provider_retry_after, exact_transfer_correlation, runner_outcome, runner_outcome_at, runner_outcome_seq, runner_outcome_reason, runner_fetch_cause, runner_blames_release, runner_salvage, runner_fetched_json, provisional, deadline_at, state_entered_at, runner_stage, rate_bps, remaining_bytes, runner_stage_at FROM downloads WHERE state='failed' AND superseded=0 AND payload_removed=0
 AND parked_at=0 AND activity_dismissed=0
 AND trim(lower(replace(replace(replace(release_title,'.',' '),'_',' '),'-',' '))) = ?1
 ORDER BY id
@@ -1947,6 +1981,9 @@ func (q *Queries) ListRetainedFailedDownloadsForRelease(ctx context.Context, nor
 			&i.DeadlineAt,
 			&i.StateEnteredAt,
 			&i.RunnerStage,
+			&i.RateBps,
+			&i.RemainingBytes,
+			&i.RunnerStageAt,
 		); err != nil {
 			return nil, err
 		}

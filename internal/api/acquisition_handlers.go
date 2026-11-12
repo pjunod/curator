@@ -998,7 +998,13 @@ func (s *Server) queueItems(ctx context.Context, rows []sqlite.Download) ([]apig
 // RemoveQueueItem implements DELETE /queue/{id}.
 func (s *Server) RemoveQueueItem(w http.ResponseWriter, r *http.Request, id int64, params apigen.RemoveQueueItemParams) {
 	fromClient := params.FromClient != nil && *params.FromClient
-	if err := s.deps.Acquisition.RemoveDownload(r.Context(), id, fromClient); err != nil {
+	remove := s.deps.Acquisition.RemoveDownload
+	if fromClient && params.Blocklist != nil && *params.Blocklist {
+		remove = func(ctx context.Context, id int64, _ bool) error {
+			return s.deps.Acquisition.CancelAndBlocklist(ctx, id)
+		}
+	}
+	if err := remove(r.Context(), id, fromClient); err != nil {
 		s.acqErr(w, err)
 		return
 	}
