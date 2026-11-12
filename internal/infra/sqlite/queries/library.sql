@@ -113,12 +113,12 @@ SELECT * FROM media_items WHERE kind = ? ORDER BY sort_title, year;
 SELECT
     m.id,
     (SELECT COUNT(*) FROM episodes e
-      WHERE e.media_item_id = m.id AND e.monitored = 1
+      WHERE e.media_item_id = m.id AND e.monitored = 1 AND e.offloaded_at = 0
         AND e.air_date != '' AND e.air_date <= sqlc.arg(today)) AS aired_episodes,
     (SELECT COUNT(DISTINCT mfe.episode_id)
        FROM media_file_episodes mfe
        JOIN episodes e2 ON e2.id = mfe.episode_id
-      WHERE e2.media_item_id = m.id AND e2.monitored = 1
+      WHERE e2.media_item_id = m.id AND e2.monitored = 1 AND e2.offloaded_at = 0
         AND e2.air_date != '' AND e2.air_date <= sqlc.arg(today)) AS have_episodes,
     (SELECT COUNT(*) FROM media_files f WHERE f.media_item_id = m.id) AS files,
     -- Every file's recorded quality, comma-joined. Ranking happens in Go

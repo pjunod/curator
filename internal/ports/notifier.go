@@ -33,6 +33,12 @@ type NotifierConfig struct {
 	FeaturesAt int64
 }
 
+// FeatureOffload is Cinema's support for a scan request naming offloaded
+// paths (contract amendment 4.5, ADR 0028): it removes the file records, keeps
+// the item and its watch history, and marks it offloaded. Curator sends
+// offloaded paths only to a Cinema that advertises it.
+const FeatureOffload = "offload"
+
 // FeatureRemovedPaths is Cinema's support for a scan request naming the
 // paths that left a folder (contract amendment 4.2).
 const FeatureRemovedPaths = "removed_paths"
@@ -50,7 +56,7 @@ func (c NotifierConfig) HasFeature(f string) bool {
 // Notification is one event rendered for the outside world. The JSON shape
 // is the webhook wire format — lowercase, stable.
 type Notification struct {
-	Event string `json:"event"` // grab | import | moved | failed | health | test
+	Event string `json:"event"` // grab | import | moved | offload | failed | health | test
 	Title string `json:"title"`
 	Body  string `json:"body"`
 	// Fields carries structured extras (release, quality, item title…).
@@ -110,6 +116,10 @@ type ImportInfo struct {
 	// describes the target.
 	RemovedPaths []string `json:"removedPaths,omitempty"`
 	FromItemID   int64    `json:"fromItemId,omitempty"`
+	// OffloadedPaths are the files an Offload deleted from this directory
+	// (event `offload`, ADR 0028). Cinema keeps the item and answers each
+	// path offloaded, gone, unknown or present.
+	OffloadedPaths []string `json:"offloadedPaths,omitempty"`
 }
 
 // Cinema's limits on a request's expected files (plurx
@@ -217,7 +227,7 @@ type NotifyResult struct {
 // PlacedReport is Cinema's word on one expected file.
 type PlacedReport struct {
 	Path  string `json:"path"`
-	State string `json:"state"` // placed | skipped | missing; gone | unknown | present | retained for a removed path
+	State string `json:"state"` // placed | skipped | missing; gone | unknown | present | retained for a removed path; offloaded for an offloaded one
 	// Code is a retained removed path's machine reason (Retained*); Reason is
 	// a present one's (Reason*) or a skipped file's text.
 	Code    string `json:"code,omitempty"`

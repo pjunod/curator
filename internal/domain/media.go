@@ -136,10 +136,15 @@ type MediaItem struct {
 	Source string
 
 	// Monitor is the persistent series policy; child flags remain user overrides.
-	Monitor          string
-	MonitorSince     string
-	MonitorSeason    int
-	Monitored        bool
+	Monitor       string
+	MonitorSince  string
+	MonitorSeason int
+	Monitored     bool
+	// OffloadedAt (unix ms, 0 = not offloaded) is a movie's Offload state
+	// (ADR 0028). It is not `Monitored`: that stays as the person set it, and
+	// Offloaded folds into the one Mon computation. Series keep it per season
+	// and episode.
+	OffloadedAt      int64
 	QualityProfileID int64
 	// DownloadPriority is the effective value after profile inheritance.
 	// DownloadPriorityOverride is non-nil only when this item replaces the
@@ -218,7 +223,9 @@ type Season struct {
 	ID        int64
 	Number    int
 	Monitored bool
-	Episodes  []Episode
+	// OffloadedAt: the whole season is offloaded (ADR 0028); 0 = not.
+	OffloadedAt int64
+	Episodes    []Episode
 }
 
 // Episode is one wanted unit of a series.
@@ -230,8 +237,20 @@ type Episode struct {
 	Title         string
 	AirDate       string // ISO date, "" if unknown
 	Monitored     bool
-	HasFile       bool
+	// OffloadedAt: this episode's files were offloaded (ADR 0028); 0 = not.
+	OffloadedAt int64
+	HasFile     bool
 }
+
+// Offloaded reports whether the episode is offloaded, on its own or through
+// its season.
+func (e Episode) Offloaded() bool { return e.OffloadedAt != 0 }
+
+// Offloaded reports whether the season as a whole is offloaded.
+func (s Season) Offloaded() bool { return s.OffloadedAt != 0 }
+
+// Offloaded reports whether a movie is offloaded.
+func (m MediaItem) Offloaded() bool { return m.OffloadedAt != 0 }
 
 // RootKind is what a root folder holds. It is MediaKind plus KindMixed,
 // which is a property of folders and never of items — hence a distinct type

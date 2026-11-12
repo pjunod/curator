@@ -240,10 +240,10 @@ func (s *Service) seasonSnapshot(ctx context.Context, p seasonCheckpoint) (domai
 			continue
 		}
 		for _, e := range season.Episodes {
-			if e.Monitored && e.AirDate != "" && e.AirDate <= today {
+			if e.Monitored && !e.Offloaded() && e.AirDate != "" && e.AirDate <= today {
 				aired[e.ID] = true
 			}
-			if !e.Monitored || e.AirDate == "" || e.AirDate > today {
+			if !e.Monitored || e.Offloaded() || e.AirDate == "" || e.AirDate > today {
 				eligiblePack = false
 			}
 		}
@@ -1070,7 +1070,7 @@ func (s *Service) enqueueItemSeasons(ctx context.Context, item domain.MediaItem)
 	}
 	for _, copyID := range copies {
 		for _, season := range item.Seasons {
-			if !season.Monitored {
+			if !season.Monitored || season.Offloaded() {
 				continue
 			}
 			p := seasonCheckpoint{ItemID: item.ID, CopyID: copyID, Season: season.Number}

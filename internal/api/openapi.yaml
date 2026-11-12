@@ -4513,12 +4513,14 @@ components:
 
     SeriesMonitorMode:
       type: string
-      enum: [all, latest, future, new_seasons, none]
+      enum: [all, latest, future, new_seasons, first_season, none]
       description: >
         Persistent series policy. Applying a mode resets existing selections.
         All selects everything; latest selects the latest and later seasons;
         future selects episodes airing today or later; new_seasons selects
-        seasons after the last season started before today; none clears selections.
+        seasons after the last season started before today; first_season selects only
+        the lowest regular season (season 1 when none is known yet) and later seasons
+        arrive unmonitored, ready to monitor or Re-acquire; none clears selections.
         Specials start unmonitored. Refresh preserves manual selections.
 
     MonitorRequest:
@@ -7070,7 +7072,7 @@ components:
       type: object
       required: [reason, ref, itemId, message, retry]
       properties:
-        reason: { type: string, enum: [download, import, replacement, rematch] }
+        reason: { type: string, enum: [download, import, replacement, rematch, offload] }
         ref: { type: string }
         itemId: { type: integer, format: int64 }
         message: { type: string }

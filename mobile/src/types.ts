@@ -232,7 +232,7 @@ export interface AddMediaRequest {
   qualityProfileId?: number
   downloadPriority?: number
   monitored?: boolean
-  monitor?: 'all' | 'latest' | 'none'
+  monitor?: 'all' | 'latest' | 'first_season' | 'none'
   searchNow?: boolean
 }
 

@@ -53,6 +53,8 @@ func (s *Server) libraryErr(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusBadRequest, err.Error())
 	case errors.Is(err, library.ErrRootKindMismatch):
 		writeError(w, http.StatusBadRequest, err.Error())
+	case errors.Is(err, library.ErrOffloaded):
+		writeCodedError(w, http.StatusConflict, "offloaded", err.Error())
 	case errors.Is(err, library.ErrInvalidInput):
 		writeError(w, http.StatusBadRequest, err.Error())
 	case errors.Is(err, ports.ErrProviderNotConfigured):

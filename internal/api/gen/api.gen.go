@@ -1204,17 +1204,20 @@ func (e ScanStatusState) Valid() bool {
 
 // Defines values for SeriesMonitorMode.
 const (
-	SeriesMonitorModeAll        SeriesMonitorMode = "all"
-	SeriesMonitorModeFuture     SeriesMonitorMode = "future"
-	SeriesMonitorModeLatest     SeriesMonitorMode = "latest"
-	SeriesMonitorModeNewSeasons SeriesMonitorMode = "new_seasons"
-	SeriesMonitorModeNone       SeriesMonitorMode = "none"
+	SeriesMonitorModeAll         SeriesMonitorMode = "all"
+	SeriesMonitorModeFirstSeason SeriesMonitorMode = "first_season"
+	SeriesMonitorModeFuture      SeriesMonitorMode = "future"
+	SeriesMonitorModeLatest      SeriesMonitorMode = "latest"
+	SeriesMonitorModeNewSeasons  SeriesMonitorMode = "new_seasons"
+	SeriesMonitorModeNone        SeriesMonitorMode = "none"
 )
 
 // Valid indicates whether the value is a known member of the SeriesMonitorMode enum.
 func (e SeriesMonitorMode) Valid() bool {
 	switch e {
 	case SeriesMonitorModeAll:
+		return true
+	case SeriesMonitorModeFirstSeason:
 		return true
 	case SeriesMonitorModeFuture:
 		return true
@@ -1766,7 +1769,7 @@ type AddMediaRequest struct {
 	ImdbId *string   `json:"imdbId,omitempty"`
 	Kind   MediaKind `json:"kind"`
 
-	// Monitor Persistent series policy. Applying a mode resets existing selections. All selects everything; latest selects the latest and later seasons; future selects episodes airing today or later; new_seasons selects seasons after the last season started before today; none clears selections. Specials start unmonitored. Refresh preserves manual selections.
+	// Monitor Persistent series policy. Applying a mode resets existing selections. All selects everything; latest selects the latest and later seasons; future selects episodes airing today or later; new_seasons selects seasons after the last season started before today; first_season selects only the lowest regular season (season 1 when none is known yet) and later seasons arrive unmonitored, ready to monitor or Re-acquire; none clears selections. Specials start unmonitored. Refresh preserves manual selections.
 	Monitor   *SeriesMonitorMode `json:"monitor,omitempty"`
 	Monitored *bool              `json:"monitored,omitempty"`
 
@@ -2851,7 +2854,7 @@ type MediaItemDetail struct {
 	Ids                      ExternalIds            `json:"ids"`
 	Kind                     MediaKind              `json:"kind"`
 
-	// Monitor Persistent series policy. Applying a mode resets existing selections. All selects everything; latest selects the latest and later seasons; future selects episodes airing today or later; new_seasons selects seasons after the last season started before today; none clears selections. Specials start unmonitored. Refresh preserves manual selections.
+	// Monitor Persistent series policy. Applying a mode resets existing selections. All selects everything; latest selects the latest and later seasons; future selects episodes airing today or later; new_seasons selects seasons after the last season started before today; first_season selects only the lowest regular season (season 1 when none is known yet) and later seasons arrive unmonitored, ready to monitor or Re-acquire; none clears selections. Specials start unmonitored. Refresh preserves manual selections.
 	Monitor    *SeriesMonitorMode `json:"monitor,omitempty"`
 	Monitored  bool               `json:"monitored"`
 	Overview   string             `json:"overview"`
@@ -3984,7 +3987,7 @@ type SeasonInfo struct {
 	Number    int           `json:"number"`
 }
 
-// SeriesMonitorMode Persistent series policy. Applying a mode resets existing selections. All selects everything; latest selects the latest and later seasons; future selects episodes airing today or later; new_seasons selects seasons after the last season started before today; none clears selections. Specials start unmonitored. Refresh preserves manual selections.
+// SeriesMonitorMode Persistent series policy. Applying a mode resets existing selections. All selects everything; latest selects the latest and later seasons; future selects episodes airing today or later; new_seasons selects seasons after the last season started before today; first_season selects only the lowest regular season (season 1 when none is known yet) and later seasons arrive unmonitored, ready to monitor or Re-acquire; none clears selections. Specials start unmonitored. Refresh preserves manual selections.
 type SeriesMonitorMode string
 
 // Settings defines model for Settings.
@@ -4330,7 +4333,7 @@ type UpdateMediaItemRequest struct {
 	// InheritDownloadPriority Clear the per-item override and inherit from the quality profile.
 	InheritDownloadPriority *bool `json:"inheritDownloadPriority,omitempty"`
 
-	// Monitor Persistent series policy. Applying a mode resets existing selections. All selects everything; latest selects the latest and later seasons; future selects episodes airing today or later; new_seasons selects seasons after the last season started before today; none clears selections. Specials start unmonitored. Refresh preserves manual selections.
+	// Monitor Persistent series policy. Applying a mode resets existing selections. All selects everything; latest selects the latest and later seasons; future selects episodes airing today or later; new_seasons selects seasons after the last season started before today; first_season selects only the lowest regular season (season 1 when none is known yet) and later seasons arrive unmonitored, ready to monitor or Re-acquire; none clears selections. Specials start unmonitored. Refresh preserves manual selections.
 	Monitor   *SeriesMonitorMode `json:"monitor,omitempty"`
 	Monitored *bool              `json:"monitored,omitempty"`
 

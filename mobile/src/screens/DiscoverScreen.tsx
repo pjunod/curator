@@ -187,7 +187,7 @@ export function AddSheet({
   const [bookType, setBookType] = useState<BookType>(initialBookType)
   const [monitored, setMonitored] = useState(true)
   const [searchNow, setSearchNow] = useState(false)
-  const [monitor, setMonitor] = useState<'all' | 'latest' | 'none'>('all')
+  const [monitor, setMonitor] = useState<'all' | 'latest' | 'first_season' | 'none'>('all')
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
   const state = previewState(item, bookType, preview.data, preview.conflict)
@@ -279,7 +279,7 @@ export function AddSheet({
               <>
                 <SectionTitle>Monitor seasons</SectionTitle>
                 <View style={styles.wrap}>
-                  {(['all', 'latest', 'none'] as const).map((value) => <Chip key={value} label={value} selected={monitor === value} onPress={() => setMonitor(value)} />)}
+                  {(['all', 'latest', 'first_season', 'none'] as const).map((value) => <Chip key={value} label={value === 'first_season' ? 'first season only' : value} selected={monitor === value} onPress={() => setMonitor(value)} />)}
                 </View>
               </>
             ) : null}

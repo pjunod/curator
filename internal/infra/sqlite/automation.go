@@ -307,7 +307,14 @@ type OutboxWrite struct {
 	Payload        string
 	// OperationID keys a Re-match's sub-delivery (op/<id>/<dir-hash>).
 	OperationID string
+	// Hold writes the row not due: it is released when the operation that
+	// wrote it says so (an Offload's request waits until the files are gone).
+	Hold bool
 }
+
+// holdUntil is next_at of a held sub-delivery: far enough that the dispatcher
+// never finds it due until ReleaseOffloadDeliveries sets a real time.
+const holdUntil = int64(1) << 60
 
 // insertOutboxTx writes outbox rows inside the caller's transaction.
 func insertOutboxTx(ctx context.Context, tx *sql.Tx, rows []OutboxWrite, now int64) error {
@@ -327,7 +334,7 @@ func insertOutboxTx(ctx context.Context, tx *sql.Tx, rows []OutboxWrite, now int
 				expected_files_json=excluded.expected_files_json, payload=excluded.payload, status='pending', attempts=0,
 				attempt=attempt+1, last_error='', result='', remote_request_id='', remote_state='', waiting_on='',
 				visible_at=0, item_ids_json='[]', file_results_json='[]', next_at=excluded.next_at, created_at=excluded.created_at, updated_at=excluded.updated_at`,
-			o.NotifierID, o.DownloadID, o.MediaItemID, o.PublicationID, o.Directory, o.IdempotencyKey, expected, o.Event, o.Payload, now, now, now, o.OperationID); err != nil {
+			o.NotifierID, o.DownloadID, o.MediaItemID, o.PublicationID, o.Directory, o.IdempotencyKey, expected, o.Event, o.Payload, nextAt(o, now), now, now, o.OperationID); err != nil {
 			return err
 		}
 	}
@@ -736,4 +743,11 @@ func (d *DB) BulkUpdateItem(ctx context.Context, id int64, monitored *bool, prof
 		return ErrNotFound
 	}
 	return nil
+}
+
+func nextAt(o OutboxWrite, now int64) int64 {
+	if o.Hold {
+		return holdUntil
+	}
+	return now
 }

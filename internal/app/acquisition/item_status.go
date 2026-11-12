@@ -986,7 +986,7 @@ func attemptOf(dl sqlite.Download) StatusAttempt {
 // counted reports whether an episode is part of a season's summary: it is
 // monitored and has aired, or there is a file for it anyway.
 func counted(e domain.Episode, files int, today string) bool {
-	return files > 0 || (e.Monitored && e.AirDate != "" && e.AirDate <= today)
+	return files > 0 || (e.Monitored && !e.Offloaded() && e.AirDate != "" && e.AirDate <= today)
 }
 
 func (f statusFacts) episode(e domain.Episode) (StatusEpisode, *sqlite.Download) {

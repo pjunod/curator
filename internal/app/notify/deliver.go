@@ -162,10 +162,10 @@ func (d *Dispatcher) attempt(ctx context.Context, del sqlite.Delivery) {
 	}
 
 	target := d.new(cfg)
-	if n.Event == "moved" && n.Import != nil && del.RemoteRequestID == "" {
+	if (n.Event == "moved" || n.Event == "offload") && n.Import != nil && del.RemoteRequestID == "" {
 		var fresh bool
 		target, fresh = d.refreshFeatures(ctx, cfg, target)
-		if !fresh && cfg.HasFeature(ports.FeatureRemovedPaths) {
+		if !fresh && (cfg.HasFeature(ports.FeatureRemovedPaths) || cfg.HasFeature(ports.FeatureOffload)) {
 			// A common-parent request is never sent on a stored feature that
 			// could not be confirmed: a downgraded Cinema would full-scan it.
 			d.settleSub(ctx, del, subAttempt{peer: cfg.Type, notifierID: del.NotifierID}, ports.NotifyResult{},
@@ -242,7 +242,10 @@ func (d *Dispatcher) attemptSub(ctx context.Context, del sqlite.Delivery, peer s
 	if n.Import != nil {
 		sub.total = len(n.Import.Paths)
 		sub.removed = n.Import.RemovedPaths
-		sub.moved = n.Event == "moved"
+		if len(n.Import.OffloadedPaths) > 0 {
+			sub.removed = n.Import.OffloadedPaths
+		}
+		sub.moved = n.Event == "moved" || n.Event == "offload"
 		// A read of a queued request is judged by what its POST sent.
 		sub.sentRemoved = res.RemovedPathsSent
 		if polled {

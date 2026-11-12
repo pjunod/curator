@@ -153,6 +153,7 @@ type Service struct {
 	rematchMu         sync.Mutex
 	rematchCancels    map[string]context.CancelFunc // operations this process is driving
 	rematchCtx        context.Context               // the importers' lifetime, once started
+	offloadCancels    map[string]context.CancelFunc // Offload operations this process is driving (guarded by rematchMu)
 	db                *sqlite.DB
 	bus               *bus.Bus
 	log               *slog.Logger
@@ -413,7 +414,9 @@ func (s *Service) targetCopy(ctx context.Context, item domain.MediaItem, season,
 				Audio: state.Audio, BookType: bookType, Copy: copyID, CopyName: copyName,
 			}, nil
 		}
-		mon := item.Monitored
+		// An offloaded movie is not wanted, for every copy: Offload (ADR 0028)
+		// folds into this one computation so no search path needs its own check.
+		mon := item.Monitored && !item.Offloaded()
 		if cp != nil {
 			mon = mon && cp.Monitored
 		}
@@ -443,7 +446,7 @@ func (s *Service) targetCopy(ctx context.Context, item domain.MediaItem, season,
 		st := epStates[e.ID]
 		return domain.EpisodeWantable{
 			Item: item.ID, EpisodeID: e.ID, Profile: profileID,
-			Mon: item.Monitored && e.Monitored && copyMon, Title: item.Title, Year: item.Year,
+			Mon: item.Monitored && e.Monitored && copyMon && !e.Offloaded() && !seasonObj.Offloaded(), Title: item.Title, Year: item.Year,
 			Identity: mediaIdentity(item),
 			Season:   e.SeasonNumber, Episode: e.EpisodeNumber,
 			Have: st.Have, Files: st.HasFile, Verified: st.Verified, Audio: st.Audio,
@@ -460,7 +463,7 @@ func (s *Service) targetCopy(ctx context.Context, item domain.MediaItem, season,
 	}
 	pack := domain.SeasonWantable{
 		Item: item.ID, Profile: profileID,
-		Mon: item.Monitored && seasonObj.Monitored && copyMon, Title: item.Title, Year: item.Year,
+		Mon: item.Monitored && seasonObj.Monitored && copyMon && !seasonObj.Offloaded(), Title: item.Title, Year: item.Year,
 		Identity: mediaIdentity(item),
 		Season:   season, Copy: copyID, CopyName: copyName,
 	}

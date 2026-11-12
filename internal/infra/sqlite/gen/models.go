@@ -165,6 +165,7 @@ type Episode struct {
 	Title         string
 	AirDate       string
 	Monitored     int64
+	OffloadedAt   int64
 }
 
 type HistoryEvent struct {
@@ -453,6 +454,7 @@ type MediaItem struct {
 	MonitorSince     string
 	MonitorSeason    int64
 	Origin           string
+	OffloadedAt      int64
 }
 
 type Notifier struct {
@@ -496,6 +498,34 @@ type NotifierDelivery struct {
 	FileResultsJson   string
 	OperationID       string
 	RemovedSent       int64
+}
+
+type OffloadOperation struct {
+	OperationID string
+	RequestID   string
+	Fingerprint string
+	State       string
+	MediaItemID int64
+	Scope       string
+	Plan        string
+	Result      string
+	FilesTotal  int64
+	BytesTotal  int64
+	BytesFreed  int64
+	LastError   string
+	CreatedAt   int64
+	UpdatedAt   int64
+	DismissedAt int64
+}
+
+type OffloadOperationFile struct {
+	OperationID string
+	Path        string
+	Kind        string
+	FileID      int64
+	Size        int64
+	State       string
+	Error       string
 }
 
 type PipelineTiming struct {
@@ -886,6 +916,7 @@ type Season struct {
 	MediaItemID int64
 	Number      int64
 	Monitored   int64
+	OffloadedAt int64
 }
 
 type StorageChangeAcceptance struct {
