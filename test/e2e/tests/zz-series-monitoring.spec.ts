@@ -9,7 +9,7 @@ test('series monitoring modes persist and keep manual selections on ordinary edi
   await page.locator('.item-seasons > details > summary').click()
   await page.getByRole('button', { name: 'Edit', exact: true }).click()
   const picker = page.getByRole('combobox', { name: 'Episode monitoring' })
-  await expect(picker.getByRole('option')).toHaveCount(6)
+  await expect(picker.getByRole('option')).toHaveCount(7)
   await picker.selectOption('none')
   await page.getByRole('button', { name: 'Save', exact: true }).click()
   await expect(page.getByRole('checkbox', { name: 'Monitor Season 1', exact: true })).not.toBeChecked()

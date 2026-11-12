@@ -32,7 +32,7 @@ function CardBadges(props: { m: MediaItemSummary; downloading: boolean }) {
         {comp.total === 0 ? '—' : `${comp.have}/${comp.total}`}
       </span>
       {m.offloaded && (
-        <span className="pill pill-warning" title={m.kind === 'series' ? `${m.offloadedEpisodes ?? 0} episode(s) offloaded: files deleted on purpose, title kept` : 'Offloaded: files deleted on purpose, title kept'}>
+        <span className="pill pill-warning pill-offloaded" title={m.kind === 'series' ? `${m.offloadedEpisodes ?? 0} episode(s) offloaded: files deleted on purpose, title kept` : 'Offloaded: files deleted on purpose, title kept'}>
           offloaded
         </span>
       )}

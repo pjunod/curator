@@ -1374,6 +1374,22 @@ export function MediaDetailPage() {
     },
   })
 
+  // First season only: a later season arrives unmonitored. "Monitor and search"
+  // ticks it and searches, in one click, and says what happened.
+  const monitorAndSearch = useMutation({
+    mutationFn: async (v: { season: number; label: string }) => {
+      await setSeasonMonitored(Number(id), v.season, true)
+      return autoSearchItem(Number(id))
+    },
+    onSuccess: (res, v) => {
+      setAutoMsg(`${v.label} monitored. ${describeAutoSearch(res)}`)
+      void qc.invalidateQueries({ queryKey: ['library-item', id] })
+      void qc.invalidateQueries({ queryKey: ['library'] })
+      void qc.invalidateQueries({ queryKey: ['wanted'] })
+    },
+    onError: (e, v) => setAutoMsg(`✕ could not monitor and search ${v.label}: ${(e as Error).message}`),
+  })
+
   // Re-acquire: clears Offloaded inside the scope, monitors it and searches at
   // the current profile. The answer is on screen at once (the page notice).
   const reacq = useMutation({
@@ -1730,6 +1746,12 @@ export function MediaDetailPage() {
                       <button className="btn-accent" disabled={reacq.isPending} onClick={() => reacq.mutate({ request: { scope: 'season', season: s.number }, label })}>Re-acquire</button>
                     ) : (
                       <>
+                        {m.monitor === 'first_season' && !s.monitored && s.number > 0 && (
+                          <button className="btn-accent" disabled={monitorAndSearch.isPending} title="Monitor this season and search for it now"
+                            onClick={() => monitorAndSearch.mutate({ season: s.number, label })}>
+                            {monitorAndSearch.isPending ? 'Searching…' : 'Monitor and search'}
+                          </button>
+                        )}
                         <button onClickCapture={focusActionTrigger} onClick={() => setSearching({ season: s.number })}>Search pack</button>
                         {have > 0 && <button onClickCapture={focusActionTrigger} onClick={() => setOffloading({ request: { scope: 'season', season: s.number }, label: `${m.title} · ${label}` })}>Offload…</button>}
                       </>
