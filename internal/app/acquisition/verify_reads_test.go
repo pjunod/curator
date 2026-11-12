@@ -22,7 +22,7 @@ func TestVerifyReadBudgetParsing(t *testing.T) {
 		}
 		return b.background.Limit()
 	}
-	if b := newVerifyBudget(""); b == nil || limit(b) != rate.Limit(defaultVerifyReadMBps*1e6) || b.foreground.Limit() != limit(b) || b.yield.Limit() != limit(b)/10 {
+	if b := newVerifyBudget(""); b == nil || limit(b) != rate.Limit(defaultVerifyReadMBps*1e6) || b.yield.Limit() != limit(b)/10 {
 		t.Fatalf("unset budget = %v, want the %d MB/s default", limit(b), defaultVerifyReadMBps)
 	}
 	if b := newVerifyBudget("0"); b != nil {
@@ -40,12 +40,13 @@ func TestVerifyReadBudgetParsing(t *testing.T) {
 
 func testBudget(bytesPerSecond float64) *verifyBudget {
 	l := rate.Limit(bytesPerSecond)
-	return &verifyBudget{foreground: rate.NewLimiter(l, 1<<20), background: rate.NewLimiter(l, 1<<20), yield: rate.NewLimiter(l/10, 1<<20)}
+	return &verifyBudget{background: rate.NewLimiter(l, 1<<20), yield: rate.NewLimiter(l/10, 1<<20)}
 }
 
 // Review finding: an import holds its title's target while it hashes, and
 // background proofs drawing on the same budget starved it. Foreground reads
-// have their own budget, and background reads yield while one is active.
+// (an import, an operator's request) are not paced at all, and background
+// reads yield while one is active.
 func TestForegroundVerificationIsNotStarvedByBackgroundReads(t *testing.T) {
 	b := testBudget(10 << 20)
 	held, release := (&Service{}).lockImportTarget(context.Background(), 1)
@@ -53,15 +54,16 @@ func TestForegroundVerificationIsNotStarvedByBackgroundReads(t *testing.T) {
 	if !foregroundVerification(held) || !foregroundVerification(withForegroundVerification(context.Background())) || foregroundVerification(context.Background()) {
 		t.Fatal("foreground classification is wrong")
 	}
-	// Exhaust the background budget; foreground must not wait on it.
+	// Exhaust the background budget; foreground must not wait on it, nor on
+	// any budget: 8 MiB at a 10 MiB/s budget would take most of a second.
 	_ = b.background.WaitN(context.Background(), 1<<20)
 	start := time.Now()
-	fg := &verifyReader{ctx: held, r: bytes.NewReader(make([]byte, 1<<20)), budget: b, foreground: true}
+	fg := &verifyReader{ctx: held, r: bytes.NewReader(make([]byte, 8<<20)), budget: b, foreground: true}
 	if _, err := io.Copy(io.Discard, fg); err != nil {
 		t.Fatal(err)
 	}
 	if elapsed := time.Since(start); elapsed > 50*time.Millisecond {
-		t.Fatalf("a foreground read waited %v on the background budget", elapsed)
+		t.Fatalf("a foreground read waited %v on a read budget", elapsed)
 	}
 	// With a foreground read just seen, background reads also pay the yield
 	// budget (1 MiB/s here): 2 MiB past the burst takes about a second.

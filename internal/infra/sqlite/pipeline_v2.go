@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/pjunod/monarr/internal/domain/backoff"
 	"path/filepath"
 	"strings"
 	"time"
@@ -423,7 +424,15 @@ type Publication struct {
 	DiscoveredAt      time.Time
 	DeadlineAt        time.Time
 	UpdatedAt         time.Time
+	// LastStop is why the last attempt stopped ('' | payload | environment);
+	// HeldSince is when the environment hold began (zero when not held).
+	LastStop  string
+	HeldSince time.Time
 }
+
+// Held reports a publication the environment is holding (it waits): a
+// publication being imported again after a hold is not.
+func (p Publication) Held() bool { return p.LastStop == "environment" && p.State == "discovered" }
 
 // PublicationFile is one manifest file and what became of it.
 type PublicationFile struct {
@@ -440,14 +449,14 @@ type PublicationFile struct {
 	RemovedAt     time.Time
 }
 
-const publicationColumns = `id, COALESCE(download_id,0), generation, kind, path, remote_path, manifest_json, manifest_source, cross_volume, state, cohort, cleanup_approved_at, error, discovered_at, deadline_at, updated_at, cleanup_paused_at`
+const publicationColumns = `id, COALESCE(download_id,0), generation, kind, path, remote_path, manifest_json, manifest_source, cross_volume, state, cohort, cleanup_approved_at, error, discovered_at, deadline_at, updated_at, cleanup_paused_at, last_stop, hold_since`
 
 func scanPublication(row interface{ Scan(...any) error }) (Publication, error) {
 	var p Publication
 	var cross int64
-	var approved, discovered, deadline, updated, paused int64
-	err := row.Scan(&p.ID, &p.DownloadID, &p.Generation, &p.Kind, &p.Path, &p.RemotePath, &p.ManifestJSON, &p.ManifestSource, &cross, &p.State, &p.Cohort, &approved, &p.Error, &discovered, &deadline, &updated, &paused)
-	p.CleanupPausedAt = msTime(paused)
+	var approved, discovered, deadline, updated, paused, held int64
+	err := row.Scan(&p.ID, &p.DownloadID, &p.Generation, &p.Kind, &p.Path, &p.RemotePath, &p.ManifestJSON, &p.ManifestSource, &cross, &p.State, &p.Cohort, &approved, &p.Error, &discovered, &deadline, &updated, &paused, &p.LastStop, &held)
+	p.CleanupPausedAt, p.HeldSince = msTime(paused), msTime(held)
 	p.CrossVolume = cross != 0
 	p.CleanupApprovedAt, p.DiscoveredAt, p.DeadlineAt, p.UpdatedAt = msTime(approved), msTime(discovered), msTime(deadline), msTime(updated)
 	return p, err
@@ -473,9 +482,11 @@ func insertPublicationTx(ctx context.Context, tx *sql.Tx, p PublicationWrite, no
 	}
 	// One publication per directory and per (download, generation), ever: a
 	// replayed fact finds the row it already made.
+	// No deadline until the first import starts (StartPublicationImport):
+	// waiting for a worker or for the manifest is not a stall.
 	res, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO publications (download_id, generation, kind, path, remote_path, manifest_json, manifest_source, cross_volume, state, cohort, discovered_at, deadline_at, updated_at)
 		VALUES (?,?,?,?,?,?,?,?,'discovered',?,?,?,?)`,
-		download, p.Generation, p.Kind, p.Path, p.RemotePath, p.ManifestJSON, p.Source, cross, p.Cohort, now, now+DeadlinePublication.Milliseconds(), now)
+		download, p.Generation, p.Kind, p.Path, p.RemotePath, p.ManifestJSON, p.Source, cross, p.Cohort, now, 0, now)
 	if err != nil {
 		return 0, err
 	}
@@ -600,19 +611,19 @@ func (d *DB) ListPublicationsForDownloads(ctx context.Context, ids []int64) (map
 // mid-import leaves the state behind, and the caller skips a row whose
 // import is queued or running (ImportRunning), so only an orphan re-runs.
 func (d *DB) ImportablePublications(ctx context.Context, clientID int64) ([]Publication, error) {
-	return d.publicationsWhere(ctx, `state IN ('discovered','importing') AND download_id IN (SELECT id FROM downloads WHERE client_id=?)`, clientID)
+	return d.publicationsWhere(ctx, `state IN ('discovered','importing') AND retry_at<=? AND download_id IN (SELECT id FROM downloads WHERE client_id=?)`, time.Now().UnixMilli(), clientID)
 }
 
 // OverduePublications lists publications still in discovered/importing past
-// their deadline.
+// their deadline, except one the environment is holding (it waits).
 func (d *DB) OverduePublications(ctx context.Context, now time.Time) ([]Publication, error) {
-	return d.publicationsWhere(ctx, `state IN ('discovered','importing') AND download_id IS NOT NULL AND deadline_at>0 AND deadline_at<?`, now.UnixMilli())
+	return d.publicationsWhere(ctx, `state IN ('discovered','importing') AND last_stop<>'environment' AND download_id IS NOT NULL AND deadline_at>0 AND deadline_at<?`, now.UnixMilli())
 }
 
 // CountOverduePublications counts what OverduePublications lists.
 func (d *DB) CountOverduePublications(ctx context.Context, now time.Time) (int, error) {
 	var n int
-	err := d.R.QueryRowContext(ctx, `SELECT COUNT(*) FROM publications WHERE state IN ('discovered','importing') AND download_id IS NOT NULL AND deadline_at>0 AND deadline_at<?`, now.UnixMilli()).Scan(&n)
+	err := d.R.QueryRowContext(ctx, `SELECT COUNT(*) FROM publications WHERE state IN ('discovered','importing') AND last_stop<>'environment' AND download_id IS NOT NULL AND deadline_at>0 AND deadline_at<?`, now.UnixMilli()).Scan(&n)
 	return n, err
 }
 
@@ -634,15 +645,159 @@ func (d *DB) SetPublicationState(ctx context.Context, id int64, state, errMsg st
 	return err
 }
 
-// FailStalledPublication ends a publication that sat in discovered/importing
-// past its deadline. It is Curator's own work, so nothing re-opens it.
-func (d *DB) FailStalledPublication(ctx context.Context, id int64, reason string) (bool, error) {
-	res, err := d.W.ExecContext(ctx, `UPDATE publications SET state='import_failed', error=?, updated_at=? WHERE id=? AND state IN ('discovered','importing')`, reason, time.Now().UnixMilli(), id)
+// MaxPublicationImportAttempts bounds how many import attempts of one
+// publication may fail on the payload (an error that is not the
+// environment's: not a full or blocked library, a cancelled worker or a
+// persistence outage, which the six-hour deadline bounds instead). Past it
+// the publication ends import_failed and its wantables are grabbed again.
+const MaxPublicationImportAttempts = 5
+
+// StartPublicationImport moves a publication to importing and starts its
+// stall deadline the first time (or again after an environment hold): six
+// hours from that start, never reset by an ordinary retry, so a publication
+// that keeps returning to discovered still ends. It returns how many attempts already failed on the
+// payload (RequeueFailedPublicationAttempt).
+func (d *DB) StartPublicationImport(ctx context.Context, id int64) (int, error) {
+	now := time.Now()
+	var failed int
+	// A publication leaving an environment hold starts its deadline over: the
+	// hold was not time spent importing. Its hold stays shown until the
+	// attempt ends some other way.
+	err := d.W.QueryRowContext(ctx, `UPDATE publications SET state='importing', retry_at=0,
+		deadline_at=CASE WHEN deadline_at=0 OR last_stop='environment' THEN ? ELSE deadline_at END, updated_at=? WHERE id=? RETURNING import_attempts`,
+		now.Add(DeadlinePublication).UnixMilli(), now.UnixMilli(), id).Scan(&failed)
+	return failed, err
+}
+
+// RequeueFailedPublicationAttempt returns an importing publication to
+// discovered after an attempt that failed on the payload, counts it, and
+// spaces the next attempt on the retry ladder (the poll does not offer it
+// before retry_at). wasHeld reports that it ended an environment hold.
+func (d *DB) RequeueFailedPublicationAttempt(ctx context.Context, id int64, reason string) (wasHeld bool, err error) {
+	now := time.Now()
+	tx, err := d.W.BeginTx(ctx, nil)
 	if err != nil {
 		return false, err
 	}
-	n, err := res.RowsAffected()
-	return n == 1, err
+	defer func() { _ = tx.Rollback() }()
+	var was string
+	if err := tx.QueryRowContext(ctx, `SELECT last_stop FROM publications WHERE id=? AND state='importing'`, id).Scan(&was); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return false, nil
+		}
+		return false, err
+	}
+	var attempts int
+	if err := tx.QueryRowContext(ctx, `UPDATE publications SET state='discovered', error=?, last_stop='payload', hold_since=0, holds=0, import_attempts=import_attempts+1, updated_at=? WHERE id=? RETURNING import_attempts`,
+		reason, now.UnixMilli(), id).Scan(&attempts); err != nil {
+		return false, err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE publications SET retry_at=? WHERE id=?`, now.Add(backoff.Retry.After(attempts)).UnixMilli(), id); err != nil {
+		return false, err
+	}
+	return was == "environment", tx.Commit()
+}
+
+// HoldPublicationForEnvironment returns a publication to discovered because
+// the environment, not the payload, stopped it (a full or blocked library,
+// the completed root's storage unavailable or outside the configured roots,
+// the manifest unreadable or not there yet). It waits, visibly (held, the
+// reason, since when), is never ended by its deadline while that is its last
+// stop, and is offered again on the retry ladder (retry_at), not every poll.
+// started reports that this begins a hold (it was not held before), so the
+// caller records the hold once.
+func (d *DB) HoldPublicationForEnvironment(ctx context.Context, id int64, reason string) (started bool, err error) {
+	now := time.Now()
+	var holds int
+	var was string
+	if err := d.W.QueryRowContext(ctx, `SELECT last_stop FROM publications WHERE id=?`, id).Scan(&was); err != nil {
+		return false, err
+	}
+	err = d.W.QueryRowContext(ctx, `UPDATE publications SET state='discovered', error=?, last_stop='environment',
+		hold_since=CASE WHEN last_stop='environment' AND hold_since>0 THEN hold_since ELSE ? END, holds=holds+1, updated_at=?
+		WHERE id=? AND state IN ('discovered','importing') RETURNING holds`, reason, now.UnixMilli(), now.UnixMilli(), id).Scan(&holds)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if _, err := d.W.ExecContext(ctx, `UPDATE publications SET retry_at=? WHERE id=?`, now.Add(backoff.Retry.After(holds)).UnixMilli(), id); err != nil {
+		return false, err
+	}
+	return was != "environment", nil
+}
+
+// ReturnPublicationUncounted returns an importing publication to discovered
+// after an attempt that stopped for a reason that is neither the payload's
+// nor a known environment hold (a busy database, an I/O error, a cancelled
+// worker): not counted, bounded by its deadline. A hold it was in is over
+// (wasHeld reports it, so the caller records that once).
+func (d *DB) ReturnPublicationUncounted(ctx context.Context, id int64, reason string) (wasHeld bool, err error) {
+	tx, err := d.W.BeginTx(ctx, nil)
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	var was string
+	if err := tx.QueryRowContext(ctx, `SELECT last_stop FROM publications WHERE id=? AND state IN ('discovered','importing')`, id).Scan(&was); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return false, nil
+		}
+		return false, err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE publications SET state='discovered', error=?, last_stop='', hold_since=0, holds=0, updated_at=? WHERE id=?`,
+		reason, time.Now().UnixMilli(), id); err != nil {
+		return false, err
+	}
+	return was == "environment", tx.Commit()
+}
+
+// CountHeldPublications counts the publications the environment is holding
+// (the System page's pipeline tiles).
+func (d *DB) CountHeldPublications(ctx context.Context) (int, error) {
+	var n int
+	err := d.R.QueryRowContext(ctx, `SELECT COUNT(*) FROM publications WHERE state='discovered' AND last_stop='environment'`).Scan(&n)
+	return n, err
+}
+
+// ResetPublicationForRetry starts a publication over for a person's explicit
+// retry (Resolve, Retry import): no attempts counted, no deadline yet.
+func (d *DB) ResetPublicationForRetry(ctx context.Context, id int64) error {
+	_, err := d.W.ExecContext(ctx, `UPDATE publications SET state='discovered', error='', import_attempts=0, deadline_at=0, last_stop='', hold_since=0, holds=0, retry_at=0, updated_at=? WHERE id=?`,
+		time.Now().UnixMilli(), id)
+	return err
+}
+
+// EndPublicationForRegrab ends a publication Curator could not import
+// (stalled past its deadline, or out of attempts): import_failed with the
+// reason and — for a completed publication — a replacement grab for its
+// row's wantables in the same transaction, so the want is searched again
+// with no one deciding anything (the caller fails the row). ok is false when
+// the publication had already moved on.
+func (d *DB) EndPublicationForRegrab(ctx context.Context, id int64, reason string, dl Download) (bool, error) {
+	tx, err := d.W.BeginTx(ctx, nil)
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	now := time.Now().UnixMilli()
+	var kind string
+	if err := tx.QueryRowContext(ctx, `UPDATE publications SET state='import_failed', error=?, last_stop='', hold_since=0, holds=0, updated_at=? WHERE id=? AND state IN ('discovered','importing') RETURNING kind`, reason, now, id).Scan(&kind); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return false, nil
+		}
+		return false, err
+	}
+	if kind == "completed" && dl.ID != 0 {
+		if len(dl.WantableIDs) > 0 {
+			raw, _ := json.Marshal(dl.WantableIDs)
+			if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO replacement_grabs (download_id, wantable_ids, created_at, next_at) VALUES (?,?,?,?)`, dl.ID, string(raw), now, now); err != nil {
+				return false, err
+			}
+		}
+	}
+	return true, tx.Commit()
 }
 
 // SeedPublicationFiles records a manifest's files as pending (existing rows
@@ -726,6 +881,45 @@ func (d *DB) SetPublicationFileOutcome(ctx context.Context, f PublicationFile) e
 	return nil
 }
 
+// PlacedLibraryFilesWithPrefix lists the publication files Curator placed
+// into the library under a path prefix (a video's "<dir>/<stem>."): the
+// record of the subtitles Curator put beside that video. Files Curator did
+// not place have no such row.
+func (d *DB) PlacedLibraryFilesWithPrefix(ctx context.Context, prefix string) ([]PublicationFile, error) {
+	if prefix == "" {
+		return nil, nil
+	}
+	// A byte range on the indexed column (SQLite compares TEXT bytewise):
+	// every path that starts with prefix, whatever its characters.
+	upper := []byte(prefix)
+	for len(upper) > 0 && upper[len(upper)-1] == 0xff {
+		upper = upper[:len(upper)-1]
+	}
+	var rows *sql.Rows
+	var err error
+	if len(upper) == 0 {
+		rows, err = d.R.QueryContext(ctx, `SELECT publication_id, path, bytes, sha256, library_path, placed_sha256 FROM publication_files
+			WHERE outcome='placed' AND library_path>=?`, prefix)
+	} else {
+		upper[len(upper)-1]++
+		rows, err = d.R.QueryContext(ctx, `SELECT publication_id, path, bytes, sha256, library_path, placed_sha256 FROM publication_files
+			WHERE outcome='placed' AND library_path>=? AND library_path<?`, prefix, string(upper))
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var out []PublicationFile
+	for rows.Next() {
+		f := PublicationFile{Outcome: "placed"}
+		if err := rows.Scan(&f.PublicationID, &f.Path, &f.Bytes, &f.SHA256, &f.LibraryPath, &f.PlacedSHA256); err != nil {
+			return nil, err
+		}
+		out = append(out, f)
+	}
+	return out, rows.Err()
+}
+
 // PublicationImportWrite is what one finished publication import records,
 // atomically: every file's outcome, the publication's state, the download
 // row's advance, the history row, the outbox rows and the timing end.
@@ -749,6 +943,9 @@ type PublicationImportWrite struct {
 	// Supersede marks other publications' files for the same wantables
 	// discarded{superseded}: the current attempt's file is placed.
 	Supersede []SupersedeWrite
+	// RegrabWantables writes a replacement grab for the row: the publication
+	// placed nothing and the library does not hold it.
+	RegrabWantables []string
 }
 
 // SupersedeWrite names a wantable the current attempt just placed, and where.
@@ -756,6 +953,10 @@ type SupersedeWrite struct {
 	WantableID  string
 	LibraryPath string
 }
+
+// ErrPublicationMoved refuses a completion for a publication that is no
+// longer being imported (it finished, was ended, or moved on meanwhile).
+var ErrPublicationMoved = errors.New("the publication is no longer being imported")
 
 // CompletePublicationImport records a finished import in one transaction.
 func (d *DB) CompletePublicationImport(ctx context.Context, w PublicationImportWrite) error {
@@ -785,8 +986,19 @@ func (d *DB) CompletePublicationImport(ctx context.Context, w PublicationImportW
 			return err
 		}
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE publications SET state=?, error=?, updated_at=? WHERE id=?`, w.State, w.Error, now, w.PublicationID); err != nil {
-		return err
+	if w.PublicationID != 0 {
+		// Only an import that owns the publication completes it: one that
+		// finished, was ended or was held in the meantime is not written
+		// again (no second history row, outbox entry or grab).
+		res, err := tx.ExecContext(ctx, `UPDATE publications SET state=?, error=?, last_stop='', hold_since=0, holds=0, retry_at=0, updated_at=? WHERE id=? AND state IN ('discovered','importing')`, w.State, w.Error, now, w.PublicationID)
+		if err != nil {
+			return err
+		}
+		if n, err := res.RowsAffected(); err != nil {
+			return err
+		} else if n != 1 {
+			return ErrPublicationMoved
+		}
 	}
 	if w.DownloadID != 0 && w.DownloadState != "" {
 		entry := "null"
@@ -818,6 +1030,12 @@ func (d *DB) CompletePublicationImport(ctx context.Context, w PublicationImportW
 	}
 	if err := startTimingsTx(ctx, tx, w.TimingStarts, now); err != nil {
 		return err
+	}
+	if w.DownloadID != 0 && len(w.RegrabWantables) > 0 {
+		raw, _ := json.Marshal(w.RegrabWantables)
+		if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO replacement_grabs (download_id, wantable_ids, created_at, next_at) VALUES (?,?,?,?)`, w.DownloadID, string(raw), now, now); err != nil {
+			return err
+		}
 	}
 	return tx.Commit()
 }
@@ -1049,14 +1267,17 @@ func (d *DB) CountHistoricalPublications(ctx context.Context) (int, error) {
 // ---- per-file cleanup (contract section 3.4; M4) ---------------------------
 
 // PublicationsToSweep lists publications the hourly sweep has work for: a
-// finished import (imported or notified) that automatic deletion may touch
+// finished import (imported, notified, or import_failed: a failed one's
+// discarded files are garbage once its want is grabbed again) that automatic deletion may touch
 // (live, or historical with its review batch approved), with a file whose
-// outcome is evidence for deletion and that is still on disk, or with every
+// outcome is evidence for deletion and that is still on disk, a file whose
+// outcome is still to be decided (pending: a sidecar an earlier build left
+// for Resolve, re-decided by the cleanup pass), or with every
 // file gone and the directory perhaps left behind. The oldest-touched come
 // first so a publication that keeps failing cannot starve the rest.
 func (d *DB) PublicationsToSweep(ctx context.Context, limit int) ([]Publication, error) {
-	rows, err := d.R.QueryContext(ctx, `SELECT `+publicationColumns+` FROM publications WHERE state IN ('imported','notified') AND (cohort='live' OR cleanup_approved_at>0) AND cleanup_paused_at=0
-		AND (EXISTS (SELECT 1 FROM publication_files f WHERE f.publication_id=publications.id AND f.removed_at=0 AND f.outcome IN ('placed','discarded'))
+	rows, err := d.R.QueryContext(ctx, `SELECT `+publicationColumns+` FROM publications WHERE state IN ('imported','notified','import_failed') AND (cohort='live' OR cleanup_approved_at>0) AND cleanup_paused_at=0
+		AND (EXISTS (SELECT 1 FROM publication_files f WHERE f.publication_id=publications.id AND f.removed_at=0 AND f.outcome IN ('placed','discarded','pending'))
 		     OR NOT EXISTS (SELECT 1 FROM publication_files f WHERE f.publication_id=publications.id AND f.removed_at=0))
 		ORDER BY updated_at, id LIMIT ?`, limit)
 	if err != nil {
@@ -1087,15 +1308,6 @@ func (d *DB) MarkPublicationFileRemoved(ctx context.Context, publicationID int64
 		return ErrNotFound
 	}
 	return nil
-}
-
-// DemotePublicationFile turns a file whose evidence no longer holds (its
-// bytes or its library copy differ from the manifest) into an unresolved one,
-// retained and shown in Resolve, so the sweep stops re-reading it.
-func (d *DB) DemotePublicationFile(ctx context.Context, publicationID int64, path, fromOutcome, reason string) error {
-	_, err := d.W.ExecContext(ctx, `UPDATE publication_files SET outcome='unresolved', discard_reason='', reason=?, updated_at=? WHERE publication_id=? AND path=? AND outcome=? AND removed_at=0`,
-		reason, time.Now().UnixMilli(), publicationID, path, fromOutcome)
-	return err
 }
 
 // ClearPublicationCleanupError forgets why an earlier cleanup pass stopped,

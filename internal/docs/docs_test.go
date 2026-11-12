@@ -452,8 +452,8 @@ func TestIntegrationLiteralsMatchTheCode(t *testing.T) {
 
 	// The reason Monarr writes on a stalled publication quotes the same window.
 	short := strings.Replace(spoken(stalled), " hours", " h", 1)
-	if !strings.Contains(read(t, reducer), "within "+short+" of discovery") {
-		t.Errorf("%s: the stalled-publication reason no longer says %q; it must match sqlite.DeadlinePublication", reducer, "within "+short+" of discovery")
+	if !strings.Contains(read(t, reducer), "within "+short+" of its import starting") {
+		t.Errorf("%s: the stalled-publication reason no longer says %q; it must match sqlite.DeadlinePublication", reducer, "within "+short+" of its import starting")
 	}
 
 	for _, c := range []struct{ literal, file, needle string }{

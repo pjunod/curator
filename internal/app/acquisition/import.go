@@ -2,7 +2,9 @@ package acquisition
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -514,11 +516,12 @@ func (s *Service) importDownloadFiles(ctx context.Context, dl sqlite.Download, s
 	// The borrow below asks how many media files the whole payload holds,
 	// not how many were selected: choosing one of two anonymous files in a
 	// manual import says nothing about which episode it is.
-	payloadMedia := len(videos)
+	// A release sample is not a candidate for the episode: it never counts.
+	payloadMedia := countNonSample(videos)
 	if item.Kind == domain.KindSeries && selected != nil {
 		payloadMedia = 0
 		if all, err := collectFiles(savePath, isMedia); err == nil {
-			payloadMedia = len(all)
+			payloadMedia = countNonSample(all)
 		}
 	}
 	grabbedSeason, grabbedEpisodes := grabbedEpisodeTargets(dl.WantableIDs, item.ID)
@@ -675,9 +678,11 @@ func (s *Service) importDownloadFiles(ctx context.Context, dl sqlite.Download, s
 	// "no files imported", or a payload whose very first file hit a full
 	// disk reads as an unparseable release and is never retried.
 	if result.Blocked != nil {
-		_ = s.db.AddHistory(ctx, HistoryImportBlocked, item.ID, dl.ReleaseTitle,
-			map[string]any{"placed": result.Imported, "of": len(videos),
-				"reason": result.Blocked.Error()})
+		if !publicationImport(ctx) { // a publication's hold is recorded once, as import_held
+			_ = s.db.AddHistory(ctx, HistoryImportBlocked, item.ID, dl.ReleaseTitle,
+				map[string]any{"placed": result.Imported, "of": len(videos),
+					"reason": result.Blocked.Error()})
+		}
 		s.log.Info("imported (partial)", "item", item.Title, "files", result.Imported,
 			"remaining", len(videos)-result.Imported)
 		return result, fmt.Errorf("%w: %d of %d files placed from %s before it stopped: %v",
@@ -824,8 +829,19 @@ func (s *Service) checkDelivered(ctx context.Context, dl sqlite.Download, itemID
 // grabbed release title because its own name carried none.
 const HistoryEpisodeFromRelease = "episode_from_release"
 
+// countNonSample counts the media files that are not release samples.
+func countNonSample(paths []string) int {
+	n := 0
+	for _, p := range paths {
+		if !isReleaseSample(p) {
+			n++
+		}
+	}
+	return n
+}
+
 // releaseEpisodeIdentity lends a payload file the episode identity of the
-// release monarr grabbed, when the file's own name carries none.
+// grab monarr made, when the file's own name carries none.
 //
 // Field report 2026-11-01: obfuscated Usenet posts ship the episode as
 // "321d9664e6a50c195e7e830b3f78b487.mkv", with par2 sets named the same way,
@@ -835,14 +851,18 @@ const HistoryEpisodeFromRelease = "episode_from_release"
 // grabbed the identical release again — thirteen times for one episode,
 // until the indexer's daily quota ran out.
 //
-// The grabbed release title is not a guess: it is what was matched against
-// the download's wantable when the grab was decided. It is borrowed only when
-// that cannot misplace anything: the file's own name yields no episodes, the
-// whole payload holds exactly one media file, the release names specific
-// episodes rather than a season, and those episodes cover every episode the
-// download was grabbed for. A season pack of obfuscated files, a payload with
-// several anonymous files, or a download with no recorded episode target
-// still fails visibly — there is no evidence for which file is which.
+// The grab record is not a guess: it is the wantable the download was
+// grabbed for. It is used only when that cannot misplace anything: the
+// file's own name yields no episodes and the whole payload holds exactly one
+// media file that is not a sample. A grab for a single episode then names it
+// outright, whatever the release title says (field data 2026-11-11: an
+// obfuscated single-episode grab whose title did not parse failed "cannot
+// determine episodes" and waited for a person). A grab for several episodes
+// still needs the release title to name specific episodes covering every one
+// of them, because one file for several episodes is the release's claim. A
+// season pack of obfuscated files, a payload with several anonymous files, or
+// a download with no recorded episode target is not mapped — there is no
+// evidence for which file is which.
 func releaseEpisodeIdentity(p parser.Parsed, src, releaseTitle string, payloadMedia, grabbedSeason int, grabbedEpisodes []int) (parser.Parsed, bool) {
 	if len(p.Episodes) > 0 {
 		return p, false
@@ -850,20 +870,38 @@ func releaseEpisodeIdentity(p parser.Parsed, src, releaseTitle string, payloadMe
 	if fx, ok := filename.Extract(filepath.Base(src)); ok && len(fx.Episodes) > 0 {
 		return p, false
 	}
-	if payloadMedia != 1 || strings.TrimSpace(releaseTitle) == "" || len(grabbedEpisodes) == 0 {
+	if payloadMedia != 1 || len(grabbedEpisodes) == 0 || grabbedSeason < 0 {
 		return p, false
 	}
-	release := parser.Parse(releaseTitle)
-	if release.SeasonPack || release.Season < 0 || len(release.Episodes) == 0 || release.Season != grabbedSeason {
-		return p, false
-	}
-	for _, want := range grabbedEpisodes {
-		if !slices.Contains(release.Episodes, want) {
-			return p, false
+	// What the release title says, when it names specific episodes.
+	var named []int
+	namedSeason := -1
+	if strings.TrimSpace(releaseTitle) != "" {
+		if release := parser.Parse(releaseTitle); !release.SeasonPack && release.Season >= 0 && len(release.Episodes) > 0 {
+			named, namedSeason = release.Episodes, release.Season
 		}
 	}
-	p.Season = release.Season
-	p.Episodes = append([]int(nil), release.Episodes...)
+	if named != nil {
+		// The title names episodes: they must cover the whole grab, in its
+		// season; a title that contradicts the grab record maps nothing.
+		if namedSeason != grabbedSeason {
+			return p, false
+		}
+		for _, want := range grabbedEpisodes {
+			if !slices.Contains(named, want) {
+				return p, false
+			}
+		}
+		p.Season = namedSeason
+		p.Episodes = append([]int(nil), named...)
+		return p, true
+	}
+	if len(grabbedEpisodes) != 1 {
+		return p, false
+	}
+	// A single-episode grab with one media file: the grab record names it.
+	p.Season = grabbedSeason
+	p.Episodes = []int{grabbedEpisodes[0]}
 	return p, true
 }
 
@@ -1346,6 +1384,8 @@ func (s *Service) removeExistingFiles(ctx context.Context, item domain.MediaItem
 		if err := syncPath(filepath.Dir(f.Path)); err != nil {
 			continue
 		}
+		// The subtitles Curator placed for the replaced file go with it.
+		s.removePlacedSubtitles(ctx, f.Path, 0)
 		var deleteErr error
 		if recovery, ok := ctx.Value(recoveryPlacementKey{}).(*recoveryPlacementContext); ok {
 			deleteErr = s.db.DeleteRecoverySuperseded(ctx, f.ID, recovery.ImportID)
@@ -1422,7 +1462,8 @@ func placeContext(ctx context.Context, src, dest string, onBytes func(done, tota
 	// reported the new release at the old file's size and the user re-grabbed
 	// the same movie over and over watching nothing change.
 	if existing, err := os.Stat(dest); err == nil {
-		if srcInfo, serr := os.Stat(src); serr == nil && os.SameFile(existing, srcInfo) && !requiresIndependentPlacementCopy(ctx) {
+		if srcInfo, serr := os.Stat(src); serr == nil && os.SameFile(existing, srcInfo) {
+			recordStageLinked(ctx)
 			return applyMode(dest, fileMode()) // genuinely the same file
 		}
 		// Fall through and replace it. The write below goes to a temp file and
@@ -1464,12 +1505,12 @@ func placeTemp(ctx context.Context, dir, src string, onBytes func(done, total in
 	// between is smaller than the one a fixed name leaves open forever.
 	if reserved, err := os.CreateTemp(dir, ".monarr-link-*"); err == nil {
 		_, recoveryCopy := ctx.Value(recoveryPlacementKey{}).(*recoveryPlacementContext)
-		independentCopy := requiresIndependentPlacementCopy(ctx)
 		link := reserved.Name()
 		_ = reserved.Close()
 		_ = os.Remove(link)
-		if !recoveryCopy && !independentCopy {
+		if !recoveryCopy {
 			if err := os.Link(src, link); err == nil {
+				recordStageLinked(ctx)
 				return link, nil
 			}
 		}
@@ -1496,7 +1537,10 @@ func placeTemp(ctx context.Context, dir, src string, onBytes func(done, total in
 		total = fi.Size()
 	}
 	reader := &contextReader{ctx: ctx, r: &countingReader{r: in, total: total, on: onBytes}}
-	if _, err := io.Copy(out, reader); err != nil {
+	// The copy is hashed as it is written: that digest is the proof of the
+	// bytes (no read-back pass).
+	digest := sha256.New()
+	if _, err := io.Copy(io.MultiWriter(out, digest), reader); err != nil {
 		_ = out.Close()
 		_ = os.Remove(tmp)
 		return "", err
@@ -1510,6 +1554,7 @@ func placeTemp(ctx context.Context, dir, src string, onBytes func(done, total in
 		_ = os.Remove(tmp)
 		return "", err
 	}
+	recordStageDigest(ctx, hex.EncodeToString(digest.Sum(nil)))
 	return tmp, nil
 }
 

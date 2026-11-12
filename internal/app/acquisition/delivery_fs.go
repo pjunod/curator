@@ -15,15 +15,6 @@ import (
 // Rooted, symlink-refusing file access shared by the publication cleanup,
 // the replacement worker and the operator's storage actions.
 
-func knownDeliverySidecar(name string) bool {
-	switch strings.ToLower(filepath.Ext(name)) {
-	case ".srt", ".ass", ".ssa", ".sub", ".idx", ".nfo", ".jpg", ".jpeg", ".png", ".webp", ".txt", ".xml":
-		return true
-	default:
-		return false
-	}
-}
-
 // openDeliveryDirectoryNoSymlinks walks each directory entry with Lstat
 // before opening it. os.Root confines traversal but intentionally follows
 // in-root symlinks, so cleanup and accepted-manifest reads reject those too.

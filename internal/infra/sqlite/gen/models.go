@@ -526,6 +526,11 @@ type Publication struct {
 	DeadlineAt        int64
 	UpdatedAt         int64
 	CleanupPausedAt   int64
+	ImportAttempts    int64
+	LastStop          string
+	RetryAt           int64
+	HoldSince         int64
+	Holds             int64
 }
 
 type PublicationFile struct {

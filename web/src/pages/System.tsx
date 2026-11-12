@@ -101,6 +101,13 @@ function ConnectionsCard() {
               </div>
             )
           })}
+          {pipe.data.heldPublications > 0 && (
+            <p className="pipeline-overdue">
+              <span className="pill pill-warning">{pipe.data.heldPublications} held</span>{' '}
+              publication(s) wait on their environment (a full or blocked library,
+              unavailable storage, a missing manifest) — each Activity row says why.
+            </p>
+          )}
           {pipe.data.overdueRows > 0 && (
             <p className="pipeline-overdue">
               <span className="pill pill-warning">{pipe.data.overdueRows} overdue</span>{' '}

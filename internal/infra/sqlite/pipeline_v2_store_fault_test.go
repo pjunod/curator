@@ -226,8 +226,8 @@ func TestPipelineV2StoreWriteFailuresAreReportedAndAtomic(t *testing.T) {
 				TimingEnds: []TimingStart{{Kind: TimingRunnerDoneToImport, Transfer: f.failed.Transfer}},
 			})
 		}},
-		"fail-stalled": {run: func(f pipelineFixture) error {
-			_, err := f.db.FailStalledPublication(ctx, f.publication, "deadline")
+		"end-for-regrab": {run: func(f pipelineFixture) error {
+			_, err := f.db.EndPublicationForRegrab(ctx, f.publication, "stalled", f.failed)
 			return err
 		}},
 		"file-outcome": {run: func(f pipelineFixture) error {

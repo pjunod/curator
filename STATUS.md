@@ -1,5 +1,134 @@
 # Monarr — Project Status
 
+## No wedge: hash once, scratch stages, background reconcile, 4 workers, subtitles — 2026-11-11 · v0.44.0
+
+**Status:** built, awaiting adversarial review · owner: Claude Opus 5.5 session
+· branch `claude/no-wedge` (no PR yet; the orchestrator opens it after review) ·
+plan: Fable 5.2 consult, Curator items A–E, plus Paul's subtitle requirement ·
+not merged, not deployed.
+
+Built:
+
+- **A — hash once.** `placementSourceDigest` takes the manifest digest for a
+  publication's source (publications.go passes `withExpectedSourceDigests`),
+  `stageImportPlacement`/`placeTemp` hash the copy stream, and
+  `preparePlacementPublication` compares that digest instead of re-reading the
+  stage. Same filesystem: the stage is a hard link (`linkImportStage`), no copy.
+  `verifyCrossVolumeCopy` is gone (a linked cross-volume file is hashed once).
+  Resume (`reuseCommittedImport`), crash recovery and `cleanupPlacement` decide
+  by recorded identity (inode, size, mtime; `sameContentGeneration`).
+  Publication cleanup no longer hashes the source or the library copy
+  (`libraryCopyHolds`: placement journal record by stat; hash only without a
+  record). The verify budget paces only background proofs.
+- **B — stages are scratch.** No "existing stage retained / custody review"
+  state: a stage is reused only if the journal recorded it proven, else deleted
+  and re-copied. Stall deadline from import start (`StartPublicationImport`).
+  Migration 0076 requeues `import_failed` rows whose error is a stage/custody,
+  queue-stall, verification-race or obfuscated-name failure; imported,
+  removed and other rows are untouched.
+- **C — reconcile in the background**, per-title import target lock, by stat;
+  unsure rows stay prepared and the next import redoes the copy.
+- **D — 4 import workers** (`MONARR_IMPORT_WORKERS`). Locks stay per title.
+- **E — obfuscated single-episode grabs map by the grab record** (samples do
+  not count as payload media; a contradicting release title maps nothing).
+- **Subtitles** placed with their video in the same import, before the
+  outbox write; other sidecars `discarded{rejected}`, never `unresolved`.
+
+Decisions taken without Paul (for review):
+
+- Locks stay per title, not per destination directory: an import decides a
+  title's episodes once for all its files, and finer locks would race those
+  decisions. With the whole-library lock off the import path, titles already
+  import in parallel.
+- Non-Runner imports (other clients, manual) still hash the source once: the
+  placement journal is keyed by content and they have no manifest.
+- A replacement import still hashes the existing library target once at
+  preview (`PreviousSHA256`); a new destination costs nothing.
+- Migration 0076 also requeues "cannot determine episodes" failures (E makes
+  most of them importable; one that still is not fails again once, normally).
+- Migration number 0076: `claude/pipeline-v2-m6b-curator` had claimed 0075;
+  it is now 0077 on that branch (`d61ea59`), so the two merge in either order.
+- Manual and approval-held imports keep the files the person did not select
+  as `unresolved` (the person asked to decide); every automatic path decides.
+
+Adversarial review r1 (Fable) — 12 findings, all fixed:
+1-2 a publication has no deadline until its first import starts, the
+deadline is never reset, payload failures are counted
+(`MaxPublicationImportAttempts` = 5), and either limit ends it
+`import_failed` with a replacement grab; 3 an unreadable or symlinked
+subtitle is discarded with its reason; 4 a subtitle never overwrites a file
+Curator did not place (next free suffix); 5 the link path never chmods and
+falls back to a copy on any problem; 6 manifest sizes are checked by stat
+before linking or copying, a mismatch ends the publication for a regrab;
+7 replaced subtitles' rows become `discarded{superseded}`, and no import or
+cleanup path produces `unresolved` any more (only a person's own manual or
+approval-held selection does); 8 leftover sidecars only follow a video that
+is still the publication's placement, and download-less publications
+resolve too; 9 language: `hi` is Hindi alone and SDH beside a language,
+`fr-CA` is one tag, codes only after the video stem or as the only token,
+the last token only; 10 placed-subtitle lookup is a byte range on an
+indexed column; 11 0076 retires (discarded{superseded}) wedged rows whose
+want a later import satisfied and releases the custody rows of requeued
+ones; 12 `claude/pipeline-v2-m6b-curator` renumbered its migration to 0077
+(`d61ea59`).
+
+Adversarial re-review r2 (Fable, of `032720d`) — 8 findings, all fixed:
+1 environmental stops (blocked/full library, storage identity, a manifest
+unreadable for now) hold the publication (`last_stop`) and are never ended by
+the deadline; the sweep never discards pending media; 2 supersede only
+against a live attempt or one whose file is in the library; 3 only a
+malformed manifest ends a publication, read errors hold it; 4 only typed
+payload failures count, spaced on the retry ladder (`retry_at`); 5 ending
+records committed placements (history, Cinema outbox), discards the rest
+and regrabs only what is still wanted; 6 a person's retry resets attempts
+and deadline; 7 a file row the manifest does not list is discarded; 8 M6b
+rebased onto this branch (below).
+
+Adversarial re-review r3 (Fable, of `14d12b2`) — 6 findings, all fixed:
+1 the deadline sweep re-reads the publication under the row's lock and
+completion is guarded (`AND state IN (discovered, importing)`,
+`ErrPublicationMoved`); 2 leaving a hold restarts the deadline; 3 holds back
+off on the retry ladder and are recorded once when they begin and once when
+they clear; 4 `endPublication` holds on an unreadable manifest, title or
+placement check instead of ending; 5 holds are exposed (`held`,
+`heldReason`, `heldSince` on the queue publication, shown on the Activity
+row; `heldPublications` on `GET /system/pipeline`, shown on System), and a
+missing manifest becomes a hold after 30 minutes; 6 a publication outside
+the configured completed roots is a hold. Web: `tsc --noEmit` and
+`vitest run src/api.test.ts` (27 pass) for the touched web code.
+
+**Merge order: merge `claude/no-wedge` first, then
+`claude/pipeline-v2-m6b-curator`** (rebased onto this branch; its migration
+is 0077 after this branch's 0076).
+
+**Deploy order:** a same-filesystem placement hard-links Runner's file,
+which moves its ctime: deploy this curator only after the Runner build whose
+publication identity comparisons drop ctime (Fable plan W1). Across the
+NFS exports on nuc3 (different filesystems) the placement copies, so the
+current deployment is not affected either way.
+
+Verified (fast lane only, by instruction; Go 1.25.7, 2 CPUs): `gofmt -l`
+clean; `go vet` and pinned `golangci-lint v2.12.2 run` on
+`internal/app/acquisition`, `internal/infra/sqlite`, `internal/docs` (0
+issues); `go test` of those three packages, whole packages, all pass. New
+acceptance tests: `TestPublicationImportReadsEachByteOnce` (copy to another
+filesystem reads 1.0x and writes once; same filesystem links and reads ~0),
+`TestRetryDiscardsAnInterruptedStage`,
+`TestPlacementReconciliationRunsInTheBackgroundPerTitle`,
+`TestMigration0076RequeuesOnlyWedgedImports`,
+`TestObfuscatedSingleEpisodeGrabImportsByTheGrabRecord`, the subtitle tests
+in `publication_subtitles_test.go`.
+Not run: `make test` (other packages), `make test-web`, `make test-e2e` (web
+untouched; the single gate runs once in CI after review).
+
+Closed after the first report: sidecars earlier builds left `unresolved` in
+imported publications are re-decided by the cleanup pass (migration 0076
+makes them pending; the placed video is not touched), and an upgrade that
+replaces a video removes the subtitles Curator placed for it (by placement
+record and placed digest) and places the new release's. Historical
+publications not yet approved get this when their review batch is approved
+(the sweep does not visit them before).
+
 ## Pipeline contract v2, M6a (curator part): one retry ladder, dead fields out, docs rewritten — 2026-11-08 · v0.42.0
 
 **Status:** PR #101 (draft, base `main`; #97 has merged) · owner: Claude

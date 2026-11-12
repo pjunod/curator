@@ -147,6 +147,10 @@ func percentile(sortedMs []int64, q float64) time.Duration {
 type Summary struct {
 	Timings     []KindStats
 	OverdueRows int
+	// HeldPublications counts publications the environment is holding (a
+	// full or blocked library, unavailable completed storage, a missing or
+	// unreadable manifest): they wait, and are named on their rows.
+	HeldPublications int
 }
 
 // Summary assembles the three tiles and the overdue count.
@@ -161,5 +165,11 @@ func (t *Timings) Summary(ctx context.Context) (Summary, error) {
 	}
 	n, err := t.OverdueCount(ctx)
 	out.OverdueRows = n
+	if err != nil {
+		return out, err
+	}
+	if t != nil && t.db != nil {
+		out.HeldPublications, err = t.db.CountHeldPublications(ctx)
+	}
 	return out, err
 }

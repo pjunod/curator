@@ -2709,6 +2709,9 @@ type PathMapping struct {
 
 // PipelineSummary defines model for PipelineSummary.
 type PipelineSummary struct {
+	// HeldPublications Publications the environment is holding — a full or blocked library, completed storage unavailable or outside the configured roots, a manifest missing or unreadable. They wait (retried on the retry ladder, never ended by their deadline); each row says why.
+	HeldPublications int `json:"heldPublications"`
+
 	// OverdueRows Downloads older than their state's allowance (the pipeline:overdue health check).
 	OverdueRows int              `json:"overdueRows"`
 	Timings     []PipelineTiming `json:"timings"`
@@ -2963,7 +2966,16 @@ type QueuePublication struct {
 	Error      *string                `json:"error,omitempty"`
 	Files      []QueuePublicationFile `json:"files"`
 	Generation *string                `json:"generation,omitempty"`
-	Id         int64                  `json:"id"`
+
+	// Held The environment is holding this publication (it waits; heldReason says why).
+	Held *bool `json:"held,omitempty"`
+
+	// HeldReason Why it is held
+	HeldReason *string `json:"heldReason,omitempty"`
+
+	// HeldSince When the hold began, when held.
+	HeldSince *time.Time `json:"heldSince,omitempty"`
+	Id        int64      `json:"id"`
 
 	// Kind completed | salvage
 	Kind string `json:"kind"`

@@ -73,3 +73,36 @@ func TestQueueListsPublicationsAndResolveDecidesAFile(t *testing.T) {
 		t.Fatalf("kept file = %+v", files[0])
 	}
 }
+
+// Review r3 (5): a publication the environment holds says so on its queue
+// row (held, why, since when) and is counted on the System pipeline.
+func TestHeldPublicationIsShownAndCounted(t *testing.T) {
+	e := newAPIEnv(t)
+	acqAddClient(t, e, "qbittorrent")
+	itemID := e.addMovie(t)
+	downloadID := acqGrab(t, e, itemID)
+	ctx := context.Background()
+	pubID, err := e.db.InsertPublication(ctx, sqlite.PublicationWrite{DownloadID: downloadID, Generation: "g1", Kind: "completed", Path: t.TempDir(), Cohort: "live"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.db.HoldPublicationForEnvironment(ctx, pubID, "library full"); err != nil {
+		t.Fatal(err)
+	}
+	var queue []apigen.QueueItem
+	e.get(t, "/api/v1/queue").expect(t, http.StatusOK).into(t, &queue)
+	var pub *apigen.QueuePublication
+	for i := range queue {
+		if queue[i].Id == downloadID && queue[i].Publications != nil {
+			pub = &(*queue[i].Publications)[0]
+		}
+	}
+	if pub == nil || pub.Held == nil || !*pub.Held || pub.HeldReason == nil || *pub.HeldReason != "library full" || pub.HeldSince == nil {
+		t.Fatalf("publication = %+v, want held with its reason and since", pub)
+	}
+	var sum apigen.PipelineSummary
+	e.get(t, "/api/v1/system/pipeline").expect(t, http.StatusOK).into(t, &sum)
+	if sum.HeldPublications != 1 {
+		t.Fatalf("held publications = %d, want 1", sum.HeldPublications)
+	}
+}

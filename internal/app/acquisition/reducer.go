@@ -962,13 +962,22 @@ func (s *Service) sweepDeadlines(ctx context.Context, cfg ports.ClientConfig, fe
 		if err != nil || dl.ClientID != cfg.ID {
 			continue
 		}
-		reason := "stalled: not imported within 6 h of discovery"
+		reason := "stalled: not imported within 6 h of its import starting"
 		if p.Error != "" {
 			reason += " (" + p.Error + ")"
 		}
-		if ok, err := s.db.FailStalledPublication(ctx, p.ID, reason); err == nil && ok && p.Kind == "completed" && dl.State != "imported" && dl.State != "notified" {
-			s.advance(ctx, &dl, "failed", dl.Progress, "publication import_failed: "+reason, stepFailed, "publication "+p.Path+" import_failed: "+reason)
+		// Decided again under the row's lock, on what the publication is
+		// now: one that finished, was held or started meanwhile is not ended.
+		unlock := s.lockDownload(p.DownloadID)
+		cur, err := s.db.GetPublication(ctx, p.ID)
+		if err == nil && !s.ImportRunning(p.DownloadID) && (cur.State == "discovered" || cur.State == "importing") &&
+			!cur.Held() && !cur.DeadlineAt.IsZero() && cur.DeadlineAt.Before(now) {
+			if fresh, ferr := s.db.GetDownload(ctx, p.DownloadID); ferr == nil {
+				dl = fresh
+			}
+			s.endPublication(ctx, dl, cfg, cur, nil, reason)
 		}
+		unlock()
 	}
 }
 

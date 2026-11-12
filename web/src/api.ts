@@ -996,7 +996,22 @@ export interface QueuePublication {
   cleanupPausedAt?: string
   cleanupState?: 'queued' | 'running'
   cleanupReason?: string
+  /** The environment is holding it: it waits, retried on the ladder, never ended by its deadline. */
+  held?: boolean
+  heldReason?: string
+  heldSince?: string
   files: QueuePublicationFile[]
+}
+
+/** The line a held publication shows: why it waits and since when. */
+export function publicationHoldText(p: Pick<QueuePublication, 'held' | 'heldReason' | 'heldSince'>, now: Date = new Date()): string | null {
+  if (!p.held) return null
+  const why = p.heldReason?.trim() || 'the environment cannot take it now'
+  if (!p.heldSince) return `Held: ${why}`
+  const since = new Date(p.heldSince)
+  const minutes = Math.max(0, Math.round((now.getTime() - since.getTime()) / 60000))
+  const age = minutes < 60 ? `${minutes} min` : minutes < 48 * 60 ? `${Math.round(minutes / 60)} h` : `${Math.round(minutes / 1440)} d`
+  return `Held ${age}: ${why}`
 }
 
 export interface QueuePublicationFile {
@@ -1528,6 +1543,8 @@ export interface PipelineSummary {
   windowHours: number
   /** Downloads older than their state's allowance (the pipeline:overdue check). */
   overdueRows: number
+  /** Publications the environment is holding (they wait; each row says why). */
+  heldPublications: number
   timings: PipelineTiming[]
 }
 

@@ -134,3 +134,96 @@ whole-payload cleanup, which never touches a publication directory.
     superseded plans moved to `docs/archive/`; `docs/README.md` indexes every
     file and `internal/docs` fails the build when an index entry or a link
     goes stale.
+
+## Addendum — no wedge: hash once, scratch stages, sidecars (v0.44.0, 2026-11-11)
+
+Field data from nuc3 (2026-11-11): ~8 imports in 55 minutes, 12 bytes read per
+byte written, 76 publications failed "existing stage retained; explicit retry
+or custody review required", 10-14 minutes without imports after every
+restart, and publications left in Resolve for their subtitles and `.nfo`s.
+
+17. **Hash once.** The manifest digest is the authority for a publication's
+    bytes. The placement does not read the source to learn it: the stage
+    writer hashes its stream and compares it with the manifest (one read, one
+    write per file); on one filesystem the stage is a hard link and nothing is
+    copied. A cross-volume publication's linked file is hashed once, so
+    "verified once if `cross_volume`" (contract section 2.5) still holds.
+    Resume (`reuseCommittedImport`), crash recovery (`preparePlacementPublication`,
+    `reconcilePlacements`) and per-file cleanup decide by the recorded
+    identity — size, inode and mtime (ctime is not content: a link or chmod
+    moves it) — and hash only when no record exists. Decision 9's "the
+    library copy still matching it" is now "still the object the placement
+    journal recorded". The verification read budget paces only background
+    proofs; reads an import or operator waits on are unpaced.
+18. **A stage is scratch.** A stage left by an interrupted attempt is
+    reused only when the journal recorded it as fully copied and proven;
+    otherwise the next attempt deletes it and copies again. This amends ADR
+    0025 section 1's "held custody survives retry" for media stages of the
+    same epoch: the writer that held it has returned (one import per
+    download) or its process is gone. Revoked authorizations
+    (`retained_for_review`) are unchanged.
+19. **The stall deadline counts from the import's start** (`StartPublicationImport`),
+    not discovery; queued time never fails a publication. Migration 0076
+    requeues every publication that failed only for a retained stage, a
+    queue-time stall or an obfuscated single-episode name.
+20. **Reconciliation does not hold the library.** The placement journal is
+    reconciled in the background after the workers start, each row under its
+    own title's import target lock. A row whose target is not provably its
+    published object stays prepared; the title's next import redoes the copy.
+21. **Sidecars are decided by the import.** Subtitles are placed beside
+    their video in the publication's own import (before the outbox row is
+    written), named `<video stem>.<lang>[.forced][.sdh].<ext>`; every other
+    non-media file is `discarded{rejected}`. Review #13's "a sidecar is never
+    placed automatically" is superseded: no sidecar is `unresolved`.
+    Sidecars earlier builds left unresolved in imported publications become
+    pending (migration 0076) and are decided by the cleanup pass; replacing
+    a video retires the subtitles Curator placed for it, by their `placed`
+    record only.
+22. **Obfuscated single-episode grabs map by the grab record**: one media
+    file (samples excluded) and a grab for one episode name it, unless the
+    release title names a different episode.
+23. **Every outcome is final without a person** (adversarial review r1):
+    a file the importer cannot place is `discarded{rejected}` with its
+    reason; a file of another attempt is `discarded{superseded}` (no record
+    at all imports by quality); a publication that gave the library nothing,
+    whose files do not match the manifest (missing, resized, copied bytes
+    differ), whose attempts failed on the payload five times, or that is
+    still unfinished six hours after its first start ends `import_failed`
+    with a replacement grab in the same write (`EndPublicationForRegrab`,
+    `PublicationImportWrite.RegrabWantables`). Per-file cleanup no longer
+    demotes to `unresolved`: a placed file whose library copy was replaced or
+    removed is `discarded{superseded}`; one whose record remains but whose
+    bytes are missing or differ stays, reported, and is checked again.
+    Decision 7's "ambiguity is unresolved" and decision 9's "evidence that no
+    longer holds demotes the file" are superseded; `unresolved` remains only
+    for files a person left undecided in a manual or approval-held import.
+24. **The link path never chmods Runner's inode** and falls back to a copy
+    on any problem. A link moves the source's ctime, so this build needs the
+    Runner build whose identity comparisons drop ctime (Fable plan W1).
+25. **Environmental stops wait; endings keep what was placed** (review r2):
+    a publication whose last stop was the environment (`last_stop =
+    environment`: ErrImportBlocked, the completed root's storage identity,
+    a manifest unreadable for now) is never ended by its deadline, and the
+    sweep never discards pending media. Only typed payload failures
+    (`errPlacementConflict`) count toward the attempt cap, spaced on
+    `backoff.Retry` (`retry_at`); a malformed manifest (`errManifestInvalid`)
+    or a file that does not match it ends at once. Ending
+    (`endPublication`) records the publication's committed placements through
+    `completePublication` (history, outbox to Cinema), discards the rest and
+    writes a replacement grab the worker filters by what is still wanted. A
+    file of another attempt is superseded only while that attempt is live or
+    its file is in the library; a person's retry resets attempts and
+    deadline.
+26. **Holds are visible, recorded once, and backed off** (review r3): an
+    environment hold (`HoldPublicationForEnvironment`; now also a publication
+    outside the configured completed roots and one whose manifest is still
+    missing after 30 minutes) sets `hold_since` and `retry_at` on the retry
+    ladder, records itself once (`import_held`) and its clearing once
+    (`import_hold_cleared`), and restarts the deadline when the next attempt
+    starts. It is exposed as `held`/`heldReason`/`heldSince` on the queue's
+    publications and `heldPublications` on `GET /system/pipeline`.
+    `CompletePublicationImport` completes only a publication still
+    `discovered`/`importing` (`ErrPublicationMoved` otherwise), the deadline
+    sweep re-reads the publication under the row's lock, and
+    `endPublication` holds instead of ending when it cannot read the
+    manifest or check a placement.

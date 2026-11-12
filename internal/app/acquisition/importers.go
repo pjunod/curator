@@ -2,6 +2,10 @@ package acquisition
 
 import (
 	"context"
+	"log/slog"
+	"os"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -25,13 +29,17 @@ import (
 // bytes, that work is handed to these workers and the sweep returns. The poll
 // now takes milliseconds whatever the library is doing.
 const (
-	// importWorkers bounds concurrent imports.
+	// defaultImportWorkers bounds concurrent imports
+	// (MONARR_IMPORT_WORKERS overrides it; see importWorkerCount).
 	//
-	// Two, not more: imports are almost always IO-bound on one filesystem or
-	// one network mount, and running eight of them at once makes each slower
-	// while making the disk seek harder. It is a throughput knob with a
-	// wrong-way-round curve past the low single digits.
-	importWorkers = 2
+	// Four: an import is one streaming read of the payload and one write of
+	// the library file (hash once, no verification passes), and imports of
+	// different titles hold different locks, so a few in flight keep a
+	// network mount busy without the seek storm eight would cause. It was
+	// two while each import also re-read every file three to four times
+	// behind a shared read budget (field data 2026-11-11: ~8 imports in 55
+	// minutes, 12 bytes read per byte written).
+	defaultImportWorkers = 4
 	// importQueue is how many imports may be waiting.
 	//
 	// Bounded on purpose. If it fills, the enqueue is dropped and the next
@@ -43,14 +51,28 @@ const (
 
 	// cleanupWorkers runs payload cleanup apart from imports.
 	//
-	// Cleanup re-verifies both copies before deleting one, which for a large
-	// remux is tens of gigabytes of reads. It used to share the import
-	// workers, so one 31 GB cleanup held an import slot for over twenty
-	// minutes (field data 2026-11-01). Its own pool keeps it from ever taking
-	// an import slot. Two, as before, so one large cleanup cannot hold up the
-	// small ones behind it: cleanup is what frees completed-folder space.
+	// Cleanup decides from recorded identities (size, inode generation, the
+	// placement journal) and reads a file only when that record is missing.
+	// It used to re-verify both copies and share the import workers, so one
+	// 31 GB cleanup held an import slot for over twenty minutes (field data
+	// 2026-11-01). Its own pool keeps it from ever taking an import slot.
 	cleanupWorkers = 2
 )
+
+// importWorkerCount reads MONARR_IMPORT_WORKERS: a positive count, else the
+// default (an invalid value is logged, never silently taken as zero).
+func importWorkerCount(raw string) int {
+	v := strings.TrimSpace(raw)
+	if v == "" {
+		return defaultImportWorkers
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n < 1 {
+		slog.Warn("ignoring invalid MONARR_IMPORT_WORKERS; using the default", "value", raw, "default", defaultImportWorkers)
+		return defaultImportWorkers
+	}
+	return n
+}
 
 // importJob is one download ready to be moved into the library.
 type importJob struct {
@@ -104,7 +126,8 @@ func (s *Service) StartImporters(ctx context.Context) {
 			s.log.Info("marked delivery attempts interrupted by the previous process", "attempts", n)
 		}
 	})
-	for i := 0; i < importWorkers; i++ {
+	workers := importWorkerCount(os.Getenv("MONARR_IMPORT_WORKERS"))
+	for i := 0; i < workers; i++ {
 		s.importWG.Add(1)
 		go func() {
 			defer s.importWG.Done()
@@ -138,11 +161,18 @@ func (s *Service) StartImporters(ctx context.Context) {
 			}
 		}()
 	}
-	s.log.Info("import workers started", "workers", importWorkers, "cleanup_workers", cleanupWorkers)
+	s.log.Info("import workers started", "workers", workers, "cleanup_workers", cleanupWorkers)
 	s.importRecoverOnce.Do(func() {
 		s.reconcileImportCancellations(ctx)
 		s.startImportCancellationWorker(ctx)
-		s.reconcilePlacements(ctx)
+		// In the background: a restart must not hold every import behind
+		// the journal of the last one (it used to take the whole library for
+		// 10-14 minutes). Each row waits only for its own title.
+		s.importWG.Add(1)
+		go func() {
+			defer s.importWG.Done()
+			s.reconcilePlacements(ctx)
+		}()
 		s.startRecoveryWorker(ctx)
 		s.recoverManualImports(ctx)
 		s.startManualAdmissionWorker(ctx)

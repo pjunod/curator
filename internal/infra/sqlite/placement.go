@@ -123,6 +123,34 @@ func (d *DB) GetPlacement(ctx context.Context, id string) (Placement, error) {
 	err = json.Unmarshal([]byte(raw), &p)
 	return p, err
 }
+
+// CommittedPlacementForTarget returns the newest committed (or cleaned)
+// placement that published target with digest sha256 (any digest when it
+// is ""): the record publication cleanup decides a library copy by, instead
+// of reading it. ok is false when no placement recorded it (a historical or
+// v1 import).
+func (d *DB) CommittedPlacementForTarget(ctx context.Context, target, sha256 string) (Placement, bool, error) {
+	rows, err := d.R.QueryContext(ctx, `SELECT data FROM import_placements WHERE target=? AND state IN ('committed','cleaned') ORDER BY updated_at DESC`, target)
+	if err != nil {
+		return Placement{}, false, err
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var raw string
+		if err = rows.Scan(&raw); err != nil {
+			return Placement{}, false, err
+		}
+		var p Placement
+		if err = json.Unmarshal([]byte(raw), &p); err != nil {
+			return Placement{}, false, err
+		}
+		if sha256 == "" || p.SHA256 == sha256 {
+			return p, true, nil
+		}
+	}
+	return Placement{}, false, rows.Err()
+}
+
 func (d *DB) PendingPlacements(ctx context.Context) ([]Placement, error) {
 	return d.unresolvedPlacements(ctx, true)
 }
