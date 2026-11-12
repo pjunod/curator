@@ -1312,6 +1312,79 @@ func (d *DB) OverdueHeldDownloads(ctx context.Context, clientID int64, now time.
 	return d.downloadsWhere(ctx, `client_id=? AND state='held' AND runner_outcome='' AND deadline_at>0 AND deadline_at<?`, clientID, now.UnixMilli())
 }
 
+// overdueWhere is the contract section 3.5 predicate CountOverdueDownloads
+// reports: a non-terminal row past its state's deadline (legacy parked and
+// superseded rows excepted). A row still being submitted is the admission
+// check's, and a planned one has no transfer yet.
+const overdueWhere = `state NOT IN ('imported','notified','failed','planned','submitting') AND deadline_at>0 AND deadline_at<? AND superseded=0 AND parked_at=0`
+
+// OverdueDownloads lists one client's rows past their deadline: the overdue
+// exit's own query (every non-terminal state, not only held).
+func (d *DB) OverdueDownloads(ctx context.Context, clientID int64, now time.Time) ([]Download, error) {
+	return d.downloadsWhere(ctx, `client_id=? AND `+overdueWhere, clientID, now.UnixMilli())
+}
+
+// OverdueDownloadsAnyClient lists every client's rows past their deadline.
+func (d *DB) OverdueDownloadsAnyClient(ctx context.Context, now time.Time) ([]Download, error) {
+	return d.downloadsWhere(ctx, overdueWhere, now.UnixMilli())
+}
+
+// ExtendDownloadDeadline moves an overdue row's deadline (its client is
+// still progressing it), only while the row is as read.
+func (d *DB) ExtendDownloadDeadline(ctx context.Context, dl Download, at time.Time) (bool, error) {
+	res, err := d.W.ExecContext(ctx, `UPDATE downloads SET deadline_at=? WHERE id=? AND state=? AND deadline_at=?`,
+		at.UnixMilli(), dl.ID, dl.State, dl.DeadlineAt.UnixMilli())
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n == 1, err
+}
+
+// FailOverdueDownload ends a row its client can no longer finish: failed,
+// blameless (no blocklist), with the reason, a handoff entry and — for the
+// wantables given — a replacement grab in the same write. A Runner terminal
+// already recorded is kept (only an empty or provisional one becomes
+// failed{lost}). Only a row still as read (state and deadline) is ended.
+//
+// runnerSilent additionally requires that no Runner terminal landed since
+// the row was read (only an empty or provisional outcome): a decision drawn
+// from Runner's queue never overwrites one.
+func (d *DB) FailOverdueDownload(ctx context.Context, dl Download, reason string, regrab []string, entry HandoffEntry, runnerSilent bool) (bool, error) {
+	tx, err := d.W.BeginTx(ctx, nil)
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	now := time.Now().UnixMilli()
+	raw, _ := json.Marshal(entry)
+	silent := 0
+	if runnerSilent {
+		silent = 1
+	}
+	res, err := tx.ExecContext(ctx, `UPDATE downloads SET state='failed', error=?, deadline_at=0, state_entered_at=?,
+		runner_outcome=CASE WHEN runner_outcome='' OR provisional=1 THEN 'failed' ELSE runner_outcome END,
+		runner_outcome_reason=CASE WHEN runner_outcome='' OR provisional=1 THEN 'lost' ELSE runner_outcome_reason END,
+		runner_outcome_at=CASE WHEN runner_outcome='' OR provisional=1 THEN ? ELSE runner_outcome_at END,
+		runner_blames_release=0, provisional=0,
+		handoff_log=json_insert(handoff_log,'$[#]',json(?)), updated_at=?
+		WHERE id=? AND state=? AND deadline_at=? AND (?=0 OR runner_outcome='' OR provisional=1)`,
+		reason, now, now, string(raw), now, dl.ID, dl.State, dl.DeadlineAt.UnixMilli(), silent)
+	if err != nil {
+		return false, err
+	}
+	if n, _ := res.RowsAffected(); n != 1 {
+		return false, nil
+	}
+	if len(regrab) > 0 {
+		ids, _ := json.Marshal(regrab)
+		if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO replacement_grabs (download_id, wantable_ids, created_at, next_at) VALUES (?,?,?,?)`, dl.ID, string(ids), now, now); err != nil {
+			return false, err
+		}
+	}
+	return true, tx.Commit()
+}
+
 // CountOverdueDownloads counts the rows past their state's deadline: the
 // contract section 3.5 predicate (non-terminal state, deadline_at set and
 // past), legacy parked and superseded rows excepted.
