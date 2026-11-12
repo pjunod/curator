@@ -46,6 +46,7 @@ import { audioUndeterminedNote } from '../language'
 import { DOWNLOAD_PRIORITIES, downloadPriorityLabel } from '../downloadPriority'
 import { ActionDialog, ActionNotice, focusActionTrigger } from '../ActionDialog'
 import { ImportFileDialog } from '../ImportFileDialog'
+import { RematchDialog } from '../RematchDialog'
 import { ReleaseSearch } from './ReleaseSearch'
 import { Pager, PageSizePicker, clampPage, sliceForPage } from '../Pager'
 import { mapReplacementObservationsByFileID } from '../replacementObservations'
@@ -867,6 +868,7 @@ function ProvenanceBadge({ f }: { f: MediaFileInfo }) {
 function FileActions({ item, file, onDone, onDeleted }: { item: MediaItemDetail; file: MediaFileInfo; onDone: () => void; onDeleted: (message: string) => void }) {
   const qc = useQueryClient()
   const [dialog, setDialog] = useState<'delete' | 'report' | 'replace_bad' | 'replace_quality' | null>(null)
+  const [moving, setMoving] = useState(false)
   const [reason, setReason] = useState('Reported by user')
   const [reasonCode, setReasonCode] = useState('user_reported_bad')
   const [blacklist, setBlacklist] = useState<boolean | null>(null)
@@ -988,8 +990,10 @@ function FileActions({ item, file, onDone, onDeleted }: { item: MediaItemDetail;
       <button onClick={(event) => begin('report', event)}>Report</button>
       <button onClick={(event) => begin('replace_bad', event)}>Mark bad &amp; replace</button>
       <button onClick={(event) => begin('replace_quality', event)}>Replace quality</button>
+      <button onClick={(event) => { focusActionTrigger(event); setMoving(true) }}>Move to…</button>
       <button onClick={(event) => { focusActionTrigger(event); setDialog('delete') }}>Delete…</button>
     </div>
+    {moving && <RematchDialog item={item} file={file} onClose={() => { setMoving(false); onDone() }} />}
     {dialog && <ActionDialog title={dialog === 'report' ? 'Report library file' : dialog === 'delete' ? 'Delete library file' : operation ? 'Replacement started' : 'Review replacement'} onClose={() => setDialog(null)}>
       <p className="mono">{name}</p>
       {dialog === 'delete' ? <>
@@ -1201,6 +1205,7 @@ export function MediaDetailPage() {
   const [confirming, setConfirming] = useState(false)
   const [editing, setEditing] = useState(search.assignFolder === true)
   const [importing, setImporting] = useState(false)
+  const [rematching, setRematching] = useState(false)
   // Interactive search target: null = closed. copyId selects an additional
   // quality copy or book edition; zero/absent is the primary target.
   const [searching, setSearching] = useState<{
@@ -1517,6 +1522,7 @@ export function MediaDetailPage() {
               <button onClickCapture={focusActionTrigger} onClick={() => setSearching({})}>Interactive search</button>
             )}
             <button onClickCapture={focusActionTrigger} onClick={() => setImporting(true)}>Import file…</button>
+            {m.files.length > 0 && <button onClickCapture={focusActionTrigger} onClick={() => setRematching(true)}>Re-match…</button>}
             <button onClickCapture={focusActionTrigger} onClick={() => setEditing(true)}>Edit</button>
             {m.kind !== 'book' && (
               <button
@@ -1590,6 +1596,7 @@ export function MediaDetailPage() {
       )}
 
       {importing && <ImportFileDialog item={m} onClose={() => setImporting(false)} />}
+      {rematching && <RematchDialog item={m} onClose={() => setRematching(false)} />}
 
       {searching && (
         <ReleaseSearch

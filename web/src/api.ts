@@ -2000,3 +2000,93 @@ export interface ImportActivityPage {
 }
 export const getImportActivity = (filter: 'all' | ImportCategory, q: string, limit: number, offset: number) =>
   get<ImportActivityPage>(`/imports?${new URLSearchParams({ filter, q, limit: String(limit), offset: String(offset) })}`)
+
+// Re-match (ADR 0027): move files to the right item or episode.
+export interface RematchTarget {
+  itemId?: number
+  kind?: MediaKind
+  tmdbId?: number
+  tvdbId?: number
+  imdbId?: string
+  olid?: string
+  hydrationSource?: string
+}
+export interface RematchChoice { fileId: number; season?: number; episodes?: number[]; leave?: boolean }
+export interface RematchRequest {
+  target: RematchTarget
+  copyId?: number
+  /** Move to… these files; absent = every file (Re-match…). */
+  fileIds?: number[]
+  choices?: RematchChoice[]
+  blocklist?: boolean
+  requestId?: string
+  sourceRevision?: number
+  targetRevision?: number
+  fingerprint?: string
+}
+export interface RematchMove {
+  fileId: number
+  from: string
+  to?: string
+  season: number
+  episodes: number[]
+  label?: string
+  mode?: 'rename' | 'copy' | 'relink'
+  bytes: number
+  quality?: string
+  sidecars?: { from: string; to: string }[]
+  note?: string
+  /** Why it is left out: it stays on disk and leaves the library. */
+  problem?: string
+  needsPick?: boolean
+}
+export interface RematchBlocked { reason: string; ref: string; itemId: number; message: string; retry: boolean }
+export interface RematchItemRef { id: number; kind: string; title: string; year?: number; inLibrary: boolean; folder?: string; folderChosen?: boolean }
+export interface RematchPreview {
+  source: RematchItemRef
+  target: RematchItemRef
+  targetCopyId?: number
+  moves: RematchMove[]
+  leftOut: RematchMove[]
+  sourceOutcome: 'stays' | 'removed'
+  sourceReason: string
+  blocklist: { fileId: number; release: string; indexer?: string }[]
+  blocklistOn: boolean
+  blocklistNote?: string
+  cinema?: string
+  episodes?: { season: number; episode: number; title?: string; hasFile: boolean }[]
+  copies?: { id: number; name: string; bookType?: string }[]
+  blocked?: RematchBlocked
+  sourceRevision: number
+  targetRevision: number
+  fingerprint: string
+  summary: string
+}
+export type RematchState = 'planned' | 'moving' | 'moved' | 'committed' | 'notified' | 'complete' | 'cancel_pending' | 'cancelled' | 'failed'
+export interface RematchResult {
+  moved?: { from: string; to: string; episodes?: number[]; mode: string }[]
+  leftOut?: string[]
+  failed?: { from: string; to: string }[]
+  blocklisted?: { release: string }[]
+  sourceRemoved?: boolean
+  leftBehind?: string[]
+  cinemaNote?: string
+}
+export interface RematchOperation {
+  operationId: string
+  requestId: string
+  state: RematchState
+  sourceItemId: number
+  targetItemId: number
+  result?: RematchResult
+  bytesDone: number
+  bytesTotal: number
+  lastError?: string
+  cinema?: { directory: string; status: string; result?: string; lastError?: string; visibleAt?: number }[]
+}
+export const previewRematch = (itemId: number, req: RematchRequest) =>
+  send<RematchPreview>('POST', `/library/${itemId}/rematch/preview`, req)
+export const startRematch = (itemId: number, req: RematchRequest) =>
+  send<RematchOperation>('POST', `/library/${itemId}/rematch`, req)
+export const getRematch = (operationId: string) => get<RematchOperation>(`/rematch/${encodeURIComponent(operationId)}`)
+export const cancelRematch = (operationId: string) => send<void>('POST', `/rematch/${encodeURIComponent(operationId)}/cancel`)

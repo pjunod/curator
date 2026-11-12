@@ -1,0 +1,24 @@
+/* Re-match… and Move to… on the item page. Prefixed rmd-; phone first:
+   every row wraps, nothing scrolls sideways. */
+.rmd .action-dialog-body { display: grid; gap: 12px; }
+.rmd-scope { display: flex; flex-wrap: wrap; gap: 8px 16px; }
+.rmd-search { display: flex; gap: 8px; }
+.rmd-search input { flex: 1; min-width: 0; }
+.rmd-cands, .rmd-plan { display: grid; margin: 0; padding: 0; list-style: none; border: 1px solid var(--border); border-radius: 6px; }
+.rmd-cands > li + li, .rmd-plan > li + li { border-top: 1px solid var(--border); }
+.rmd-cand { display: flex; align-items: center; gap: 10px; padding: 10px 12px; overflow-wrap: anywhere; }
+.rmd-cand.sel { background: var(--bg-hover); }
+.rmd-cand-text { flex: 1; min-width: 0; }
+.rmd-line { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1.3fr); gap: 6px 10px; padding: 10px 12px; overflow-wrap: anywhere; }
+.rmd-arr { color: var(--text-muted); }
+.rmd-to { display: grid; gap: 4px; justify-items: start; min-width: 0; }
+.rmd-to select { max-width: 100%; }
+.rmd-check, .rmd-copy { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.rmd-foot { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
+.rmd-progress { display: grid; gap: 10px; }
+.rmd-progress progress { width: 100%; }
+.rmd-h { font-size: 0.9rem; }
+@media (max-width: 640px) {
+  .rmd-line { grid-template-columns: minmax(0, 1fr); }
+  .rmd-arr { display: none; }
+}
