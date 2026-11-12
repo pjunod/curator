@@ -753,7 +753,9 @@ Testing a **saved** notifier also records what its plurx supports. A plurx
 with `removed_paths` lets a Re-match drop the old entry when files move
 (Usage → Re-match and Move to…); without it a move scans only the new folder
 and the old entry stays until plurx's next reconcile scan. Nothing is turned
-off either way; the Re-match preview says which applies.
+off either way; the Re-match preview says which applies, and Settings → Dev →
+**Cinema features** shows each Cinema notifier's support and when it was last
+read.
 
 **Test** sends plurx the library roots from Settings → Library as
 `probe_paths` and asks which it can see: it proves the URL, the key, the scope

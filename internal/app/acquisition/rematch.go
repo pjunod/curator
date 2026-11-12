@@ -18,6 +18,7 @@ import (
 
 	"github.com/pjunod/monarr/internal/domain"
 	"github.com/pjunod/monarr/internal/domain/naming"
+	"github.com/pjunod/monarr/internal/domain/quality"
 	"github.com/pjunod/monarr/internal/infra/sqlite"
 	"github.com/pjunod/monarr/internal/ports"
 )
@@ -98,11 +99,26 @@ type RematchMovePlan struct {
 	Quality  string        `json:"quality,omitempty"`
 	Sidecars []RematchPair `json:"sidecars,omitempty"`
 	Note     string        `json:"note,omitempty"`
+	// Action is what happens to a file the target already has, by the rule
+	// import uses (ADR 0027 item 5): new (nothing there), replace (this one
+	// ranks higher in the target's profile and its language is acceptable;
+	// the old file is removed once this one is committed) or beside.
+	Action   string            `json:"action,omitempty"`
+	Existing string            `json:"existing,omitempty"`
+	Reason   string            `json:"reason,omitempty"`
+	Replaces []RematchReplaced `json:"replaces,omitempty"`
 	// Problem is why the file is left out: the target has no such episode, a
 	// file already stands at the destination, or the person left it out.
 	// A left-out file stays on disk and leaves the library.
 	Problem   string `json:"problem,omitempty"`
 	NeedsPick bool   `json:"needsPick,omitempty"`
+}
+
+// RematchReplaced is a target file a move replaces.
+type RematchReplaced struct {
+	FileID  int64  `json:"fileId"`
+	Path    string `json:"path"`
+	Quality string `json:"quality,omitempty"`
 }
 
 // RematchPair is a sidecar's from → to.
@@ -307,6 +323,7 @@ func (s *Service) planRematch(ctx context.Context, req RematchRequest) (*rematch
 		choices[c.FileID] = c
 	}
 	claimed := map[string]bool{}
+	rank := &rematchRank{target: target, copyID: req.TargetCopyID}
 	for i, f := range moving {
 		plan.files[f.ID] = f
 		line := RematchMovePlan{FileID: f.ID, From: f.Path, Season: -1, Episodes: []int{}, Bytes: f.Size, Quality: f.Quality.Display()}
@@ -363,9 +380,6 @@ func (s *Service) planRematch(ctx context.Context, req RematchRequest) (*rematch
 			}
 			line.To = episodeDestination(root, target, f.Path, f.Quality, season, eps, title)
 			plan.epIDs[f.ID] = ids
-			if hasFile {
-				line.Note = line.Label + " already has a file; this one is kept beside it"
-			}
 		case domain.KindBook:
 			base := naming.BookFileName(target.Author, target.Title)
 			if len(moving) > 1 {
@@ -374,9 +388,6 @@ func (s *Service) planRematch(ctx context.Context, req RematchRequest) (*rematch
 			line.To = filepath.Join(root, base+strings.ToLower(filepath.Ext(f.Path)))
 		default:
 			line.To = movieDestination(root, target, f.Path, f.Quality)
-			if targetHasFiles {
-				line.Note = target.Title + " already has a file; this one is kept beside it (remove the one you do not want from the Files panel)"
-			}
 		}
 		if problem := s.rematchDestinationProblem(ctx, f, line.To, claimed); problem != "" {
 			line.Problem, line.NeedsPick = problem, target.Kind == domain.KindSeries
@@ -385,6 +396,9 @@ func (s *Service) planRematch(ctx context.Context, req RematchRequest) (*rematch
 			continue
 		}
 		claimed[line.To] = true
+		if err := s.rematchVerdict(ctx, rank, &line, f, moving, plan.epIDs[f.ID]); err != nil {
+			return nil, err
+		}
 		switch {
 		case line.To == f.Path:
 			line.Mode = "relink"
@@ -698,6 +712,119 @@ func rematchSidecars(src, dest string) []RematchPair {
 	return out
 }
 
+// rematchRank is what the replace-or-beside rule reads about the target,
+// once per preview: the same readers import uses.
+type rematchRank struct {
+	target  domain.MediaItem
+	copyID  int64
+	ready   bool
+	profile quality.Profile
+	disk    sqlite.CopyDiskState
+	eps     map[int64]episodeState
+}
+
+func (r *rematchRank) load(ctx context.Context, s *Service) error {
+	if r.ready {
+		return nil
+	}
+	r.ready = true
+	profileID := r.target.QualityProfileID
+	for _, c := range r.target.Copies {
+		if c.ID == r.copyID && r.copyID != 0 {
+			profileID = c.QualityProfileID
+		}
+	}
+	if profileID == 0 {
+		profileID = s.db.DefaultProfileID(ctx, r.target.Kind)
+		if r.target.Kind == domain.KindBook {
+			profileID = s.db.DefaultBookProfileID(ctx, r.target.BookType)
+		}
+	}
+	var err error
+	if r.profile, err = s.db.GetProfile(ctx, profileID); err != nil {
+		return err
+	}
+	if r.target.Kind == domain.KindSeries {
+		r.eps, err = s.episodeStates(ctx, r.target, r.copyID)
+		return err
+	}
+	r.disk, err = s.db.DiskStateForItem(ctx, r.target.ID, r.copyID)
+	return err
+}
+
+// rematchVerdict applies import's rule to a moved file meeting a file the
+// target already has (PlanItemImport): it replaces it when it ranks higher in
+// the target's profile and its language is acceptable, else it is kept
+// beside it. The files it replaces are the ones import's removeExistingFiles
+// removes: the same copy's (a series: those on the same episodes).
+func (s *Service) rematchVerdict(ctx context.Context, r *rematchRank, line *RematchMovePlan, f domain.MediaFile, moving []domain.MediaFile, epIDs []int64) error {
+	line.Action = "new"
+	if r.target.ID == 0 {
+		return nil
+	}
+	movingIDs := map[int64]bool{}
+	for _, m := range moving {
+		movingIDs[m.ID] = true
+	}
+	covered := map[int64]bool{}
+	for _, id := range epIDs {
+		covered[id] = true
+	}
+	var others []domain.MediaFile
+	for _, o := range r.target.Files {
+		if movingIDs[o.ID] || o.CopyID != r.copyID {
+			continue
+		}
+		if r.target.Kind == domain.KindSeries {
+			hit := false
+			for _, id := range o.EpisodeIDs {
+				hit = hit || covered[id]
+			}
+			if !hit {
+				continue
+			}
+		}
+		others = append(others, o)
+	}
+	if len(others) == 0 {
+		return nil
+	}
+	if err := r.load(ctx, s); err != nil {
+		return err
+	}
+	var have *quality.Quality
+	verified, audio := r.disk.SourceVerified, r.disk.Audio
+	langs := importLanguages(f.SourceRelease, f.Path)
+	switch r.target.Kind {
+	case domain.KindSeries:
+		for _, id := range epIDs {
+			st := r.eps[id]
+			if st.Have != nil && (have == nil || quality.Better(*have, *st.Have)) {
+				have, verified, audio = st.Have, st.Verified, st.Audio
+			}
+		}
+	case domain.KindBook:
+		have, langs = r.disk.Best, nil
+	default:
+		have = r.disk.Best
+	}
+	q := f.Quality
+	switch {
+	case have == nil:
+		line.Action, line.Reason = "beside", "the file already here has no known quality; this one is kept beside it"
+	case r.profile.Upgrade(q, langs, *have, verified, audio) || (quality.Better(q, *have) && (r.target.Kind == domain.KindBook || r.profile.LanguageAcceptable(langs))):
+		line.Action, line.Existing = "replace", have.Display()
+		line.Reason = fmt.Sprintf("%s ranks above the %s here in the %s profile; the old file is removed once this one is in place", q.Display(), have.Display(), r.profile.Name)
+		for _, o := range others {
+			line.Replaces = append(line.Replaces, RematchReplaced{FileID: o.ID, Path: o.Path, Quality: o.Quality.Display()})
+		}
+	default:
+		line.Action, line.Existing = "beside", have.Display()
+		line.Reason = fmt.Sprintf("%s does not rank above the %s here in the %s profile; it is kept beside it", q.Display(), have.Display(), r.profile.Name)
+	}
+	return nil
+}
+
 // rematchSourceOutcome decides whether the item the files leave stays (it
 // was added by a person, or still holds something) or is removed (folder
 // adoption created it and it is now empty).
@@ -758,7 +885,11 @@ func rematchFingerprint(plan *rematchPlan) string {
 		fmt.Fprintf(h, "item %d\n", plan.target.ID)
 	}
 	for _, m := range p.Moves {
-		fmt.Fprintf(h, "m %d %s %s %d %v %s\n", m.FileID, m.From, m.To, m.Season, m.Episodes, m.Mode)
+		fmt.Fprintf(h, "m %d %s %s %d %v %s %s", m.FileID, m.From, m.To, m.Season, m.Episodes, m.Mode, m.Action)
+		for _, r := range m.Replaces {
+			fmt.Fprintf(h, " r%d", r.FileID)
+		}
+		fmt.Fprintln(h)
 	}
 	for _, m := range p.LeftOut {
 		fmt.Fprintf(h, "l %d %s\n", m.FileID, m.From)
@@ -862,7 +993,8 @@ func (s *Service) startRematchLocked(ctx context.Context, req RematchRequest, fi
 			return sqlite.RematchOperation{}, fmt.Errorf("%w: %s cannot be read: %v", ErrInvalidRematch, f.Path, err)
 		}
 		mv := sqlite.RematchMove{ID: fmt.Sprintf("rematch:%s:%03d", opID, i), OperationID: opID, FileID: f.ID, ItemID: plan.source.ID,
-			Source: f.Path, Target: m.To, Mode: m.Mode, Identity: identity, Size: f.Size, State: "rematch_planned"}
+			Source: f.Path, Target: m.To, Mode: m.Mode, Identity: identity, Size: f.Size, State: "rematch_planned",
+			Replace: m.Action == "replace", CopyID: p.TargetCopyID, EpisodeIDs: plan.epIDs[f.ID]}
 		if m.Mode == "copy" {
 			mv.Temporary = filepath.Join(filepath.Dir(m.To), "."+filepath.Base(m.To)+".rematch-"+opID+".partial")
 		}
@@ -1308,6 +1440,7 @@ type rematchResult struct {
 	LeftOut       []string         `json:"leftOut"`
 	Failed        []RematchPair    `json:"failed"`
 	Blocklisted   []RematchRelease `json:"blocklisted"`
+	Replaced      []string         `json:"replaced,omitempty"`
 	SourceRemoved bool             `json:"sourceRemoved"`
 	LeftBehind    []string         `json:"leftBehind,omitempty"`
 	CinemaNote    string           `json:"cinemaNote,omitempty"`
@@ -1365,6 +1498,10 @@ func (s *Service) commitRematch(ctx context.Context, op sqlite.RematchOperation,
 		if mv.Source != mv.Target {
 			removed = append(removed, mv.Source)
 		}
+		for _, r := range line.Replaces {
+			removed = append(removed, r.Path)
+			result.Replaced = append(result.Replaced, r.Path)
+		}
 		if p.BlocklistOn && !stored.RemoveSource && f.SourceGUID != "" && f.SourceIndexerID != 0 {
 			for _, r := range p.Blocklist {
 				if r.FileID != f.ID {
@@ -1414,6 +1551,16 @@ const HistoryRematched = "rematched"
 // finishRematch removes what a copy left at the source and an emptied
 // adopted item's folders, then completes the operation.
 func (s *Service) finishRematch(ctx context.Context, op sqlite.RematchOperation, stored rematchStored, moves []sqlite.RematchMove) {
+	// Every file this operation placed is kept by a replacement, so two
+	// moved files into one title never remove each other.
+	var keep []string
+	for _, mv := range moves {
+		if mv.State == "rematch_committed" || mv.State == "rematch_done" {
+			keep = append(keep, mv.Target)
+		}
+	}
+	var target domain.MediaItem
+	targetRead := false
 	for i := range moves {
 		mv := &moves[i]
 		if mv.State != "rematch_committed" {
@@ -1431,6 +1578,24 @@ func (s *Service) finishRematch(ctx context.Context, op sqlite.RematchOperation,
 					_ = os.Remove(sc[0])
 				}
 			}
+		}
+		if mv.Replace {
+			// The moved file is committed; what it replaces leaves now, by
+			// import's own path (bytes, row, placed subtitles). Journaled:
+			// a restart before rematch_done repeats it, and it is idempotent.
+			if !targetRead {
+				t, err := s.db.GetMediaItemFull(ctx, op.TargetItemID)
+				if err != nil {
+					s.log.Warn("re-match replacement waits for its title", "operation", op.ID, "err", err)
+					continue
+				}
+				target, targetRead = t, true
+			}
+			var eps []int64
+			if target.Kind == domain.KindSeries {
+				eps = append([]int64{}, mv.EpisodeIDs...)
+			}
+			s.removeExistingFiles(ctx, target, mv.CopyID, eps, keep...)
 		}
 		mv.State = "rematch_done"
 		_ = s.db.PutRematchMove(ctx, *mv)

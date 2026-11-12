@@ -160,6 +160,8 @@ export function RematchSheet({ client, item, onClose }: { client: MonarrClient; 
                     {m.problem ? <Text style={{ color: theme.warning }}>{m.problem}</Text> : null}
                     {episodeChips(m)}
                     {m.mode ? <Text style={{ color: theme.muted }}>{MODE_TEXT[m.mode]} · {formatBytes(m.bytes)}</Text> : null}
+                    {m.action === 'replace' ? <Badge tone="warning" label={`replaces ${m.existing ?? ''}`} /> : m.action === 'beside' ? <Badge label={`kept beside ${m.existing || 'the file there'}`} /> : null}
+                    {m.reason ? <Text style={{ color: theme.muted }}>{m.reason}</Text> : null}
                     {m.note ? <Text style={{ color: theme.warning }}>{m.note}</Text> : null}
                   </Panel>
                 ))}

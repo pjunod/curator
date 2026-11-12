@@ -526,6 +526,11 @@ export interface RematchMove {
   bytes: number
   sidecars?: { from: string; to: string }[]
   note?: string
+  /** What happens to a file the target already has (import's rule). */
+  action?: 'new' | 'replace' | 'beside'
+  existing?: string
+  reason?: string
+  replaces?: { fileId: number; path: string; quality?: string }[]
   problem?: string
   needsPick?: boolean
 }

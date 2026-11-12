@@ -138,10 +138,17 @@ file between items, and Cinema cannot be told that a path went away
 
 - **Same kind only.** A movie's files move to a movie, a series' to a
   series, a book's to an edition of the same medium.
-- **Into an existing item.** A moved file is kept beside a file the target
-  already has; the preview says so, and the person removes the one they do
-  not want from the Files panel. Nothing is overwritten or deleted by the
-  move itself.
+- **Into an existing item: import's rule.** A moved file that meets a file
+  the target already has (the same copy; for a series, the same episodes)
+  replaces it when it ranks higher in the target's profile and its language
+  is acceptable — `PlanItemImport`'s test — and is kept beside it otherwise;
+  the preview says which and why. A replacement is journaled on the move
+  (`replace`, copy, episodes) and runs after the commit through import's
+  `removeExistingFiles` (bytes, row, placed subtitles), keeping every file
+  the operation placed; a restart before the move is `rematch_done` repeats
+  it. The replaced paths are among the sub-delivery's `removed_paths`.
+  "Never overwrite" still holds: a file at the destination path itself is a
+  preview conflict.
 - **A removed source blocklists nothing.** Blocklist rows cascade with
   their item; when the source is removed the preview says there is nothing
   to blocklist.

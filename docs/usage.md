@@ -675,8 +675,11 @@ Nothing moves until you have read the preview. It lists:
 - the release that produced each moved file, **blocklisted** for the item it
   left (checkbox, on by default), so automatic search does not grab it for
   that wantable again. Files adopted from disk have no release to blocklist.
-  Moving into a title that already has a file keeps both; remove the one you
-  do not want from the Files panel afterwards.
+- what happens to a file the target already has, by the rule import uses:
+  the moved file **replaces** it when it ranks higher in the target's
+  profile (and its language is acceptable) — the old file is removed once
+  the move is committed — and is **kept beside** it otherwise, with the
+  reason.
 - what cinema will do: scan the new folder and drop the old entry, or — a
   cinema without removed-path support — scan the new folder only; the old
   entry then stays in cinema until its next reconcile scan.

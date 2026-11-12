@@ -66,7 +66,7 @@ func (f rematchFixture) file(t *testing.T, itemID int64, path, body, guid string
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := f.db.SetFileQuality(ctx, id, quality.FromString("Bluray-2160p")); err != nil {
+	if err := f.db.SetFileQuality(ctx, id, quality.Quality{Source: quality.SourceBluray, Resolution: 2160}); err != nil {
 		t.Fatal(err)
 	}
 	if guid != "" {
@@ -206,17 +206,23 @@ func TestRematchToNewTitleRenamesAndRemovesAdoptedSource(t *testing.T) {
 	}
 }
 
-// The right title is already in the library: the file merges into it beside
-// its file, the user-added source stays wanted, and the release that
-// produced the file is blocklisted for the source through the replacement
-// path (intent rematch, complete).
+// The right title is already in the library: the file merges into it by
+// import's rule — it replaces the file there when it ranks higher in the
+// target's profile (removed once the move is committed, through import's
+// removeExistingFiles), else it is kept beside it, with the reason. The
+// user-added source stays wanted, and the release that produced the file is
+// blocklisted for it through the replacement path (intent rematch, complete).
 func TestRematchMergesIntoExistingItemAndBlocklistsVacatedRelease(t *testing.T) {
 	f := newRematchFixture(t)
 	ctx := context.Background()
 	src := f.movie(t, "Dune", 1984, 841, "")
-	fileID := f.file(t, src.ID, filepath.Join(src.Path, "Dune (1984) [Bluray-2160p].mkv"), "4k", "guid-1")
+	f.file(t, src.ID, filepath.Join(src.Path, "Dune (1984) [Bluray-2160p].mkv"), "4k", "guid-1")
 	dst := f.movie(t, "Dune", 2021, 438631, "")
-	f.file(t, dst.ID, filepath.Join(dst.Path, "Dune (2021) [WEBDL-1080p].mkv"), "1080", "")
+	oldTarget := filepath.Join(dst.Path, "Dune (2021) [WEBDL-1080p].mkv")
+	old := f.file(t, dst.ID, oldTarget, "1080", "")
+	if err := f.db.SetFileQuality(ctx, old, quality.Quality{Source: quality.SourceWEBDL, Resolution: 1080}); err != nil {
+		t.Fatal(err)
+	}
 
 	req := RematchRequest{SourceItemID: src.ID, TargetItemID: dst.ID}
 	p, err := f.svc.PreviewRematch(ctx, req)
@@ -226,16 +232,25 @@ func TestRematchMergesIntoExistingItemAndBlocklistsVacatedRelease(t *testing.T) 
 	if p.SourceOutcome != "stays" || !strings.Contains(p.SourceReason, "you added it") || len(p.Blocklist) != 1 || !p.BlocklistOn {
 		t.Fatalf("preview = %+v, want the source kept and the release blocklisted", p)
 	}
-	if !strings.Contains(p.Moves[0].Note, "kept beside") || p.Target.FolderChosen {
-		t.Fatalf("move = %+v, want it kept beside the existing file in the existing folder", p.Moves[0])
+	m := p.Moves[0]
+	if m.Action != "replace" || len(m.Replaces) != 1 || m.Replaces[0].FileID != old || !strings.Contains(m.Reason, "ranks above") || p.Target.FolderChosen {
+		t.Fatalf("move = %+v, want it to replace the lower-ranked file in the existing folder", m)
 	}
 	st := f.run(t, req, p)
 	if st.State != "complete" {
 		t.Fatalf("state = %s (%s)", st.State, st.LastError)
 	}
 	target, _ := f.db.GetMediaItemFull(ctx, dst.ID)
-	if len(target.Files) != 2 {
-		t.Fatalf("target files = %d, want 2", len(target.Files))
+	if len(target.Files) != 1 || target.Files[0].Path != m.To {
+		t.Fatalf("target files = %+v, want only the moved file", target.Files)
+	}
+	if _, err := os.Stat(oldTarget); !os.IsNotExist(err) {
+		t.Fatal("the replaced file is still on disk")
+	}
+	var result rematchResult
+	_ = json.Unmarshal(st.Result, &result)
+	if len(result.Replaced) != 1 || result.Replaced[0] != oldTarget {
+		t.Fatalf("result = %+v, want the replaced file recorded", result)
 	}
 	source, err := f.db.GetMediaItemFull(ctx, src.ID)
 	if err != nil || len(source.Files) != 0 {
@@ -247,7 +262,25 @@ func TestRematchMergesIntoExistingItemAndBlocklistsVacatedRelease(t *testing.T) 
 	if blocked != 1 || ops != 1 {
 		t.Fatalf("blocklist = %d, replacement ops = %d; want the release blocklisted for the source", blocked, ops)
 	}
-	_ = fileID
+
+	// A lower-ranked file is kept beside, and nothing is removed.
+	worse := f.movie(t, "Arrival", 2016, 329865, "")
+	w := f.file(t, worse.ID, filepath.Join(worse.Path, "Arrival (2016) [HDTV-720p].mkv"), "720", "")
+	if err := f.db.SetFileQuality(ctx, w, quality.Quality{Source: quality.SourceHDTV, Resolution: 720}); err != nil {
+		t.Fatal(err)
+	}
+	req = RematchRequest{SourceItemID: worse.ID, TargetItemID: dst.ID}
+	p, err = f.svc.PreviewRematch(ctx, req)
+	if err != nil || p.Moves[0].Action != "beside" || len(p.Moves[0].Replaces) != 0 || !strings.Contains(p.Moves[0].Reason, "kept beside") {
+		t.Fatalf("preview = %+v %v, want the worse file kept beside with the reason", p.Moves, err)
+	}
+	if st := f.run(t, req, p); st.State != "complete" {
+		t.Fatalf("state = %s (%s)", st.State, st.LastError)
+	}
+	target, _ = f.db.GetMediaItemFull(ctx, dst.ID)
+	if len(target.Files) != 2 {
+		t.Fatalf("target files = %d, want both kept", len(target.Files))
+	}
 }
 
 // Series: Move to… one file to another episode of the same show; and to
@@ -440,7 +473,7 @@ func TestRematchResumesAfterCrash(t *testing.T) {
 	src := f.movie(t, "Dune", 1984, 841, "")
 	a := f.file(t, src.ID, filepath.Join(src.Path, "Dune (1984) [Bluray-2160p].mkv"), "a", "")
 	b := f.file(t, src.ID, filepath.Join(src.Path, "Dune (1984) [WEBDL-1080p].mkv"), "b", "")
-	if err := f.db.SetFileQuality(ctx, b, quality.FromString("WEBDL-1080p")); err != nil {
+	if err := f.db.SetFileQuality(ctx, b, quality.Quality{Source: quality.SourceWEBDL, Resolution: 1080}); err != nil {
 		t.Fatal(err)
 	}
 	dst := f.movie(t, "Dune", 2021, 438631, "")

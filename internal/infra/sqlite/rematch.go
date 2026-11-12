@@ -64,8 +64,13 @@ type RematchMove struct {
 	Size        int64       `json:"size"`
 	SHA256      string      `json:"sha256,omitempty"`
 	Sidecars    [][2]string `json:"sidecars,omitempty"`
-	State       string      `json:"state"` // rematch_planned | rematch_moved | rematch_committed | rematch_done | rematch_rolled_back | rematch_failed
-	Error       string      `json:"error,omitempty"`
+	// Replace says the move replaces the target's files for this copy (and
+	// episodes) once it is committed, by import's removeExistingFiles.
+	Replace    bool    `json:"replace,omitempty"`
+	CopyID     int64   `json:"copy_id,omitempty"`
+	EpisodeIDs []int64 `json:"episode_ids,omitempty"`
+	State      string  `json:"state"` // rematch_planned | rematch_moved | rematch_committed | rematch_done | rematch_rolled_back | rematch_failed
+	Error      string  `json:"error,omitempty"`
 }
 
 // CreateRematchOperation records an operation and its planned moves. The same

@@ -171,6 +171,10 @@ export function RematchDialog({ item, file, onClose }: { item: MediaItemDetail; 
                       {episodeSelect(m)}
                       {m.mode && <span className="muted">{MODE_TEXT[m.mode]} · {fmtBytes(m.bytes)}</span>}
                       {m.sidecars && m.sidecars.length > 0 && <span className="muted">{m.sidecars.length} sidecar file{m.sidecars.length === 1 ? '' : 's'} travel with it</span>}
+                      {m.action === 'replace' && <span className="pill pill-warning">replaces {m.existing}</span>}
+                      {m.action === 'beside' && <span className="pill pill-info">kept beside {m.existing || 'the file there'}</span>}
+                      {m.reason && <span className="muted">{m.reason}</span>}
+                      {m.replaces?.map((r) => <span key={r.fileId} className="mono muted">removes {r.path}</span>)}
                       {m.note && <span className="warning-text">{m.note}</span>}
                     </span>
                   </li>
