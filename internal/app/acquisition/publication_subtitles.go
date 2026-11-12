@@ -544,9 +544,17 @@ func (s *Service) redecideLeftoverSidecars(ctx context.Context, pub sqlite.Publi
 	for path, f := range pending {
 		d, ok := decisions[path]
 		if isPublicationMedia(path) {
-			// Pending media is never discarded here: only an import decides a
-			// media file (a full or unmounted library must not cost a
-			// download its bytes).
+			// Only an import decides a media file (a full or unmounted library
+			// holds the publication in discovered, so it never reaches here).
+			// This publication's import has ended — imported, or failed with
+			// its want grabbed again — so media it left pending (an earlier
+			// build's import, or a stall that ended the import before it
+			// reached the file) was not selected and is not kept, exactly as
+			// the import itself records an unselected file.
+			f.Outcome, f.DiscardReason, f.Reason, f.LibraryPath = "discarded", "rejected", "its publication's import ended without placing it; not kept", ""
+			if err := s.db.SetPublicationFileOutcome(ctx, f); err != nil {
+				return err
+			}
 			continue
 		}
 		if !ok {
