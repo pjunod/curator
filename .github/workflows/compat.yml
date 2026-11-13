@@ -22,27 +22,31 @@ concurrency:
 jobs:
   conformance:
     name: Fake-consumer flows + contract shapes
-    runs-on: ${{ fromJSON(vars.CI_RUNNER_MODE == 'github' && '["ubuntu-24.04"]' || '["self-hosted","Linux","X64","lab","general"]') }}
+    runs-on: ${{ fromJSON((github.event_name == 'pull_request' || vars.CI_RUNNER_MODE == 'github') && '["ubuntu-24.04"]' || '["self-hosted","Linux","X64","lab","general"]') }}
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version-file: go.mod
           # Self-hosted runners keep ~/go/pkg/mod between jobs; restoring the
           # tarball over it hits thousands of "File exists" and can time a job out.
-          cache: ${{ vars.CI_RUNNER_MODE == 'github' }}
+          cache: ${{ runner.environment == 'github-hosted' }}
       - name: go test ./internal/compat (race, verbose)
         run: go test -race -v -count=1 ./internal/compat/
 
   e2e:
     name: Personalities against the real binary
-    runs-on: ${{ fromJSON(vars.CI_RUNNER_MODE == 'github' && '["ubuntu-24.04"]' || '["self-hosted","Linux","X64","lab","general"]') }}
+    runs-on: ${{ fromJSON((github.event_name == 'pull_request' || vars.CI_RUNNER_MODE == 'github') && '["ubuntu-24.04"]' || '["self-hosted","Linux","X64","lab","general"]') }}
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
           cache: npm
@@ -50,12 +54,12 @@ jobs:
             web/package-lock.json
             test/e2e/package-lock.json
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version-file: go.mod
           # Self-hosted runners keep ~/go/pkg/mod between jobs; restoring the
           # tarball over it hits thousands of "File exists" and can time a job out.
-          cache: ${{ vars.CI_RUNNER_MODE == 'github' }}
+          cache: ${{ runner.environment == 'github-hosted' }}
 
       - name: Build binary with embedded UI
         run: make build
@@ -70,7 +74,7 @@ jobs:
             npx playwright install chromium
           fi
         env:
-          CI_RUNNER_MODE: ${{ vars.CI_RUNNER_MODE || 'self-hosted' }}
+          CI_RUNNER_MODE: ${{ runner.environment == 'github-hosted' && 'github' || 'self-hosted' }}
 
       - name: Run compat e2e chain
         working-directory: test/e2e
@@ -80,7 +84,7 @@ jobs:
 
       - name: Upload Playwright report on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: compat-playwright-report
           path: test/e2e/playwright-report/
