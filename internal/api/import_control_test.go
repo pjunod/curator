@@ -151,3 +151,22 @@ func TestDrainAbortChecksOwnerGenerationAndTerminalShutdown(t *testing.T) {
 	e.srv.BeginShutdown()
 	invoke(`{"ownerToken":"`+owner+`","generation":"`+status.Generation+`"}`, 409)
 }
+
+func TestStageCleanupAPIRefusesUncancelledOrUnacknowledgedCustody(t *testing.T) {
+	e := newAPIEnv(t)
+	acqAddClient(t, e, "qbittorrent")
+	item := e.addMovie(t)
+	id := acqGrab(t, e, item)
+	dl, err := e.db.GetDownload(context.Background(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := "/api/v1/queue/" + acqItoa(id) + "/import-review"
+	identity := map[string]any{"generationKey": dl.GenerationKey, "epoch": "0", "ids": []string{"stage:unknown"}, "action": "preview_stage_cleanup"}
+	e.postImportJSON(t, path, identity).expect(t, http.StatusConflict)
+	identity["action"] = "cleanup_stages"
+	identity["fingerprints"] = map[string]string{"stage:unknown": "untrusted"}
+	e.postImportJSON(t, path, identity).expect(t, http.StatusConflict)
+	identity["acknowledged"] = true
+	e.postImportJSON(t, path, identity).expect(t, http.StatusConflict)
+}

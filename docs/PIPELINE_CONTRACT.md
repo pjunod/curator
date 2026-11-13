@@ -963,3 +963,29 @@ code; where an enable is needed it is advisory in the Developer tab.
 - **No backlog mutation** by the rewrite. The 1.99 TB on nuc3 is handled by
   the plan's M7 as a read-only report and operator-approved batches under the
   same per-file evidence rule as §3.4.
+
+## Explicit cleanup of cancelled empty import stages
+
+`POST /queue/{id}/import-review` supports `preview_stage_cleanup` and
+`cleanup_stages` for exact placement `stage:<id>` selections. Both require the
+current `generationKey`, decimal-string `epoch` and `ids`. Preview returns
+`stages: [{id, stage, fingerprint, absent}]`. Cleanup additionally requires
+`fingerprints` keyed by the selected stage IDs and `acknowledged: true`.
+
+Only a durably cancelled attempt with no writer, pending/retained publication
+custody, title owner or storage decision conflict is eligible. The original
+placement must identify its mounted storage, parent and temporary object.
+Only the original `.monarr-stage-<placement-id>` regular **zero-byte** file
+may leave; nonempty, replaced, symlinked or unidentifiable stages stay held.
+An existing prior-file backup prevents disposal. Library targets and backups
+are never unlinked by this action. Every file generation is checked again
+through a retained descriptor immediately before the descriptor-relative unlink.
+Physical disposal precedes the custody acknowledgement. After a crash, a fresh
+verified absent-stage preview can settle the still-held ledger. Existing
+`operator_disposed` remains an external-disposition attestation, without I/O.
+
+An open `runner_done_to_import` timing is not live waiting work when its exact
+transfer is durably failed, payload removed, salvage absent and all stage and
+publication custody settled. The open audit row remains, and no successful
+latency is invented. Closed successful samples and legacy delivery audit
+receipts are unchanged.

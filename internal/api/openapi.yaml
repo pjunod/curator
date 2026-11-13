@@ -2129,11 +2129,30 @@ paths:
         "404": { description: Unknown row. }
     post:
       operationId: resolveImportReview
-      summary: Record explicit fencing or retained-byte disposition
+      summary: Review custody or explicitly clean selected cancelled empty stages
+      description: >
+        preview_stage_cleanup returns current zero-byte stage fingerprints;
+        cleanup_stages requires those fingerprints and acknowledged=true.
+        Only cancelled, quiescent, identity-proven stage allocations qualify.
+        Library targets and prior-file backups are never deletion targets.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [generationKey, epoch, action, ids]
+              properties:
+                generationKey: { type: string }
+                epoch: { type: string, pattern: '^[0-9]+$' }
+                action: { type: string, enum: [retain_uncertain, operator_adopted, operator_disposed, preview_stage_cleanup, cleanup_stages] }
+                ids: { type: array, items: { type: string } }
+                acknowledged: { type: boolean, default: false }
+                fingerprints: { type: object, additionalProperties: { type: string } }
       parameters:
         - { name: id, in: path, required: true, schema: { type: integer, format: int64 } }
       responses:
-        "200": { description: Review recorded; application performs no filesystem deletion. }
+        "200": { description: Evidence previewed or review recorded; cleanup_stages physically removes only selected verified empty stages. }
         "400": { description: Explicit acknowledgement required. }
         "409": { description: Local writer active or attempt changed. }
 
