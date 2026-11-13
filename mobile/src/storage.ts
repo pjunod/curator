@@ -12,7 +12,7 @@ export async function loadConnection(): Promise<Connection | null> {
   try {
     const parsed = JSON.parse(encoded) as Partial<Connection>
     if (typeof parsed.baseUrl !== 'string' || typeof parsed.apiKey !== 'string') return null
-    return sanitizeConnection({ baseUrl: parsed.baseUrl, apiKey: parsed.apiKey })
+    return sanitizeConnection({ baseUrl: parsed.baseUrl, apiKey: parsed.apiKey,sessionToken:typeof parsed.sessionToken==='string'?parsed.sessionToken:undefined })
   } catch {
     return null
   }

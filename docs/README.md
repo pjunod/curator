@@ -152,3 +152,5 @@ Superseded plans and proposals, kept as history. Each starts with a one-line poi
 - [Household discovery plan](HOUSEHOLD_DISCOVERY_PLAN.md) — approved daily-use journeys and renderings.
 - [Household discovery status](HOUSEHOLD_DISCOVERY_STATUS.md) — review findings, milestones and delivery evidence.
 - [ADR 0029](adr/0029-shared-availability.md) — shared observed availability and bounded owner shelves.
+
+- [Household request implementation](HOUSEHOLD_REQUESTS_STATUS.md) — local accounts, optional Cinema links and exact-scope request delivery.

@@ -38,6 +38,53 @@ type Blocklist struct {
 	CreatedAt    int64
 }
 
+type CinemaConnection struct {
+	ID           int64
+	BaseUrl      string
+	Issuer       string
+	ClientID     string
+	ClientSecret string
+	Redirect     string
+	Generation   int64
+}
+
+type CinemaHandoff struct {
+	StateDigest          string
+	Mode                 string
+	AccountID            int64
+	CredentialGeneration int64
+	SessionDigest        string
+	ConnectionGeneration int64
+	Verifier             string
+	CookieDigest         string
+	NativeChallenge      string
+	BrowserOpened        int64
+	Claim                string
+	GrantSecret          string
+	ReadyLink            int64
+	ExpiresAt            int64
+}
+
+type CinemaLink struct {
+	ID                   int64
+	AccountID            int64
+	Issuer               string
+	Subject              string
+	GrantSecret          string
+	ConnectionGeneration int64
+	Generation           int64
+	Active               int64
+}
+
+type CinemaRevocation struct {
+	ID           int64
+	BaseUrl      string
+	ClientID     string
+	ClientSecret string
+	GrantSecret  string
+	CreatedAt    int64
+}
+
 type CompletedCleanupAttempt struct {
 	DownloadID int64
 	TriedAt    int64
@@ -175,6 +222,115 @@ type HistoryEvent struct {
 	MediaItemID  int64
 	ReleaseTitle string
 	Data         string
+}
+
+type HouseholdAccount struct {
+	ID                   int64
+	Username             string
+	DisplayName          string
+	PasswordHash         string
+	LegacySalt           string
+	Role                 string
+	Status               string
+	CredentialGeneration int64
+	Revision             int64
+	CreatedAt            int64
+	InitialOwner         int64
+}
+
+type HouseholdDownloadOrigin struct {
+	DownloadID         int64
+	Generation         string
+	TargetID           int64
+	ApprovalGeneration int64
+	ScopeJson          string
+	PolicyJson         string
+}
+
+type HouseholdInvite struct {
+	TokenDigest       string
+	CreatedBy         int64
+	CreatedGeneration int64
+	CreatedAt         int64
+	ExpiresAt         int64
+	ConsumedBy        sql.NullInt64
+}
+
+type HouseholdRequest struct {
+	ID            int64
+	Fingerprint   string
+	Kind          string
+	TmdbID        int64
+	IdentityJson  string
+	ScopeJson     string
+	Title         string
+	Year          int64
+	PosterPath    string
+	Overview      string
+	CreatedBy     int64
+	CreatedAt     int64
+	UpdatedAt     int64
+	Revision      int64
+	State         string
+	PublicNote    string
+	ApprovedBy    sql.NullInt64
+	PolicyJson    string
+	LibraryItemID int64
+	NextCheckAt   int64
+}
+
+type HouseholdRequestNote struct {
+	RequestID int64
+	AccountID int64
+	Note      string
+}
+
+type HouseholdRequestSubscription struct {
+	RequestID int64
+	AccountID int64
+	Active    int64
+	CreatedAt int64
+}
+
+type HouseholdRequestTarget struct {
+	ID                 int64
+	RequestID          int64
+	MediaItemID        int64
+	EpisodeID          int64
+	Season             int64
+	Episode            int64
+	ApprovalGeneration int64
+	State              string
+	DownloadID         sql.NullInt64
+	DownloadGeneration string
+	CreatedAt          int64
+}
+
+type HouseholdScopeClaim struct {
+	Kind      string
+	TmdbID    int64
+	CopyID    int64
+	Season    int64
+	Episode   int64
+	RequestID int64
+}
+
+type HouseholdSecurity struct {
+	ID          int64
+	Established int64
+}
+
+type HouseholdSession struct {
+	TokenDigest          string
+	AccountID            int64
+	CredentialGeneration int64
+	Method               string
+	LinkID               int64
+	LinkGeneration       int64
+	Device               string
+	CreatedAt            int64
+	ExpiresAt            int64
+	IntegrationGrant     string
 }
 
 type IgnoredPath struct {

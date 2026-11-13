@@ -1,3 +1,4 @@
+import {CinemaSignIn} from '../Cinema'
 import { useState } from 'react'
 import { useMutation } from '@tanstack/react-query'
 import { useNavigate } from '@tanstack/react-router'
@@ -53,6 +54,7 @@ export function LoginPage() {
             {String((doLogin.error as Error).message)}
           </div>
         )}
+        <CinemaSignIn/>
       </section>
     </div>
   )

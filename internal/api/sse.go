@@ -81,10 +81,16 @@ func (s *Server) StreamEvents(w http.ResponseWriter, r *http.Request) {
 		case <-s.streamsCtx.Done():
 			return
 		case <-heartbeat.C:
+			if !s.ownerStreamAuthorized(r) {
+				return
+			}
 			if !writeFrame(": ping\n\n") {
 				return
 			}
 		case e, open := <-events:
+			if !s.ownerStreamAuthorized(r) {
+				return
+			}
 			if !open {
 				return // bus closed; client will reconnect
 			}

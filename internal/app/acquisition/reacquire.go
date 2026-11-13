@@ -202,11 +202,16 @@ const HistoryReacquired = "reacquired"
 // paths are all re-acquired is cancelled; one that has others is rewritten
 // without the re-acquired paths (as Stop rewrites it).
 func (s *Service) cancelOffloadDeliveries(ctx context.Context, sc reacquireScope) {
+	if err := s.cancelOffloadDeliveriesRestricted(ctx, sc, nil); err != nil {
+		s.log.Warn("re-acquire: offload notification narrowing failed", "err", err)
+	}
+}
+func (s *Service) cancelOffloadDeliveriesRestricted(ctx context.Context, sc reacquireScope, only []string) error {
 	const why = "cancelled: re-acquired before cinema confirmed it"
 	ops, err := s.db.PendingOffloadOperationsForItem(ctx, sc.item.ID)
 	if err != nil {
 		s.log.Warn("re-acquire: pending offload requests unreadable", "err", err)
-		return
+		return err
 	}
 	stillOffloaded := map[int64]bool{}
 	for _, sn := range sc.item.Seasons {
@@ -215,13 +220,16 @@ func (s *Service) cancelOffloadDeliveries(ctx context.Context, sc reacquireScope
 		}
 	}
 	for _, op := range ops {
-		var stored offloadStored
-		if json.Unmarshal(op.Plan, &stored) != nil {
+		if only != nil && !slices.Contains(only, op.ID) {
 			continue
+		}
+		var stored offloadStored
+		if err = json.Unmarshal(op.Plan, &stored); err != nil {
+			return err
 		}
 		files, err := s.db.ListOffloadFiles(ctx, op.ID)
 		if err != nil {
-			continue
+			return err
 		}
 		overlap := sc.clear == "movie" || stored.Movie
 		for _, id := range stored.Episodes {
@@ -254,13 +262,16 @@ func (s *Service) cancelOffloadDeliveries(ctx context.Context, sc reacquireScope
 		if len(keepPaths) > 0 {
 			if keep, err = s.offloadOutbox(ctx, op.ID, sc.item, keepPaths, false); err != nil {
 				s.log.Warn("re-acquire: cannot narrow the offload requests", "err", err)
-				continue
+				return err
 			}
 		}
 		if err := s.db.RewriteOffloadOutbox(ctx, op.ID, why, keep); err != nil {
 			s.log.Warn("re-acquire: could not cancel offload requests", "err", err)
+			return err
 		}
 	}
+
+	return nil
 }
 
 // startReacquireSearch runs the search in the background, admitted as work so

@@ -1,3 +1,4 @@
+import {MemberPortal,HouseholdRequestsPage,AccountPage,JoinHouseholdPage} from './Household'
 import { parsePreviewKey } from './metadataPreview'
 import { useEffect, useState } from 'react'
 import {
@@ -28,7 +29,7 @@ import type { CalendarSearch } from './pages/Calendar'
 import { LoginPage } from './pages/Login'
 import { WantedPage } from './pages/Wanted'
 import type { MediaKind } from './api'
-import { getHealth, getStatus } from './api'
+import { getHealth, getStatus, getSignInInfo, getCurrentAccount } from './api'
 import {
   LAYOUTS,
   PALETTES,
@@ -142,7 +143,7 @@ function MobileShell(props: { overall: string; version: string; children: React.
           <div className="sheet-backdrop" onClick={() => setSheet(false)} />
           <div className="more-sheet" role="dialog" aria-label="More">
             <GlobalSearch />
-            <nav className="sheet-nav">
+            <nav className="sheet-nav"><Link to="/requests">Requests</Link><Link to="/account">Account</Link>
               <Link to="/calendar" activeProps={{ className: 'active' }}>Calendar</Link>
               <Link to="/dashboard" activeProps={{ className: 'active' }}>
                 Dashboard
@@ -170,7 +171,19 @@ function MobileShell(props: { overall: string; version: string; children: React.
   )
 }
 
-function Layout() {
+function Layout(){
+ const path=useRouterState({select:s=>s.location.pathname})
+ const publicPage=path==='/login'||path==='/join'
+ const info=useQuery({queryKey:['sign-in-info'],queryFn:getSignInInfo,enabled:!publicPage,retry:false,refetchInterval:30000})
+ const account=useQuery({queryKey:['account'],queryFn:getCurrentAccount,enabled:!publicPage&&info.isSuccess,retry:false,refetchInterval:15000})
+ if(publicPage)return <main className="household-shell"><Outlet/></main>
+ if(info.isPending||info.data?.required&&account.isPending)return <main className="household-shell" role="status">Checking account access…</main>
+ if(info.error||account.error)return <main className="household-shell"><p role="alert">Account access could not be checked.</p><button onClick={()=>{void info.refetch();void account.refetch()}}>Try again</button></main>
+ if(info.data?.required&&!account.data)return <main className="household-shell"><LoginPage/></main>
+ if(account.data&&account.data.accessRole!=='owner')return <MemberPortal identity={account.data}/>
+ return <OwnerLayout/>
+}
+function OwnerLayout() {
   const status = useQuery({ queryKey: ['status'], queryFn: getStatus, refetchInterval: 30_000 })
   const health = useQuery({ queryKey: ['health'], queryFn: getHealth, refetchInterval: 30_000 })
   const overall = health.data?.overall ?? 'ok'
@@ -202,6 +215,8 @@ function Layout() {
           <Link to="/discover" activeProps={{ className: 'active' }}>
             Discover
           </Link>
+          <Link to="/requests" activeProps={{className:'active'}}>Requests</Link>
+          <Link to="/account" activeProps={{className:'active'}}>Account</Link>
           <Link to="/wanted" activeProps={{ className: 'active' }}>
             Wanted
           </Link>
@@ -302,6 +317,10 @@ const loginRoute = createRoute({
   component: LoginPage,
 })
 
+const requestsRoute=createRoute({getParentRoute:()=>rootRoute,path:'/requests',component:HouseholdRequestsPage})
+const accountRoute=createRoute({getParentRoute:()=>rootRoute,path:'/account',component:AccountPage})
+const joinRoute=createRoute({getParentRoute:()=>rootRoute,path:'/join',component:JoinHouseholdPage})
+
 const wantedRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/wanted',
@@ -358,6 +377,9 @@ const routeTree = rootRoute.addChildren([
   addRoute,
   discoverRoute,
   loginRoute,
+  requestsRoute,
+  accountRoute,
+  joinRoute,
   wantedRoute,
   calendarRoute,
   activityRoute,

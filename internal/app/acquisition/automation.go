@@ -90,7 +90,8 @@ func (s *Service) autoGrab(ctx context.Context, w domain.Wantable, r ports.Relea
 		evidence = matchEvidence(parsed, w, r, match)
 	}
 	season, episode := wantableGrabTarget(w)
-	return s.Grab(ctx, GrabRequest{
+	household, _ := ctx.Value(householdAdmissionKey{}).(householdAdmission)
+	return s.Grab(ctx, GrabRequest{HouseholdTargetID: household.ID, HouseholdGeneration: household.Generation,
 		MediaItemID: w.MediaItemID(), CopyID: domain.WantableCopy(w),
 		Season: season, Episode: episode,
 		Title: r.Title, DownloadURL: r.DownloadURL, Indexer: r.Indexer,

@@ -3550,6 +3550,312 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
 
+  /auth/cinema/connection:
+    get:
+      operationId: getCinemaConnection
+      summary: Optional Cinema getCinemaConnection
+      responses:
+        "200":
+          description: Current transaction result (no client or grant secrets)
+    put:
+      operationId: saveCinemaConnection
+      summary: Optional Cinema saveCinemaConnection
+      responses:
+        "200":
+          description: Current transaction result (no client or grant secrets)
+  /auth/cinema/link:
+    get:
+      operationId: getCinemaLink
+      summary: Optional Cinema getCinemaLink
+      responses:
+        "200":
+          description: Current transaction result (no client or grant secrets)
+    post:
+      operationId: startCinemaLink
+      summary: Optional Cinema startCinemaLink
+      responses:
+        "200":
+          description: Current transaction result (no client or grant secrets)
+    delete:
+      operationId: unlinkCinema
+      summary: Optional Cinema unlinkCinema
+      responses:
+        "200":
+          description: Current transaction result (no client or grant secrets)
+  /auth/cinema/start:
+    post:
+      operationId: startCinemaSignIn
+      summary: Optional Cinema startCinemaSignIn
+      responses:
+        "200":
+          description: Current transaction result (no client or grant secrets)
+  /auth/cinema/native:
+    post:
+      operationId: startCinemaNative
+      summary: Optional Cinema startCinemaNative
+      responses:
+        "200":
+          description: Current transaction result (no client or grant secrets)
+  /auth/cinema/native/result:
+    post:
+      operationId: finishCinemaNative
+      summary: Optional Cinema finishCinemaNative
+      responses:
+        "200":
+          description: Current transaction result (no client or grant secrets)
+  /auth/cinema/browser:
+    get:
+      operationId: openCinemaBrowser
+      summary: Optional Cinema openCinemaBrowser
+      responses:
+        "200":
+          description: Current transaction result (no client or grant secrets)
+  /auth/cinema/callback:
+    get:
+      operationId: cinemaCallback
+      summary: Optional Cinema cinemaCallback
+      responses:
+        "200":
+          description: Current transaction result (no client or grant secrets)
+  /auth/me:
+    get:
+      operationId: getCurrentAccount
+      summary: Current local Curator account and sign-in method
+      responses:
+        "200": { description: Safe account identity; no credentials or library paths. }
+        "401": { description: Local account sign-in required. }
+  /auth/info:
+    get:
+      operationId: getHouseholdSignInInfo
+      summary: Public sign-in requirements and optional integration availability
+      responses:
+        "200": { description: Sign-in options without private connection information. }
+  /auth/sessions:
+    post:
+      operationId: createAccountSession
+      summary: Sign in locally and issue a separately revocable native device token
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, password]
+              properties:
+                username: { type: string, maxLength: 80 }
+                password: { type: string, maxLength: 1024 }
+                device: { type: string, maxLength: 120 }
+      responses:
+        "200": { description: Token, safe account and expiry. }
+        "401": { description: Bad credentials. }
+  /auth/account:
+    put:
+      operationId: updateOwnAccount
+      summary: Update the current local account after password confirmation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object }
+      responses:
+        "204": { description: Saved; credential changes revoke existing sessions. }
+  /auth/invitations/accept:
+    post:
+      operationId: acceptHouseholdInvitation
+      summary: Create an independent Curator account with a single-use household invitation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token, username, password]
+              properties:
+                token: { type: string }
+                username: { type: string, maxLength: 80 }
+                displayName: { type: string, maxLength: 100 }
+                password: { type: string, minLength: 12, maxLength: 1024 }
+      responses:
+        "201": { description: Safe local member account; sign in to continue. }
+        "409": { description: Invitation or username unavailable. }
+  /household/accounts:
+    get:
+      operationId: listHouseholdAccounts
+      summary: Local owner account management
+      responses:
+        "200": { description: Safe local account records. }
+  /household/accounts/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: integer, format: int64 } }
+    patch:
+      operationId: updateHouseholdAccount
+      summary: Confirm a local owner password and update account role, status or credentials
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object }
+      responses:
+        "204": { description: Saved; last active owner is preserved atomically. }
+  /household/invitations:
+    post:
+      operationId: createHouseholdInvitation
+      summary: Local owner confirms password and creates a seven-day member invitation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [password]
+              properties:
+                password: { type: string }
+      responses:
+        "201": { description: Single-use invitation token and expiry; returned once. }
+
+  /household/catalogue:
+    get:
+      operationId: searchHouseholdCatalogue
+      summary: Member-safe movie or show search
+      parameters:
+        - { name: kind, in: query, required: true, schema: { type: string, enum: [movie, series] } }
+        - { name: q, in: query, required: true, schema: { type: string, maxLength: 200 } }
+      responses:
+        "200": { description: Bounded safe titles with independent availability; no owner paths, policies or credentials. }
+  /household/titles/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: integer, format: int64 } }
+    get:
+      operationId: getHouseholdTitle
+      summary: Safe provider title details and regular aired season choices
+      parameters:
+        - { name: kind, in: query, required: true, schema: { type: string, enum: [movie, series] } }
+      responses:
+        "200": { description: Member-safe title preview. }
+  /household/discovery/seeds:
+    get:
+      operationId: householdDiscoverySeeds
+      summary: Member-safe library movie and show seeds with fresh availability
+      responses:
+        "200":
+          description: Bounded library catalogue seed page without owner paths or credentials
+  /household/discovery/shelf:
+    get:
+      operationId: householdDiscoveryShelf
+      summary: Recommendations or collection from a current library seed
+      responses:
+        "200":
+          description: Safe catalogue results with current library availability
+  /household/requests:
+    get:
+      operationId: listHouseholdRequests
+      summary: Household requests and current user's subscription state
+      parameters:
+        - { name: before, in: query, schema: { type: integer, format: int64, minimum: 0 } }
+      responses:
+        "200": { description: Up to 100 safe requests; owner notes only for their local author. }
+    post:
+      operationId: submitHouseholdRequest
+      summary: Submit or join a request with a server-frozen known-aired scope
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [kind, tmdbId]
+              properties:
+                kind: { type: string, enum: [movie, series] }
+                tmdbId: { type: integer, format: int64, minimum: 1 }
+                seasons: { type: array, maxItems: 20, items: { type: integer, minimum: 1 } }
+      responses:
+        "201": { description: Safe request and subscription; no acquisition admitted. }
+  /household/requests/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: integer, format: int64 } }
+    get:
+      operationId: getHouseholdRequest
+      summary: Safe household request detail
+      responses:
+        "200": { description: Safe request detail with current interest. }
+  /household/requests/{id}/join:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: integer, format: int64 } }
+    post:
+      operationId: joinHouseholdRequest
+      summary: Follow an existing household request without duplicating work
+      responses:
+        "200": { description: Updated subscription state. }
+  /household/requests/{id}/withdraw:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: integer, format: int64 } }
+    post:
+      operationId: withdrawHouseholdRequest
+      summary: Withdraw only your own pending interest
+      responses:
+        "200": { description: Updated request; a last pending subscriber withdraws it atomically. }
+  /household/requests/{id}/decline:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: integer, format: int64 } }
+    post:
+      operationId: declineHouseholdRequest
+      summary: Local owner declines a reviewed request and optionally saves a private note
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object }
+      responses:
+        "204": { description: Declined without acquisition. }
+  /household/requests/{id}/note:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: integer, format: int64 } }
+    put:
+      operationId: saveHouseholdRequestNote
+      summary: Save a note visible only to the current local owner
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object }
+      responses:
+        "204": { description: Private note saved. }
+
+  /household/requests/{id}/review:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: integer, format: int64 } }
+    get:
+      operationId: reviewHouseholdRequest
+      summary: Local owner's read-only current filesystem and policy review
+      parameters:
+        - { name: rootId, in: query, schema: { type: integer, format: int64, minimum: 0 } }
+        - { name: profileId, in: query, schema: { type: integer, format: int64, minimum: 0 } }
+      responses:
+        "200": { description: Current semantic review fingerprint and exact scope counts. }
+        "409": { description: Restore or verify the library or review changed identity/scope first. }
+  /household/requests/{id}/approve:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: integer, format: int64 } }
+    post:
+      operationId: approveHouseholdRequest
+      summary: Recheck and approve exactly the reviewed missing scope atomically
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [fingerprint]
+              properties:
+                fingerprint: { type: string, minLength: 64, maxLength: 64 }
+                rootId: { type: integer, format: int64 }
+                profileId: { type: integer, format: int64 }
+                privateNote: { type: string, maxLength: 2000 }
+                reacquire: { type: boolean }
+      responses:
+        "204": { description: Durable approved intent or already-fulfilled scope; no broad search-on-add. }
+        "409": { description: Review changed facts or overlapping scope before approval. }
+
   /auth/logout:
     post:
       operationId: logout

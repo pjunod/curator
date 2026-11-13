@@ -1,3 +1,4 @@
+import type {AccountIdentity,LocalAccount,HouseholdTitle,HouseholdRequest,HouseholdReview} from './types'
 import type {
   Availability,
   LibrarySeedPage,
@@ -79,12 +80,33 @@ export class MonarrClient {
   // Most endpoints answer in the body alone. Release search also reports
   // whether the list is complete in response headers, so that path needs the
   // headers back as well as the parsed body.
+  getSignInInfo=()=>this.request<{required:boolean;household:boolean;cinema:boolean}>('/auth/info')
+  startCinemaNative=(challenge:string)=>this.request<{url:string;state:string}>('/auth/cinema/native',{method:'POST',body:JSON.stringify({challenge})})
+  finishCinemaNative=(state:string,verifier:string)=>this.request<{token:string;account:LocalAccount;expiresAt:string}|undefined>('/auth/cinema/native/result',{method:'POST',body:JSON.stringify({state,verifier})})
+  getCurrentAccount=()=>this.request<AccountIdentity>('/auth/me')
+  createAccountSession=(username:string,password:string,device:string)=>this.request<{token:string;account:LocalAccount;expiresAt:string}>('/auth/sessions',{method:'POST',body:JSON.stringify({username,password,device})})
+  logoutAccount=()=>this.request<void>('/auth/logout',{method:'POST'})
+  reviewHouseholdRequest=(id:number,rootId=0,profileId=0)=>this.request<HouseholdReview>(`/household/requests/${id}/review?rootId=${rootId}&profileId=${profileId}`)
+  approveHouseholdRequest=(id:number,rootId:number,profileId:number,fingerprint:string,privateNote:string,reacquire:boolean)=>this.request<void>(`/household/requests/${id}/approve`,{method:'POST',body:JSON.stringify({rootId,profileId,fingerprint,privateNote,reacquire})})
+  getHouseholdSeeds=(q='',offset=0)=>this.request<{items:HouseholdTitle[];hasMore:boolean}>(`/household/discovery/seeds?q=${encodeURIComponent(q)}&offset=${offset}`)
+  getHouseholdShelf=(kind:'movie'|'series',tmdbId:number,shelf:'related'|'collection')=>this.request<{title:string;items:HouseholdTitle[]}>(`/household/discovery/shelf?kind=${kind}&tmdbId=${tmdbId}&shelf=${shelf}`)
+  getHouseholdRequests=(before=0)=>this.request<HouseholdRequest[]>(`/household/requests?before=${before}`)
+  getHouseholdRequest=(id:number)=>this.request<HouseholdRequest>(`/household/requests/${id}`)
+  searchHouseholdCatalogue=(kind:'movie'|'series',q:string)=>this.request<HouseholdTitle[]>(`/household/catalogue?kind=${kind}&q=${encodeURIComponent(q)}`)
+  getHouseholdTitle=(kind:'movie'|'series',id:number)=>this.request<HouseholdTitle>(`/household/titles/${id}?kind=${kind}`)
+  submitHouseholdRequest=(kind:'movie'|'series',tmdbId:number,seasons:number[])=>this.request<HouseholdRequest>('/household/requests',{method:'POST',body:JSON.stringify({kind,tmdbId,seasons})})
+  changeHouseholdSubscription=(id:number,withdraw:boolean)=>this.request<HouseholdRequest>(`/household/requests/${id}/${withdraw?'withdraw':'join'}`,{method:'POST'})
+  updateOwnAccount=(revision:number,password:string,displayName:string,newPassword:string)=>this.request<void>('/auth/account',{method:'PUT',body:JSON.stringify({revision,password,displayName,newPassword})})
+  saveHouseholdRequestNote=(id:number,note:string)=>this.request<void>(`/household/requests/${id}/note`,{method:'PUT',body:JSON.stringify({note})})
+  declineHouseholdRequest=(id:number,revision:number,publicNote:string,privateNote:string)=>this.request<void>(`/household/requests/${id}/decline`,{method:'POST',body:JSON.stringify({revision,publicNote,privateNote})})
+
   private async requestWithHeaders<T>(path: string, init: RequestInit = {}, timeoutMs = 30_000): Promise<{ body: T; headers: Headers }> {
     const controller = new AbortController()
     const timeout = setTimeout(() => controller.abort(), timeoutMs)
     const headers = new Headers(init.headers)
     headers.set('Accept', 'application/json')
-    if (this.connection.apiKey) headers.set('X-Api-Key', this.connection.apiKey)
+    if(this.connection.sessionToken)headers.set('Authorization',`Bearer ${this.connection.sessionToken}`)
+    else if (this.connection.apiKey) headers.set('X-Api-Key', this.connection.apiKey)
     if (init.body !== undefined) headers.set('Content-Type', 'application/json')
 
     let response: Response
@@ -115,7 +137,7 @@ export class MonarrClient {
         if (text.trim()) message = text.trim()
       }
       if (response.status === 401) {
-        message = 'Authentication failed. Check the API key in Access → API access.'
+        message = this.connection.sessionToken?'Your Curator account session ended. Sign in again.':'Authentication failed. Check the API key in Access → API access.'
       }
       throw new ApiError(message, response.status, code)
     }

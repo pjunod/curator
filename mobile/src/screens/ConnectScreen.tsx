@@ -1,3 +1,4 @@
+import {AccountSignIn} from './AccountSignIn'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { KeyboardAvoidingView, Platform, StyleSheet, Text, View } from 'react-native'
 import { CameraView, useCameraPermissions, type BarcodeScanningResult } from 'expo-camera'
@@ -14,7 +15,7 @@ export function ConnectScreen({
   onConnected,
 }: {
   initial?: Connection | null
-  onConnected: (connection: Connection, status: SystemStatus) => Promise<void>
+  onConnected: (connection: Connection, status?: SystemStatus) => Promise<void>
 }) {
   const theme = useTheme()
   const [cameraPermission, requestCameraPermission] = useCameraPermissions()
@@ -211,6 +212,8 @@ export function ConnectScreen({
             value={server}
             onChangeText={setServer}
           />
+
+          <AccountSignIn server={server} onConnected={value=>onConnected(value)} />
 
           <View style={styles.labelBlock}>
             <Text style={[styles.label, { color: theme.text }]}>API key</Text>

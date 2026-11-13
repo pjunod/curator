@@ -644,6 +644,16 @@ func (s *Service) commitPlacement(ctx context.Context, item domain.MediaItem, sc
 		}
 	}
 	cleanupCtx := ctx
+	if scope.Household != nil && p.State == "prepared" {
+		current, e := s.db.GetMediaItemFull(ctx, item.ID)
+		if e == nil {
+			e = s.validateHouseholdImport(ctx, current, scope, p)
+		}
+		if e != nil {
+			releaseDecision()
+			return 0, e
+		}
+	}
 	if err = s.db.AssertPublicationTargetAvailable(ctx, p.Target); err != nil {
 		releaseDecision()
 		return 0, importControlError(err)

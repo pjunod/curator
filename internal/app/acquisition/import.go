@@ -386,6 +386,26 @@ func (s *Service) importDownloadFiles(ctx context.Context, dl sqlite.Download, s
 		}
 	}
 
+	origin, originErr := s.db.HouseholdDownloadOrigin(ctx, dl.ID, dl.GenerationKey)
+	if originErr != nil {
+		return ImportResult{}, originErr
+	}
+	if origin != nil {
+		if origin.ItemID != item.ID || origin.Kind != item.Kind || origin.TMDBID != item.IDs.TMDB || origin.Path != scope.Dest || scope.CopyID != 0 || origin.RootID != item.RootFolderID {
+			return ImportResult{}, importPolicyRefusalf("household import identity or destination changed")
+		}
+		if s.householdCheck == nil {
+			return ImportResult{}, sqlite.ErrHouseholdVerification
+		}
+		if err = s.householdCheck(ctx, item.ID); err != nil {
+			return ImportResult{}, err
+		}
+		scope.Household = origin
+		if item.Kind == domain.KindSeries {
+			scope.Planned = true
+			scope.AllowedEpisodeIDs = append([]int64(nil), origin.EpisodeIDs...)
+		}
+	}
 	isMedia := filename.IsVideo
 	if item.Kind == domain.KindBook {
 		isMedia = filename.IsBook
@@ -1025,6 +1045,7 @@ func isReleaseSample(path string) bool {
 // primary), its destination folder, its quality profile, and what produced
 // the payload.
 type importScope struct {
+	Household         *domain.HouseholdOrigin
 	DownloadID        int64
 	AllowedEpisodeIDs []int64
 	PublishedDigests  map[string]string

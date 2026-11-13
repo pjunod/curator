@@ -18,6 +18,8 @@ import (
 	"time"
 
 	apigen "github.com/pjunod/monarr/internal/api/gen"
+	"github.com/pjunod/monarr/internal/domain"
+	"github.com/pjunod/monarr/internal/infra/sqlite"
 )
 
 // Auth hardening (Phase 5): opt-in. When the auth_required setting is
@@ -166,6 +168,12 @@ func (s *Server) readSettingOr(ctx context.Context, key, fallback string) string
 
 // authRequired reports whether native-API auth is on.
 func (s *Server) authRequired(ctx context.Context) bool {
+	if s.deps.Store != nil {
+		established, err := s.deps.Store.HouseholdEstablished(ctx)
+		if err != nil || established {
+			return true
+		}
+	}
 	if s.deps.Settings == nil {
 		return false
 	}
@@ -190,7 +198,7 @@ func (s *Server) authenticated(r *http.Request) bool {
 			return true
 		}
 	}
-	if c, err := r.Cookie(sessionCookie); err == nil && liveSessions.valid(c.Value) {
+	if c, err := r.Cookie(sessionCookie); s.deps.Store == nil && err == nil && liveSessions.valid(c.Value) {
 		return true
 	}
 	return false
@@ -199,15 +207,32 @@ func (s *Server) authenticated(r *http.Request) bool {
 // authGuard wraps the /api/v1 handler; login/logout stay reachable.
 func (s *Server) authGuard(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasPrefix(r.URL.Path, "/api/v1/auth/") {
+		w.Header().Set("Cache-Control", "no-store")
+		if r.Method != http.MethodGet && r.Method != http.MethodHead && !s.sameOriginMutation(r) {
+			writeError(w, 403, "use this Curator installation's origin")
+			return
+		}
+		if publicHouseholdRoute(r) {
 			next.ServeHTTP(w, r)
 			return
 		}
-		if !s.authRequired(r.Context()) || s.authenticated(r) {
-			next.ServeHTTP(w, r)
+		p, err := s.sessionPrincipal(r)
+		if err != nil {
+			if !errors.Is(err, sqlite.ErrNotFound) {
+				writeError(w, 503, "account authorization is unavailable")
+				return
+			}
+			if s.authRequired(r.Context()) || presentedCredentials(r) {
+				writeError(w, 401, "authentication required")
+				return
+			}
+			p = principal{Account: domain.Account{Role: "owner", Status: "active"}, Method: "open"}
+		}
+		if p.accessRole() != "owner" && !memberHouseholdRoute(r) {
+			writeError(w, 403, "this operation requires owner access")
 			return
 		}
-		writeError(w, http.StatusUnauthorized, "authentication required")
+		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), principalContextKey{}, p)))
 	})
 }
 
@@ -216,6 +241,10 @@ func (s *Server) Login(w http.ResponseWriter, r *http.Request) {
 	var body apigen.LoginJSONRequestBody
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	if s.deps.Store != nil {
+		s.loginHousehold(w, r, body.Username, body.Password, "Web", false)
 		return
 	}
 	s.authMu.Lock()
@@ -255,6 +284,14 @@ func (s *Server) Login(w http.ResponseWriter, r *http.Request) {
 
 // Logout implements POST /auth/logout.
 func (s *Server) Logout(w http.ResponseWriter, r *http.Request) {
+	if s.deps.Store != nil {
+		if token := requestSessionToken(r); token != "" {
+			if err := s.deps.Store.DropAccountSession(r.Context(), digestSession(token)); err != nil {
+				writeError(w, 503, "sign-out could not be confirmed; try again")
+				return
+			}
+		}
+	}
 	if c, err := r.Cookie(sessionCookie); err == nil {
 		liveSessions.drop(c.Value)
 	}
@@ -269,6 +306,24 @@ func (s *Server) Logout(w http.ResponseWriter, r *http.Request) {
 func (s *Server) applyAuthSettings(ctx context.Context, body apigen.SettingsUpdate) error {
 	s.authMu.Lock()
 	defer s.authMu.Unlock()
+	if s.deps.Store != nil {
+		var hash *string
+		if body.AuthUsername != nil && *body.AuthUsername != "" && !validAccountName(strings.TrimSpace(*body.AuthUsername)) {
+			return errors.New("choose a valid local username")
+		}
+		if body.AuthPassword != nil && *body.AuthPassword != "" {
+			if len(*body.AuthPassword) > 1024 {
+				return errors.New("password is too long")
+			}
+			value, err := newPasswordHash(*body.AuthPassword)
+			if err != nil {
+				return err
+			}
+			hash = &value
+		}
+		return s.deps.Store.ConfigureLocalOwner(ctx, body.AuthUsername, hash, body.AuthRequired)
+	}
+
 	if body.AuthUsername != nil && *body.AuthUsername != "" {
 		if err := s.deps.Settings.SetMeta(ctx, authUserSetting, strings.TrimSpace(*body.AuthUsername)); err != nil {
 			return err

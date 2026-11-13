@@ -19,6 +19,7 @@
     "expo-build-properties": "~57.0.23",
     "expo-camera": "~57.0.6",
     "expo-constants": "~57.0.24",
+    "expo-crypto": "~57.0.4",
     "expo-network": "~57.0.3",
     "expo-secure-store": "~57.0.4",
     "expo-splash-screen": "~57.0.11",
