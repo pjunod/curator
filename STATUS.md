@@ -1,5 +1,25 @@
 # Monarr — Project Status
 
+## Activity attention and superseded scratch — 2026-11-13 · v0.50.2
+
+**Owner:** Codex · **Branch:** `codex/activity-attention-cleanup` · **State:** implementation ready for adversarial review; validation pending.
+
+Live read-only diagnosis: downloads 1336 and 1326 had already removed their
+rejected Strangers with Candy payloads, but Activity lost the terminal failure
+classification when cleanup changed the publication to `removed`. Downloads
+944, 943, 941 and 940 retained cancelled Stick scratch stages after replacement
+imports satisfied their wants and removed their superseded publications.
+
+The Activity index now keeps removed completed failures in history. Short state
+pills are separate from the original cause, and removed payloads are identified
+as removed. The existing scratch sweep includes cancelled attempts only after
+every publication file was removed as superseded, with no authorizations; it
+checks the recorded mount, parent and stage object and refuses prior-file backups.
+Source payloads and Library targets are never changed by that new path.
+
+PR, review, final gates, merge and cleanup: pending. No production mutation or
+deployment has been performed.
+
 ## Publication cleanup safety — 2026-11-13 · v0.49.1
 
 **Owner:** Codex · **Branch:** `codex/pipeline-v2-cleanup-safety` ·

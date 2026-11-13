@@ -285,3 +285,69 @@ func (f *v2Fixture) reconcileAndSweep() {
 	f.svc.reconcilePlacements(f.ctx)
 	f.svc.sweepAllSupersededStages(f.ctx)
 }
+
+func TestCancelledSupersededScratchRetiresAutomatically(t *testing.T) {
+	for _, mode := range []string{"owned", "absent", "replaced", "backup", "not superseded", "authorized"} {
+		t.Run(mode, func(t *testing.T) {
+			f := setupV2(t, nil)
+			f.deferGrabs()
+			dl, target, library := f.supersededSetup()
+			tmp, backup := f.backupStage(dl, "cancelled-scratch", target, []byte("prior"), "")
+			if mode != "backup" {
+				if err := os.Remove(backup); err != nil {
+					t.Fatal(err)
+				}
+			}
+			info, err := os.Lstat(tmp)
+			if err != nil {
+				t.Fatal(err)
+			}
+			storage, parent, err := placementParentIdentity(target)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err = f.db.W.ExecContext(f.ctx, `UPDATE import_placements SET data=json_set(data,'$.storage_identity',?,'$.target_parent_identity',?,'$.temporary_object_identity',?) WHERE id='cancelled-scratch'`, storage, parent, deliveryFileStableIdentity(info)); err != nil {
+				t.Fatal(err)
+			}
+			if _, err = f.db.W.ExecContext(f.ctx, `UPDATE import_attempt_controls SET attempt_epoch=0,outcome='cancelled',requested_at=1,finalized_at=1 WHERE download_id=?`, dl.ID); err != nil {
+				t.Fatal(err)
+			}
+			if _, err = f.db.W.ExecContext(f.ctx, `UPDATE publications SET state='removed' WHERE download_id=?`, dl.ID); err != nil {
+				t.Fatal(err)
+			}
+			reason := "superseded"
+			if mode == "not superseded" {
+				reason = "rejected"
+			}
+			if _, err = f.db.W.ExecContext(f.ctx, `UPDATE publication_files SET outcome='discarded',discard_reason=?,removed_at=1 WHERE publication_id IN (SELECT id FROM publications WHERE download_id=?)`, reason, dl.ID); err != nil {
+				t.Fatal(err)
+			}
+			if mode == "absent" {
+				if err = os.Remove(tmp); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if mode == "replaced" {
+				if _, err = f.db.W.ExecContext(f.ctx, `UPDATE import_placements SET data=json_set(data,'$.temporary_object_identity','different-object') WHERE id='cancelled-scratch'`); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if mode == "authorized" {
+				if _, err = f.db.W.ExecContext(f.ctx, `INSERT INTO import_publication_authorizations(download_id,generation_key,attempt_epoch,publication_id,placement_id,source,target,payload,authorized_at,outcome) VALUES(?,?,0,'placement:cancelled-scratch','cancelled-scratch','/src/x.mkv',?,'{}',1,'pending')`, dl.ID, dl.GenerationKey, target); err != nil {
+					t.Fatal(err)
+				}
+			}
+			f.svc.sweepAllSupersededStages(f.ctx)
+			swept := mode == "owned" || mode == "absent"
+			if (f.stageState("cancelled-scratch") == "rolled_back") != swept {
+				t.Fatalf("unexpected scratch state: %s", f.stageState("cancelled-scratch"))
+			}
+			if exists(tmp) == swept {
+				t.Fatalf("scratch exists=%v, swept=%v", exists(tmp), swept)
+			}
+			if got, err := os.ReadFile(target); err != nil || string(got) != string(library) {
+				t.Fatalf("library changed: %q (%v)", got, err)
+			}
+		})
+	}
+}

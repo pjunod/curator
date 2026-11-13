@@ -25,7 +25,8 @@ export function importActivityLabel(item: ImportActivityItem) {
   if (d.importControl?.outcome === 'cancelled') return 'Cancelled · files retained'
   if (d.state === 'importing' && !d.importState) return 'Interrupted · no importer is running'
   if (d.state === 'awaiting_import') return 'Awaiting import approval'
-  return d.error || 'Review file outcomes before retrying'
+  if (d.state === 'failed') return 'Import failed'
+  return 'Review file outcomes before retrying'
 }
 
 export function importProgress(item: ImportActivityItem) {
@@ -36,4 +37,13 @@ export function importProgress(item: ImportActivityItem) {
   const rate = d.bytesPerSecond && d.bytesPerSecond > 0 ? d.bytesPerSecond : null
   return { bytes, total: d.total, percent: Math.round(bytes / d.total * 100), rate,
     secondsLeft: rate ? Math.ceil((d.total - bytes) / rate) : null }
+}
+
+// The download keeps the original failure after publication cleanup. Show why
+// separately from the short state pill, including after the files have left.
+export function importActivityReason({ download: d }: ImportActivityItem) {
+  const failure = d.error || (d.publications ?? []).find(p => p.error)?.error
+  if (failure) return failure.replace(/^publication import_failed:\s*/, '')
+  if (d.importControl?.heldStages) return 'An interrupted import left scratch files. Its retained-stage records are shown under Details.'
+  return null
 }

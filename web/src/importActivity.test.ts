@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { canRetryImport, importActivityLabel, importProgress } from './importActivity'
+import { canRetryImport, importActivityLabel, importActivityReason, importProgress } from './importActivity'
 import type { ImportActivityItem } from './api'
 const fixture = (): ImportActivityItem => ({category:'attention',title:'Film',kind:'movie',destination:'/library/Film',updatedAt:'2026-11-09T12:00:00Z',download:{id:1,mediaItemId:2,title:'Film.release',state:'failed',progress:1,protocol:'manual',quality:'1080p',addedAt:'2026-11-08T12:00:00Z',importPath:'/completed/film',importControl:{generationKey:'g',epoch:'1',outcome:'',heldStages:0,retainedPublications:0,pendingPublications:0}}})
 describe('import recovery eligibility',()=>{
@@ -26,4 +26,12 @@ describe('import recovery eligibility',()=>{
   item.category='attention';item.download.importState=undefined;item.download.state='importing'
   expect(importActivityLabel(item)).toContain('no importer')
  })
+})
+
+it('keeps the failure pill short and exposes the original cause separately',()=>{
+ const item=fixture();item.download.error='publication import_failed: nothing importable: episode 8 outside planned import allowlist'
+ expect(importActivityLabel(item)).toBe('Import failed')
+ expect(importActivityReason(item)).toBe('nothing importable: episode 8 outside planned import allowlist')
+ item.download.error=undefined;item.download.importControl!.heldStages=1
+ expect(importActivityReason(item)).toContain('scratch files')
 })
