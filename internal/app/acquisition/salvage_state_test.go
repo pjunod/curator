@@ -1,6 +1,7 @@
 package acquisition
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -287,7 +288,7 @@ func (f *v2Fixture) reconcileAndSweep() {
 }
 
 func TestCancelledSupersededScratchRetiresAutomatically(t *testing.T) {
-	for _, mode := range []string{"owned", "absent", "replaced", "backup", "not superseded", "authorized"} {
+	for _, mode := range []string{"owned", "absent", "replaced", "backup", "not superseded", "authorized", "sync retry", "missing storage", "missing parent", "missing object"} {
 		t.Run(mode, func(t *testing.T) {
 			f := setupV2(t, nil)
 			f.deferGrabs()
@@ -322,6 +323,11 @@ func TestCancelledSupersededScratchRetiresAutomatically(t *testing.T) {
 			if _, err = f.db.W.ExecContext(f.ctx, `UPDATE publication_files SET outcome='discarded',discard_reason=?,removed_at=1 WHERE publication_id IN (SELECT id FROM publications WHERE download_id=?)`, reason, dl.ID); err != nil {
 				t.Fatal(err)
 			}
+			if field := map[string]string{"missing storage": "$.storage_identity", "missing parent": "$.target_parent_identity", "missing object": "$.temporary_object_identity"}[mode]; field != "" {
+				if _, err = f.db.W.ExecContext(f.ctx, `UPDATE import_placements SET data=json_set(data,?,'') WHERE id='cancelled-scratch'`, field); err != nil {
+					t.Fatal(err)
+				}
+			}
 			if mode == "absent" {
 				if err = os.Remove(tmp); err != nil {
 					t.Fatal(err)
@@ -337,8 +343,23 @@ func TestCancelledSupersededScratchRetiresAutomatically(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
+			if mode == "sync retry" {
+				original := supersededScratchSyncDirectory
+				t.Cleanup(func() { supersededScratchSyncDirectory = original })
+				calls := 0
+				supersededScratchSyncDirectory = func(*os.Root, string) error { calls++; return fmt.Errorf("injected directory sync failure") }
+				f.svc.sweepAllSupersededStages(f.ctx)
+				if exists(tmp) || f.stageState("cancelled-scratch") != "prepared" || calls != 1 {
+					t.Fatalf("unlink/sync failure lost custody: exists=%v state=%s calls=%d", exists(tmp), f.stageState("cancelled-scratch"), calls)
+				}
+				f.svc.sweepAllSupersededStages(f.ctx)
+				if f.stageState("cancelled-scratch") != "prepared" || calls != 2 {
+					t.Fatal("absent retry skipped the failed directory sync")
+				}
+				supersededScratchSyncDirectory = func(root *os.Root, path string) error { calls++; return original(root, path) }
+			}
 			f.svc.sweepAllSupersededStages(f.ctx)
-			swept := mode == "owned" || mode == "absent"
+			swept := mode == "owned" || mode == "absent" || mode == "sync retry"
 			if (f.stageState("cancelled-scratch") == "rolled_back") != swept {
 				t.Fatalf("unexpected scratch state: %s", f.stageState("cancelled-scratch"))
 			}

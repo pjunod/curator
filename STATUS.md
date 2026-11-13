@@ -2,7 +2,7 @@
 
 ## Activity attention and superseded scratch — 2026-11-13 · v0.50.2
 
-**Owner:** Codex · **Branch:** `codex/activity-attention-cleanup` · **State:** implemented and published as `8aad429`; independent adversarial review pending.
+**Owner:** Codex · **Branch:** `codex/activity-attention-cleanup` · **State:** [PR #159](https://github.com/pjunod/curator/pull/159) open; independent adversarial review approved after two fixes; final validation running.
 
 Live read-only diagnosis: downloads 1336 and 1326 had already removed their
 rejected Strangers with Candy payloads, but Activity lost the terminal failure
@@ -17,13 +17,16 @@ every publication file was removed as superseded, with no authorizations; it
 checks the recorded mount, parent and stage object and refuses prior-file backups.
 Source payloads and Library targets are never changed by that new path.
 
-Pinned lint, full Go tests, 170 web tests and the production web build passed.
-All 262 browser acceptance tests passed, including desktop and phone regressions
-for the removed-failure explanation. Automatic approval review rejected opening
-a draft PR because explicit authorization to publish it to GitHub is required;
-the branch push had already succeeded. PR, independent review, CI, merge and
-deployment remain pending. The owned workspace is retained for that work.
-No production mutation or deployment has been performed.
+Independent review found two P2 issues: an old removed publication could hide
+a later manual failure, and a failed directory sync could lose scratch custody
+on an absent-file retry. Both are fixed and independently re-reviewed with no
+remaining blockers. Regressions cover both findings and missing storage, parent
+and scratch-object identities. The original full local gate passed (170 web and
+262 browser tests); all final gates are running again on the reviewed fixes.
+
+PR #159 is draft while final validation and CI run. Merge and deployment remain
+pending. The owned workspace is retained for that work. No production mutation
+or deployment has been performed.
 
 ## Publication cleanup safety — 2026-11-13 · v0.49.1
 

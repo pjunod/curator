@@ -175,3 +175,28 @@ func TestActivityCleanedFailedPublicationRemainsHistory(t *testing.T) {
 		}
 	}
 }
+
+func TestActivityManualRetryFailureAfterRemovedPublicationNeedsAttention(t *testing.T) {
+	e := newAPIEnv(t)
+	ctx := context.Background()
+	item := e.addMovie(t)
+	id, err := e.db.InsertDownload(ctx, sqlite.Download{MediaItemID: item, State: "failed", Protocol: "manual", ReleaseTitle: "later manual retry", ImportPath: "/manual/new-path"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pub, err := e.db.InsertPublication(ctx, sqlite.PublicationWrite{DownloadID: id, Generation: "old", Kind: "completed", Path: "/completed/old", Source: "file", Cohort: "live"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = e.db.W.ExecContext(ctx, `UPDATE publications SET state='removed' WHERE id=?`, pub); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = e.db.W.ExecContext(ctx, `UPDATE downloads SET error='nothing importable: later manually selected files were declined' WHERE id=?`, id); err != nil {
+		t.Fatal(err)
+	}
+	var page apigen.ImportActivityPage
+	e.get(t, "/api/v1/activity?view=attention").expect(t, 200).into(t, &page)
+	if page.Total != 1 || page.Items[0].Download.Id != id {
+		t.Fatalf("old removed publication hid the current manual failure: %+v", page)
+	}
+}

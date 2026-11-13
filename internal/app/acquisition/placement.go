@@ -1546,6 +1546,8 @@ func (s *Service) sweepSupersededStage(ctx context.Context, p sqlite.Placement, 
 	return true
 }
 
+var supersededScratchSyncDirectory = syncRootDirectory
+
 // removeCancelledSupersededScratch never changes a target or prior-file
 // backup. Missing/changed identity evidence waits for a later pass.
 func (s *Service) removeCancelledSupersededScratch(ctx context.Context, p sqlite.Placement) bool {
@@ -1578,7 +1580,8 @@ func (s *Service) removeCancelledSupersededScratch(ctx context.Context, p sqlite
 	name := filepath.Base(p.Temporary)
 	info, err := root.Lstat(name)
 	if errors.Is(err, os.ErrNotExist) {
-		return true
+		// Retry the durability step even when an earlier unlink succeeded.
+		return supersededScratchSyncDirectory(root, ".") == nil
 	}
 	if err != nil || !info.Mode().IsRegular() || p.TemporaryObjectIdentity == "" || deliveryFileStableIdentity(info) != p.TemporaryObjectIdentity {
 		return false
@@ -1586,7 +1589,7 @@ func (s *Service) removeCancelledSupersededScratch(ctx context.Context, p sqlite
 	if err := root.Remove(name); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return false
 	}
-	return syncPath(parent) == nil
+	return supersededScratchSyncDirectory(root, ".") == nil
 }
 
 // settleSupersededBackup decides a superseded stage's prior-file backup, a
