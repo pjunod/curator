@@ -85,9 +85,22 @@ func (d *DB) DiscardPipelineTiming(ctx context.Context, kind, transfer string) e
 
 // PipelineWaiting counts open timings of one kind that started at or after
 // sinceMs (0 = any age) and the start of the oldest one (0 when none).
+// A failed, payload-removed import with no salvage or remaining custody has
+// nothing left to import. Preserve its open audit sample without reporting
+// it as live work or fabricating a successful duration.
 func (d *DB) PipelineWaiting(ctx context.Context, kind string, sinceMs int64) (n int, oldestStart int64, err error) {
 	err = d.R.QueryRowContext(ctx,
-		`SELECT COUNT(*), COALESCE(MIN(started_at),0) FROM pipeline_timings WHERE kind=? AND ended_at=0 AND started_at>=?`,
+		`SELECT COUNT(*), COALESCE(MIN(started_at),0) FROM pipeline_timings t
+ WHERE kind=? AND ended_at=0 AND started_at>=?
+ AND NOT (kind='runner_done_to_import' AND EXISTS (
+  SELECT 1 FROM downloads d WHERE d.id=t.download_id AND d.transfer=t.transfer
+   AND d.state='failed' AND d.payload_removed=1 AND d.runner_salvage IN ('','none')
+   AND NOT EXISTS(SELECT 1 FROM publications p WHERE p.download_id=d.id AND p.state!='removed')
+   AND NOT EXISTS(SELECT 1 FROM import_attempt_controls c WHERE c.download_id=d.id AND c.outcome='pending')
+   AND NOT EXISTS(SELECT 1 FROM import_attempt_stages s WHERE s.download_id=d.id AND s.state='held')
+   AND NOT EXISTS(SELECT 1 FROM import_publication_authorizations a WHERE a.download_id=d.id AND (a.outcome='pending' OR a.resolution IN ('retained_for_review','operator_adopted')))
+   AND NOT EXISTS(SELECT 1 FROM import_placements p WHERE json_extract(p.data,'$.download_id')=d.id AND p.state IN ('prepared','retained'))
+ ))`,
 		kind, sinceMs).Scan(&n, &oldestStart)
 	return n, oldestStart, err
 }

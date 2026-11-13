@@ -2033,6 +2033,33 @@ func (e ListQueueParamsFilter) Valid() bool {
 	}
 }
 
+// Defines values for ResolveImportReviewJSONBodyAction.
+const (
+	CleanupStages       ResolveImportReviewJSONBodyAction = "cleanup_stages"
+	OperatorAdopted     ResolveImportReviewJSONBodyAction = "operator_adopted"
+	OperatorDisposed    ResolveImportReviewJSONBodyAction = "operator_disposed"
+	PreviewStageCleanup ResolveImportReviewJSONBodyAction = "preview_stage_cleanup"
+	RetainUncertain     ResolveImportReviewJSONBodyAction = "retain_uncertain"
+)
+
+// Valid indicates whether the value is a known member of the ResolveImportReviewJSONBodyAction enum.
+func (e ResolveImportReviewJSONBodyAction) Valid() bool {
+	switch e {
+	case CleanupStages:
+		return true
+	case OperatorAdopted:
+		return true
+	case OperatorDisposed:
+		return true
+	case PreviewStageCleanup:
+		return true
+	case RetainUncertain:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for PlurxWebhook200JSONResponseBodyState.
 const (
 	PlurxWebhook200JSONResponseBodyStateDownloading  PlurxWebhook200JSONResponseBodyState = "downloading"
@@ -5258,6 +5285,19 @@ type RemoveQueueItemParams struct {
 	Blocklist *bool `form:"blocklist,omitempty" json:"blocklist,omitempty"`
 }
 
+// ResolveImportReviewJSONBody defines parameters for ResolveImportReview.
+type ResolveImportReviewJSONBody struct {
+	Acknowledged  *bool                             `json:"acknowledged,omitempty"`
+	Action        ResolveImportReviewJSONBodyAction `json:"action"`
+	Epoch         string                            `json:"epoch"`
+	Fingerprints  *map[string]string                `json:"fingerprints,omitempty"`
+	GenerationKey string                            `json:"generationKey"`
+	Ids           []string                          `json:"ids"`
+}
+
+// ResolveImportReviewJSONBodyAction defines parameters for ResolveImportReview.
+type ResolveImportReviewJSONBodyAction string
+
 // PlacePublicationFilesJSONBody defines parameters for PlacePublicationFiles.
 type PlacePublicationFilesJSONBody struct {
 	// CopyId Target copy or edition; 0 = the primary.
@@ -5475,6 +5515,9 @@ type UpdateProfileJSONRequestBody = ProfileInput
 
 // CancelQueueImportJSONRequestBody defines body for CancelQueueImport for application/json ContentType.
 type CancelQueueImportJSONRequestBody = ImportAttemptIdentity
+
+// ResolveImportReviewJSONRequestBody defines body for ResolveImportReview for application/json ContentType.
+type ResolveImportReviewJSONRequestBody ResolveImportReviewJSONBody
 
 // PlacePublicationFilesJSONRequestBody defines body for PlacePublicationFiles for application/json ContentType.
 type PlacePublicationFilesJSONRequestBody PlacePublicationFilesJSONBody
@@ -5922,7 +5965,7 @@ type ServerInterface interface {
 	// GetImportReview Read retained import custody and publication evidence without storage I/O
 	// (GET /queue/{id}/import-review)
 	GetImportReview(w http.ResponseWriter, r *http.Request, id int64)
-	// ResolveImportReview Record explicit fencing or retained-byte disposition
+	// ResolveImportReview Review custody or explicitly clean selected cancelled empty stages
 	// (POST /queue/{id}/import-review)
 	ResolveImportReview(w http.ResponseWriter, r *http.Request, id int64)
 	// PlacePublicationFiles Place one or more files of a runner delivery into an item, as chosen episodes
