@@ -118,11 +118,12 @@ verified to include Linux amd64 and arm64. Tags remain readable for
 Dependabot. The `media-runtime` alias continues to refer to the preceding
 local stage; pinning it as an external image would change the build.
 
-npm updates stay within declared ranges except two explicit overrides:
-affected `minimatch` 7–11.0.0 versions move to 11.0.5 or later, and affected
-`glob` 9–14.0.1 versions move to 14.0.4 or later. Clean web/mobile builds and
-tests validate these transitive compatibility changes. The PWA plugin is
-not downgraded to satisfy npm's suggested audit fix.
+npm updates stay within declared ranges except two explicit parent-scoped
+overrides: `workbox-build` uses patched `glob` 14.0.4 or later, and
+`@expo/fingerprint` uses patched `minimatch` 11.0.5 or later. Lockfiles are
+generated and clean-installed with CI's npm 10; tests and builds validate
+these transitive compatibility changes. The PWA plugin is not downgraded
+to satisfy npm's suggested audit fix.
 
 Candle 0.11.1 permits patched ZIP 9.5.1, and rustix advances to 1.1.6.
 Python reference requirements advance to patched releases and gain weekly
