@@ -77,6 +77,9 @@ func importActivityCategory(e sqlite.ImportActivityEntry, worker string) string 
 	if e.PendingPublication || e.State == "downloaded" {
 		return "queued"
 	}
+	if e.State == "failed" && e.FailedPublication {
+		return "history"
+	}
 	if e.ImportedPublication || e.State == "imported" {
 		return "imported"
 	}

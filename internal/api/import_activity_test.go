@@ -177,7 +177,7 @@ func TestCancelledImportHistoryPreservesAuditAndUnresolvedCustody(t *testing.T) 
 	e := newAPIEnv(t)
 	ctx := context.Background()
 	item := e.addMovie(t)
-	for _, custody := range []string{"resolved", "stage", "prepared", "retained", "authorization", "retained_authorization", "unresolved", "pending_publication", "failed_publication", "failed_with_history", "reservation", "stale_generation"} {
+	for _, custody := range []string{"resolved", "resolved_noncancelled", "stage", "prepared", "retained", "authorization", "retained_authorization", "unresolved", "pending_publication", "failed_publication", "failed_with_history", "reservation", "stale_generation"} {
 		t.Run(custody, func(t *testing.T) {
 			id, err := e.db.InsertDownload(ctx, sqlite.Download{MediaItemID: item, State: "failed", Protocol: "usenet", ReleaseTitle: "cancel-fixture-" + custody, ImportPath: "/completed/" + custody})
 			if err != nil {
@@ -217,6 +217,8 @@ func TestCancelledImportHistoryPreservesAuditAndUnresolvedCustody(t *testing.T) 
 				t.Fatal(err)
 			}
 			switch custody {
+			case "resolved_noncancelled":
+				exec(`UPDATE import_attempt_controls SET outcome='',requested_at=NULL,finalized_at=NULL WHERE download_id=?`, id)
 			case "stage":
 				exec(`UPDATE import_attempt_stages SET state='held' WHERE download_id=?`, id)
 			case "prepared", "retained":
@@ -293,7 +295,7 @@ func TestCancelledImportHistoryPreservesAuditAndUnresolvedCustody(t *testing.T) 
 			}
 			before := snapshot()
 			want := "attention"
-			if custody == "resolved" {
+			if strings.HasPrefix(custody, "resolved") {
 				want = "history"
 			}
 			// Literal title suffix avoids overlapping names in the shared fixture.
@@ -312,7 +314,7 @@ func TestCancelledImportHistoryPreservesAuditAndUnresolvedCustody(t *testing.T) 
 				if !found {
 					t.Fatalf("%s: missing %d from %s", base, id, want)
 				}
-				if custody == "resolved" {
+				if strings.HasPrefix(custody, "resolved") {
 					if page.Counts["attention"] != 0 || page.Counts["imported"] != 0 || page.Counts["all"] != 1 {
 						t.Fatalf("untruthful counts: %+v", page.Counts)
 					}

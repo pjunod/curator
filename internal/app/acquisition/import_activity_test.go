@@ -22,6 +22,8 @@ func TestImportActivityClassifiesOwnershipBeforePersistedState(t *testing.T) {
 		{"new publication on completed download", "", "queued", sqlite.ImportActivityEntry{State: "imported", PendingPublication: true}},
 		{"salvage on failed download", "", "imported", sqlite.ImportActivityEntry{State: "failed", ImportedPublication: true}},
 		{"salvage on ongoing download", "", "imported", sqlite.ImportActivityEntry{State: "downloading", ImportedPublication: true}},
+		{"removed failed publication", "", "history", sqlite.ImportActivityEntry{State: "failed", FailedPublication: true, ImportedPublication: true}},
+		{"new publication after removed failure", "", "queued", sqlite.ImportActivityEntry{State: "failed", FailedPublication: true, ImportedPublication: true, PendingPublication: true}},
 		{"ordinary history", "", "imported", sqlite.ImportActivityEntry{State: "imported"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
