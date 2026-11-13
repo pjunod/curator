@@ -15,6 +15,7 @@ when one is missing or a relative link in any document does not resolve. Start w
 | [PIPELINE_CONTRACT.md](PIPELINE_CONTRACT.md) | Pipeline contract v2 — the design: one terminal fact per job, one owner per boundary. Wins over every other page. |
 | [usage.md](usage.md) | Using Monarr: every screen, the Pipeline tiles, Resolve, the delivery log. |
 | [settings.md](settings.md) | Every setting, field by field. |
+| [CI_POLICY.md](CI_POLICY.md) | Required merge checks, metadata CI and ephemeral runner policy. |
 | [architecture.md](architecture.md) | Architecture blueprint. |
 | [deployment.md](deployment.md) | Storage, floating nodes and HA. |
 | [SECURITY_CHECKS.md](SECURITY_CHECKS.md) | Security workflows, badge interpretation and remaining repository controls. |
