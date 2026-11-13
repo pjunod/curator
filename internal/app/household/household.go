@@ -156,6 +156,7 @@ func (s *Service) Submit(ctx context.Context, a domain.Account, digest string, k
 			}
 			selected[n] = true
 		}
+		seenEpisodes := map[domain.RequestEpisode]bool{}
 		for _, season := range item.Seasons {
 			if !selected[season.Number] {
 				continue
@@ -163,7 +164,11 @@ func (s *Service) Submit(ctx context.Context, a domain.Account, digest string, k
 			delete(selected, season.Number)
 			for _, ep := range season.Episodes {
 				if ep.EpisodeNumber > 0 && knownAired(ep.AirDate, time.Now()) {
-					request.Scope.Episodes = append(request.Scope.Episodes, domain.RequestEpisode{Season: season.Number, Episode: ep.EpisodeNumber})
+					coordinate := domain.RequestEpisode{Season: season.Number, Episode: ep.EpisodeNumber}
+					if !seenEpisodes[coordinate] {
+						request.Scope.Episodes = append(request.Scope.Episodes, coordinate)
+						seenEpisodes[coordinate] = true
+					}
 				}
 			}
 		}

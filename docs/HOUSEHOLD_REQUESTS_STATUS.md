@@ -1,8 +1,9 @@
 # Household accounts and requests — implementation status
 
-**Status:** implementing · **Updated:** 2026-11-13 · **Base:** owner discovery
-PR [#160](https://github.com/pjunod/curator/pull/160), pending protected checks
-after integration with main at `715122e`.
+**Status:** implemented; final review and regressions pending · **Updated:**
+2026-11-13 · **Base:** owner discovery PR
+[#160](https://github.com/pjunod/curator/pull/160), merged as
+`97149893fc6d28c5edb4655ebce5bbfd6beaabec`.
 
 Read [ADR 0030](adr/0030-household-accounts-and-requests.md) for the security and
 admission contracts. Work stays in the owned external-drive workspace. The
@@ -14,11 +15,12 @@ retain independent accounts; Cinema is an optional linked sign-in method.
 - [x] Astra reviewed the original proposal, then the revised local-account/link
   boundary after the owner's standalone-app clarification.
 - [x] Previewed local Curator sign-in and optional Cinema consent on a 390px phone.
-- [ ] Durable local accounts, sessions, invitation enrollment and recovery rules.
-- [ ] Deny-by-default household authorization and safe web/native navigation/DTOs.
-- [ ] Submit/join/withdraw and owner review/decline with private notes.
-- [ ] Exact-scope approval, fresh verification, overlap claims and durable admission.
-- [ ] Reviewed optional Cinema grant/link/revocation implementation on both stores.
+- [x] Durable local accounts, sessions, invitation enrollment and recovery rules.
+- [x] Deny-by-default household authorization and safe web/native navigation/DTOs.
+- [x] Submit/join/withdraw and owner review/decline with private notes.
+- [x] Exact-scope approval, fresh verification, overlap claims and durable admission.
+- [x] Optional Cinema grant/link/revocation implementation on SQLite and Hiqlite;
+  final cross-repository review and runtime regression evidence pending.
 - [ ] Final adversarial review, regression suites and protected PR checks.
 - [ ] Merge and storage lifecycle receipts; no live deployment requested.
 
@@ -46,8 +48,8 @@ The owner reiterated that standalone accounts must remain available in both
 applications. The implementation keeps Curator credentials, roles, account IDs
 and request ownership local. Local account login does not call Cinema. Account
 management and invitations require a local session, with owner operations
-requiring a local owner. Optional Cinema session validation is not implemented;
-non-local session methods currently fail closed rather than inheriting authority.
+requiring a local owner. At that checkpoint, Cinema validation was not implemented and non-local
+methods failed closed. The final candidate below now implements scoped grants.
 The reviewed linking design requires explicit consent and forbids name/email
 merges. Cinema implementation and outage/unlink regression evidence remain open.
 
@@ -63,7 +65,31 @@ Astra's standalone-account checkpoint found no Cinema dependency or implicit
 identity merge. Its UI-copy finding is fixed. API routing, owner-private request
 reads, event authorization and web/native navigation now use explicit session
 `accessRole`, separate from the permanent account role. Unknown methods fail to
-member authority; Cinema remains unavailable until its grant validator exists.
+member authority. The final candidate now has the grant validator.
 The newly authored authority regression has not run before final review. A
-supported host-operator reset for a sole owner who loses their password is still
-required; an active last-owner row alone is not a usable recovery procedure.
+host-operator reset was still required at that checkpoint; it is now implemented
+and covered by the authored recovery regressions.
+
+## Final candidate boundaries
+
+Local owner recovery is implemented as `monarr accounts reset-password`, with
+secret input on stdin, preserved history and credential/session revocation.
+Cinema links now hold only issuer/subject identity. Each derived session has its
+own source-bound opaque grant, checked authoritatively on every protected
+request. The session's `accessRole` is separate from the account's role. Local
+unlink/disconnect commits before asynchronous remote revocation. Native handoffs
+use a second S256 proof and are one-use, expiry- and credential-generation-fenced.
+
+The Cinema counterpart is in its own owned `codex/curator-delegation` branch,
+integrated with current main `483d2bcf3` before qualification. It adds independently
+recognized extension schema 132 and uses shared transaction code across stores.
+No native Cinema credentials or administrator claims leave Cinema. Old Cinema
+versions are reported unavailable rather than weakening the login contract.
+
+Authored regressions cover local restart, invitation/last-owner races, permission
+and private-note boundaries, SSE revocation, stale approval, exact leaf claims,
+offload scope, import allowlists, immutable admission/origin, explicit linking,
+outage/unlink, native proof and stale-server results. Isolated browser fixtures
+cover desktop/390px member-to-owner flows without enabling auth on the shared
+legacy acceptance server. Compile checks are not execution evidence. No household
+regression suite has run before the final review. No live deployment is requested.

@@ -3,6 +3,7 @@ package household
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"time"
 
 	"github.com/pjunod/monarr/internal/app/acquisition"
@@ -29,7 +30,9 @@ func (s *Service) Run(ctx context.Context) {
 		case <-tick.C:
 		case <-s.wake:
 		}
-		_ = s.Process(ctx)
+		if err := s.Process(ctx); err != nil && ctx.Err() == nil {
+			slog.Warn("household request worker could not finish a check", "err", err)
+		}
 	}
 }
 
@@ -43,6 +46,7 @@ func (s *Service) Process(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	var failures []error
 	for i, target := range targets {
 		if i >= 10 {
 			break
@@ -58,11 +62,14 @@ func (s *Service) Process(ctx context.Context) error {
 		err = s.processTarget(job, target)
 		cancel()
 		release()
-		if err != nil && ctx.Err() != nil {
-			return ctx.Err()
+		if err != nil {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			failures = append(failures, err)
 		}
 	}
-	return nil
+	return errors.Join(failures...)
 }
 func (s *Service) processTarget(ctx context.Context, target domain.HouseholdTarget) error {
 	result := func(state, note string) error {

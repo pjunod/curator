@@ -199,6 +199,9 @@ func (d *DB) DeclineHouseholdRequest(ctx context.Context, a domain.Account, dige
 	if _, err = tx.ExecContext(ctx, `INSERT INTO household_request_notes(request_id,account_id,note) VALUES(?,?,?) ON CONFLICT(request_id,account_id) DO UPDATE SET note=excluded.note`, id, a.ID, privateNote); err != nil {
 		return err
 	}
+	if _, err = tx.ExecContext(ctx, `INSERT INTO household_request_decisions(request_id,revision,account_id,decision,policy_json,created_at) SELECT id,revision,?,'declined',policy_json,? FROM household_requests WHERE id=?`, a.ID, time.Now().UnixMilli(), id); err != nil {
+		return err
+	}
 	return tx.Commit()
 }
 func (d *DB) SaveHouseholdRequestNote(ctx context.Context, a domain.Account, digest string, id int64, note string) error {

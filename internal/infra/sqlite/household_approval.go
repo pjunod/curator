@@ -201,6 +201,9 @@ func (d *DB) ApproveHouseholdRequest(ctx context.Context, a domain.Account, dige
 	if _, err = tx.ExecContext(ctx, `INSERT INTO household_request_notes(request_id,account_id,note) VALUES(?,?,?) ON CONFLICT(request_id,account_id) DO UPDATE SET note=excluded.note`, request.ID, a.ID, plan.PrivateNote); err != nil {
 		return err
 	}
+	if _, err = tx.ExecContext(ctx, `INSERT INTO household_request_decisions(request_id,revision,account_id,decision,policy_json,created_at) SELECT id,revision,?,'approved',policy_json,? FROM household_requests WHERE id=?`, a.ID, now, request.ID); err != nil {
+		return err
+	}
 	return tx.Commit()
 }
 func (d *DB) HouseholdPendingTargets(ctx context.Context) ([]domain.HouseholdTarget, error) {

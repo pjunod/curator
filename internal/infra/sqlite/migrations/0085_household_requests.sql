@@ -61,6 +61,17 @@ CREATE TABLE household_scope_claims (
  PRIMARY KEY(kind,tmdb_id,copy_id,season,episode)
 ) STRICT;
 
+-- Decision receipts retain the local actor and reviewed policy across re-review.
+CREATE TABLE household_request_decisions (
+ request_id INTEGER NOT NULL REFERENCES household_requests(id),
+ revision INTEGER NOT NULL,
+ account_id INTEGER NOT NULL REFERENCES household_accounts(id),
+ decision TEXT NOT NULL CHECK(decision IN('approved','declined')),
+ policy_json TEXT NOT NULL CHECK(json_valid(policy_json)),
+ created_at INTEGER NOT NULL,
+ PRIMARY KEY(request_id,revision)
+) STRICT;
+
 -- Origins survive queue retention and are keyed by immutable download generation.
 CREATE TABLE household_download_origins (
  download_id INTEGER NOT NULL,
@@ -75,6 +86,7 @@ CREATE TABLE household_download_origins (
 
 -- +goose Down
 DROP TABLE household_download_origins;
+DROP TABLE household_request_decisions;
 DROP TABLE household_scope_claims;
 DROP TABLE household_request_targets;
 DROP TABLE household_request_notes;

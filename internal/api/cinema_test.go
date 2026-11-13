@@ -97,6 +97,15 @@ func TestCinemaExplicitLinkScopedSignInAndOutageUnlink(t *testing.T) {
 	if rr.Code != 204 {
 		t.Fatal(rr.Code, rr.Body.String())
 	}
+	unlinkedState, unlinkedCookie := cinemaStart(t, h, "/api/v1/auth/cinema/start", "", nil)
+	unlinked := cinemaCallbackTest(t, h, f, unlinkedState, "", unlinkedCookie)
+	if unlinked.Header().Get("Location") != "/login?cinema=unlinked" {
+		t.Fatal("unlinked identity silently merged or created a local account", unlinked.Header())
+	}
+	accounts, e := db.ListAccounts(context.Background())
+	if e != nil || len(accounts) != 1 {
+		t.Fatal("Cinema sign-in changed the local account directory", e)
+	}
 	state, cookie := cinemaStart(t, h, "/api/v1/auth/cinema/link", owner, map[string]string{"password": householdTestPassword})
 	bad := cinemaCallbackTest(t, h, f, state, owner, nil)
 	if bad.Header().Get("Location") != "/login?cinema=failed" {

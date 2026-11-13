@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/pjunod/monarr/internal/domain"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -137,7 +138,12 @@ func TestHouseholdAdmissionPersistsOriginAndReusesExactGeneration(t *testing.T) 
 	if err != nil || !created {
 		t.Fatal("admission failed", err)
 	}
-	second, created, err := db.InsertHouseholdDownload(ctx, target.ID, target.ApprovalGeneration, intent)
+	restarted, e := Open(filepath.Dir(db.Path))
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer func() { _ = restarted.Close() }()
+	second, created, err := restarted.InsertHouseholdDownload(ctx, target.ID, target.ApprovalGeneration, intent)
 	if err != nil || created || second.ID != first.ID || second.GenerationKey != first.GenerationKey {
 		t.Fatal("retry created another transfer", err)
 	}

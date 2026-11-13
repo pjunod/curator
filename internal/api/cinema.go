@@ -253,6 +253,10 @@ func cinemaSetState(w http.ResponseWriter, r *http.Request, token string) {
 	http.SetCookie(w, &http.Cookie{Name: cinemaStateCookie, Value: token, Path: "/api/v1/auth/cinema/", HttpOnly: true, Secure: true, SameSite: http.SameSiteLaxMode, MaxAge: 300})
 }
 func (s *Server) beginCinema(w http.ResponseWriter, r *http.Request, mode string, a domain.Account, challenge string) {
+	if s.deps.Store == nil {
+		writeError(w, 503, "account storage unavailable")
+		return
+	}
 	finish, allowed := s.beginHouseholdPassword(r)
 	if !allowed {
 		writeError(w, 429, "too many sign-in starts; try again shortly")
@@ -294,6 +298,10 @@ func (s *Server) beginCinema(w http.ResponseWriter, r *http.Request, mode string
 	writeJSON(w, 200, map[string]string{"url": target, "state": state})
 }
 func (s *Server) OpenCinemaBrowser(w http.ResponseWriter, r *http.Request) {
+	if s.deps.Store == nil {
+		writeError(w, 503, "account storage unavailable")
+		return
+	}
 	state := r.URL.Query().Get("state")
 	h, err := s.deps.Store.CinemaHandoff(r.Context(), digestSession(state))
 	if err != nil || h.Mode != "native" {
@@ -318,6 +326,10 @@ func (s *Server) OpenCinemaBrowser(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, cinemaAuthorize(c, state, h.Verifier), http.StatusSeeOther)
 }
 func (s *Server) CinemaCallback(w http.ResponseWriter, r *http.Request) {
+	if s.deps.Store == nil {
+		http.Redirect(w, r, "/login?cinema=failed", http.StatusSeeOther)
+		return
+	}
 	w.Header().Set("Referrer-Policy", "no-referrer")
 	fail := func() { http.Redirect(w, r, "/login?cinema=failed", http.StatusSeeOther) }
 	q := r.URL.Query()
@@ -351,6 +363,11 @@ func (s *Server) CinemaCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.Claim = claim
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 5*time.Second)
+		defer cancel()
+		_ = s.deps.Store.CancelCinemaHandoff(ctx, h.StateDigest, h.Claim)
+	}()
 	var identity cinemaIdentity
 	err = cinemaCall(r.Context(), c, "exchange", map[string]string{"clientId": c.ClientID, "clientSecret": c.ClientSecret, "code": q.Get("code"), "verifier": h.Verifier, "redirect": c.Redirect}, &identity)
 	if err != nil || !cinemaValidIdentity(c, identity) || identity.Grant == "" {
@@ -404,6 +421,10 @@ func (s *Server) CinemaCallback(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/requests", http.StatusSeeOther)
 }
 func (s *Server) FinishCinemaNative(w http.ResponseWriter, r *http.Request) {
+	if s.deps.Store == nil {
+		writeError(w, 503, "account storage unavailable")
+		return
+	}
 	var b struct {
 		State    string `json:"state"`
 		Verifier string `json:"verifier"`
@@ -411,7 +432,7 @@ func (s *Server) FinishCinemaNative(w http.ResponseWriter, r *http.Request) {
 	if !decodeHouseholdBody(w, r, &b) {
 		return
 	}
-	if len(b.State) > 256 || len(b.Verifier) > 128 {
+	if len(b.State) > 256 || !validCinemaVerifier(b.Verifier) {
 		writeError(w, 400, "invalid native handoff")
 		return
 	}
@@ -458,6 +479,9 @@ func (s *Server) FinishCinemaNative(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"token": token, "account": a, "expiresAt": expires})
 }
 func (s *Server) RunCinemaRevocations(ctx context.Context) {
+	if s.deps.Store == nil {
+		return
+	}
 	tick := time.NewTicker(30 * time.Second)
 	defer tick.Stop()
 	for {
@@ -480,4 +504,16 @@ func (s *Server) RunCinemaRevocations(ctx context.Context) {
 		case <-tick.C:
 		}
 	}
+}
+
+func validCinemaVerifier(value string) bool {
+	if len(value) < 43 || len(value) > 128 {
+		return false
+	}
+	for _, c := range []byte(value) {
+		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || strings.ContainsRune("-._~", rune(c))) {
+			return false
+		}
+	}
+	return true
 }

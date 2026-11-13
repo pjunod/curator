@@ -70,7 +70,6 @@ type CinemaLink struct {
 	AccountID            int64
 	Issuer               string
 	Subject              string
-	GrantSecret          string
 	ConnectionGeneration int64
 	Generation           int64
 	Active               int64
@@ -277,6 +276,15 @@ type HouseholdRequest struct {
 	PolicyJson    string
 	LibraryItemID int64
 	NextCheckAt   int64
+}
+
+type HouseholdRequestDecision struct {
+	RequestID  int64
+	Revision   int64
+	AccountID  int64
+	Decision   string
+	PolicyJson string
+	CreatedAt  int64
 }
 
 type HouseholdRequestNote struct {

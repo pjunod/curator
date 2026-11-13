@@ -16,7 +16,7 @@ func TestHouseholdImportRejectsExtraEpisodeAndArrivingPrimary(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	root, err := db.AddRootFolderWithPresence(ctx, filepath.Dir(item.Path), domain.KindSeries, "volume")
+	root, err := db.AddRootFolderWithPresence(ctx, filepath.Dir(item.Path), domain.RootKind("series"), "volume")
 	if err != nil {
 		t.Fatal(err)
 	}

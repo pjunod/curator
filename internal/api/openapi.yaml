@@ -3553,70 +3553,72 @@ paths:
   /auth/cinema/connection:
     get:
       operationId: getCinemaConnection
-      summary: Optional Cinema getCinemaConnection
+      summary: Read the saved optional Cinema connection without secrets
       responses:
         "200":
-          description: Current transaction result (no client or grant secrets)
+          description: Masked connection configuration
     put:
       operationId: saveCinemaConnection
-      summary: Optional Cinema saveCinemaConnection
+      summary: Verify, save or disconnect Cinema login after local owner password proof
       responses:
-        "200":
-          description: Current transaction result (no client or grant secrets)
+        "204":
+          description: Connection saved; local accounts are preserved
   /auth/cinema/link:
     get:
       operationId: getCinemaLink
-      summary: Optional Cinema getCinemaLink
+      summary: Read this account’s optional Cinema identity link
       responses:
         "200":
-          description: Current transaction result (no client or grant secrets)
+          description: Link state without a grant
     post:
       operationId: startCinemaLink
-      summary: Optional Cinema startCinemaLink
+      summary: Begin an explicitly consented Cinema link after local password proof
       responses:
         "200":
-          description: Current transaction result (no client or grant secrets)
+          description: Registered Cinema consent URL
     delete:
       operationId: unlinkCinema
-      summary: Optional Cinema unlinkCinema
+      summary: Unlink Cinema locally and queue remote grant revocation
       responses:
-        "200":
-          description: Current transaction result (no client or grant secrets)
+        "204":
+          description: Local link and derived sessions revoked
   /auth/cinema/start:
     post:
       operationId: startCinemaSignIn
-      summary: Optional Cinema startCinemaSignIn
+      summary: Start optional Cinema sign-in for an already linked account
       responses:
         "200":
-          description: Current transaction result (no client or grant secrets)
+          description: Consent URL and opaque transaction state
   /auth/cinema/native:
     post:
       operationId: startCinemaNative
-      summary: Optional Cinema startCinemaNative
+      summary: Start system-browser sign-in with an app S256 challenge
       responses:
         "200":
-          description: Current transaction result (no client or grant secrets)
+          description: One-use browser URL and transaction state
   /auth/cinema/native/result:
     post:
       operationId: finishCinemaNative
-      summary: Optional Cinema finishCinemaNative
+      summary: Consume a ready one-use native handoff with the app verifier
       responses:
         "200":
-          description: Current transaction result (no client or grant secrets)
+          description: Device-scoped Curator session; no Cinema credentials
+        "202":
+          description: Waiting for browser consent; no credential is returned
   /auth/cinema/browser:
     get:
       operationId: openCinemaBrowser
-      summary: Optional Cinema openCinemaBrowser
+      summary: Bind a native handoff to its system browser and redirect to consent
       responses:
-        "200":
-          description: Current transaction result (no client or grant secrets)
+        "303":
+          description: Redirect to registered Cinema consent
   /auth/cinema/callback:
     get:
       operationId: cinemaCallback
-      summary: Optional Cinema cinemaCallback
+      summary: Consume a state- and issuer-bound Cinema callback
       responses:
-        "200":
-          description: Current transaction result (no client or grant secrets)
+        "303":
+          description: Redirect to the fixed Curator account or requests page
   /auth/me:
     get:
       operationId: getCurrentAccount

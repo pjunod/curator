@@ -5934,34 +5934,34 @@ type ServerInterface interface {
 	// UpdateOwnAccount Update the current local account after password confirmation
 	// (PUT /auth/account)
 	UpdateOwnAccount(w http.ResponseWriter, r *http.Request)
-	// OpenCinemaBrowser Optional Cinema openCinemaBrowser
+	// OpenCinemaBrowser Bind a native handoff to its system browser and redirect to consent
 	// (GET /auth/cinema/browser)
 	OpenCinemaBrowser(w http.ResponseWriter, r *http.Request)
-	// CinemaCallback Optional Cinema cinemaCallback
+	// CinemaCallback Consume a state- and issuer-bound Cinema callback
 	// (GET /auth/cinema/callback)
 	CinemaCallback(w http.ResponseWriter, r *http.Request)
-	// GetCinemaConnection Optional Cinema getCinemaConnection
+	// GetCinemaConnection Read the saved optional Cinema connection without secrets
 	// (GET /auth/cinema/connection)
 	GetCinemaConnection(w http.ResponseWriter, r *http.Request)
-	// SaveCinemaConnection Optional Cinema saveCinemaConnection
+	// SaveCinemaConnection Verify, save or disconnect Cinema login after local owner password proof
 	// (PUT /auth/cinema/connection)
 	SaveCinemaConnection(w http.ResponseWriter, r *http.Request)
-	// UnlinkCinema Optional Cinema unlinkCinema
+	// UnlinkCinema Unlink Cinema locally and queue remote grant revocation
 	// (DELETE /auth/cinema/link)
 	UnlinkCinema(w http.ResponseWriter, r *http.Request)
-	// GetCinemaLink Optional Cinema getCinemaLink
+	// GetCinemaLink Read this account’s optional Cinema identity link
 	// (GET /auth/cinema/link)
 	GetCinemaLink(w http.ResponseWriter, r *http.Request)
-	// StartCinemaLink Optional Cinema startCinemaLink
+	// StartCinemaLink Begin an explicitly consented Cinema link after local password proof
 	// (POST /auth/cinema/link)
 	StartCinemaLink(w http.ResponseWriter, r *http.Request)
-	// StartCinemaNative Optional Cinema startCinemaNative
+	// StartCinemaNative Start system-browser sign-in with an app S256 challenge
 	// (POST /auth/cinema/native)
 	StartCinemaNative(w http.ResponseWriter, r *http.Request)
-	// FinishCinemaNative Optional Cinema finishCinemaNative
+	// FinishCinemaNative Consume a ready one-use native handoff with the app verifier
 	// (POST /auth/cinema/native/result)
 	FinishCinemaNative(w http.ResponseWriter, r *http.Request)
-	// StartCinemaSignIn Optional Cinema startCinemaSignIn
+	// StartCinemaSignIn Start optional Cinema sign-in for an already linked account
 	// (POST /auth/cinema/start)
 	StartCinemaSignIn(w http.ResponseWriter, r *http.Request)
 	// GetHouseholdSignInInfo Public sign-in requirements and optional integration availability

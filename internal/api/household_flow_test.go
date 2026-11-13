@@ -195,3 +195,32 @@ func TestHouseholdRevokedOwnerStreamStopsBeforePayload(t *testing.T) {
 		t.Fatal("revoked stream received owner data")
 	}
 }
+
+type householdSeriesProvider struct{ stubProvider }
+
+func (householdSeriesProvider) GetSeries(ctx context.Context, id int64) (domain.MediaItem, error) {
+	return domain.MediaItem{Kind: domain.KindSeries, Title: "Frozen show", IDs: domain.ExternalIDs{TMDB: id}, Seasons: []domain.Season{{Number: 0, Episodes: []domain.Episode{{SeasonNumber: 0, EpisodeNumber: 1, AirDate: "2020-01-01"}}}, {Number: 1, Episodes: []domain.Episode{{SeasonNumber: 1, EpisodeNumber: 1, AirDate: "2020-01-01"}, {SeasonNumber: 1, EpisodeNumber: 1, AirDate: "2020-01-01"}, {SeasonNumber: 1, EpisodeNumber: 2, AirDate: "2099-01-01"}, {SeasonNumber: 1, EpisodeNumber: 3, AirDate: ""}}}}}, nil
+}
+func TestHouseholdSeriesSubmissionFreezesOnlyUniqueKnownAiredRegularEpisodes(t *testing.T) {
+	h, _ := newLibraryServer(t, householdSeriesProvider{stubProvider{configured: true}})
+	rr := householdHTTP(t, h, "PUT", "/api/v1/settings", "", map[string]any{"authUsername": "owner", "authPassword": householdTestPassword, "authRequired": true})
+	if rr.Code != 204 {
+		t.Fatal(rr.Code, rr.Body.String())
+	}
+	owner := householdHTTPLogin(t, h, "owner", householdTestPassword)
+	rr = householdHTTP(t, h, "POST", "/api/v1/household/requests", owner, map[string]any{"kind": "series", "tmdbId": 100, "seasons": []int{1}})
+	if rr.Code != 201 {
+		t.Fatal(rr.Code, rr.Body.String())
+	}
+	var request domain.HouseholdRequest
+	if err := json.Unmarshal(rr.Body.Bytes(), &request); err != nil {
+		t.Fatal(err)
+	}
+	if len(request.Scope.Episodes) != 1 || request.Scope.Episodes[0] != (domain.RequestEpisode{Season: 1, Episode: 1}) {
+		t.Fatal("scope included duplicate, future, unknown-date or special episodes", request.Scope)
+	}
+	rr = householdHTTP(t, h, "POST", "/api/v1/household/requests", owner, map[string]any{"kind": "series", "tmdbId": 100, "seasons": []int{0}})
+	if rr.Code != 409 {
+		t.Fatal("special-season request accepted", rr.Code)
+	}
+}

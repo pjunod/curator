@@ -386,6 +386,9 @@ func (d *DB) ResetLocalOwnerPassword(ctx context.Context, username, hash string)
 	if err = enqueueCinemaRevocations(ctx, tx, a.ID); err != nil {
 		return err
 	}
+	if _, err = tx.ExecContext(ctx, `DELETE FROM cinema_handoffs WHERE account_id=? OR ready_link IN(SELECT id FROM cinema_links WHERE account_id=?)`, a.ID, a.ID); err != nil {
+		return err
+	}
 	if _, err = tx.ExecContext(ctx, `DELETE FROM household_sessions WHERE account_id=?`, a.ID); err != nil {
 		return err
 	}

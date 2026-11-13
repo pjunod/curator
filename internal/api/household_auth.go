@@ -72,7 +72,7 @@ func (s *Server) sessionPrincipal(r *http.Request) (principal, error) {
 				return principal{}, err
 			}
 			// Optional integration sessions are accepted only by their explicit grant
-			// validator. Until that method is wired, they cannot acquire local authority.
+			// validator and retain household-only session authority.
 			if session.Method == "cinema" {
 				if err = s.validateCinemaSession(r.Context(), session); err != nil {
 					return principal{}, err

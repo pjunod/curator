@@ -19,7 +19,7 @@ type Account struct {
 type AccountSession struct {
 	Account                Account
 	Method                 string
-	IntegrationGrant       string
+	IntegrationGrant       string `json:"-"`
 	LinkID, LinkGeneration int64
 	CreatedAt, ExpiresAt   time.Time
 }

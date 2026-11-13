@@ -4,6 +4,63 @@ A walkthrough of the UI, in the order you'll meet it. Setup reference for
 every knob lives in [settings.md](settings.md); deployment and storage
 guidance in [deployment.md](deployment.md).
 
+## Household discovery and requests
+
+Sign in with your own Curator account. Members see **Discover**, **Requests** and
+**Account**. Search the catalogue or choose a library movie/show for related
+titles and movie collections. Library facts are refreshed independently of
+provider metadata. “Unknown” means a library check is needed; it never proves
+that a file is missing. Recommendations use library membership, not watch
+history. Primary-copy presence and acquisition remain separate facts.
+
+Movie requests freeze a title identity. Show requests freeze known aired regular
+episodes from the selected seasons; specials, future episodes and unknown dates
+are excluded. Joining a matching active request follows the same work. You can
+withdraw your own pending interest; other subscribers' interest remains. Notes
+written by an owner are private to that owner. Members never receive owner paths,
+credentials, download controls or administrative/event endpoints.
+
+Local owners open **Requests** to review. A new title needs a destination/profile
+and stays unmonitored. Existing titles keep those settings. The review rechecks
+primary files and shows present, missing and offloaded counts. Already-present
+scope fulfills without a search. Re-acquiring offloaded leaves requires explicit
+acknowledgement of the current review. Changed facts, missing volume evidence or
+overlapping approvals require another review. Approval does not monitor future
+or unrequested episodes.
+
+Approved missing leaves use the existing acquisition/import services and Activity
+queue. Admission persists before client submission and resumes after restart.
+Uncertain client submissions retain the existing capability-aware retry rules.
+Imports reject extra/mixed episodes outside approval and preserve primary files
+that arrive after approval. Fulfillment requires verified primary files, never
+only a queue completion. Decline/reapproval cannot abandon outstanding transfer
+custody. Native owners reach these controls from **More → Household requests**.
+
+Optional Cinema sign-in is configured and linked as described in
+[settings.md](settings.md#household-accounts-and-optional-cinema-login). Both apps
+keep their own accounts. A Cinema administrator never becomes a Curator owner
+through this integration. Use local sign-in for owner work or during a Cinema
+outage. The native account page opens the web Account page for explicit linking.
+
+## Recover a local owner password
+
+The host operator can reset an active local owner's password using the existing
+data directory. Stop the service first, preserve your normal database backup,
+and run the matching Curator binary with the same data directory. Credentials
+arrive only on stdin; do not put a password in command arguments or shell history.
+For example, using your host's installed Python and Curator binary:
+
+```bash
+python3 -c 'import getpass,json; print(json.dumps({"username":getpass.getpass("Owner username: "),"password":getpass.getpass("New password: ")}))' | MONARR_DATA_DIR=/srv/curator monarr accounts reset-password
+```
+
+A successful result preserves the account ID and request history, changes the
+local password, invalidates that account's sessions and pending invitation
+proofs, and queues its Cinema-grant revocations. It never disables household
+authentication or turns a member into an owner. Start the service and sign in
+locally with the new password. Existing machine API keys are separate credentials;
+rotate them in **Access** if a privileged device also needs to be revoked.
+
 ## Install & run
 
 With compose (recommended — your customized compose file is gitignored,

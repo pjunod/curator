@@ -1,0 +1,13 @@
+import {afterEach,describe,expect,it,vi} from 'vitest'
+import {MonarrClient} from './api'
+import {sanitizeConnection} from './connection'
+import {loadConnection,saveConnection} from './storage'
+const {get,set}=vi.hoisted(()=>({get:vi.fn(),set:vi.fn()}))
+vi.mock('expo-secure-store',()=>({getItemAsync:get,setItemAsync:set,WHEN_UNLOCKED_THIS_DEVICE_ONLY:'device-only'}))
+afterEach(()=>{vi.unstubAllGlobals();vi.clearAllMocks()})
+describe('personal household credentials',()=>{
+ it('drops any retained owner key and persists the personal token in device-only storage',async()=>{const token='cts_'+'a'.repeat(64),connection=sanitizeConnection({baseUrl:'https://curator.example',apiKey:'old-owner-key',sessionToken:token});expect(connection.apiKey).toBe('');await saveConnection(connection);expect(set).toHaveBeenCalledWith('monarr.connection.v1',JSON.stringify(connection),{keychainAccessible:'device-only'});get.mockResolvedValue(JSON.stringify(connection));expect(await loadConnection()).toEqual(connection)})
+ it('uses a personal bearer for safe endpoints without an owner API key',async()=>{const fetch=vi.fn().mockResolvedValue(new Response('[]',{status:200}));vi.stubGlobal('fetch',fetch);const client=new MonarrClient({baseUrl:'https://curator.example',apiKey:'old-owner-key',sessionToken:'cts_'+'b'.repeat(64)});await client.getHouseholdRequests();const [url,init]=fetch.mock.calls[0] as [string,RequestInit];expect(url).toBe('https://curator.example/api/v1/household/requests?before=0');expect(new Headers(init.headers).get('Authorization')).toBe('Bearer cts_'+'b'.repeat(64));expect(new Headers(init.headers).has('X-Api-Key')).toBe(false)})
+ it('preserves native handoff proof in the POST body and handles the pending response without a token',async()=>{const fetch=vi.fn().mockResolvedValue(new Response(null,{status:202}));vi.stubGlobal('fetch',fetch);const client=new MonarrClient({baseUrl:'https://curator.example',apiKey:''});expect(await client.finishCinemaNative('state','private-verifier')).toBeUndefined();const [url,init]=fetch.mock.calls[0] as [string,RequestInit];expect(url).not.toContain('private-verifier');expect(JSON.parse(init.body as string)).toEqual({state:'state',verifier:'private-verifier'})})
+ it('reports expiration as personal sign-in without suggesting a privileged owner key',async()=>{vi.stubGlobal('fetch',vi.fn().mockResolvedValue(new Response('{}',{status:401})));const client=new MonarrClient({baseUrl:'https://curator.example',apiKey:'',sessionToken:'cts_'+'c'.repeat(64)});await expect(client.getHouseholdRequests()).rejects.toThrow('Your Curator account session ended. Sign in again.')})
+})

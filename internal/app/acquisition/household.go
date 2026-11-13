@@ -114,6 +114,12 @@ func (s *Service) CancelHouseholdOffloadDeliveries(ctx context.Context, itemID i
 	return s.cancelOffloadDeliveriesRestricted(ctx, sc, operations)
 }
 func (s *Service) validateHouseholdImport(ctx context.Context, item domain.MediaItem, scope importScope, p sqlite.Placement) error {
+	return s.checkHouseholdImport(ctx, item, scope, p, false)
+}
+func (s *Service) validateHouseholdPublication(ctx context.Context, item domain.MediaItem, scope importScope, p sqlite.Placement) error {
+	return s.checkHouseholdImport(ctx, item, scope, p, true)
+}
+func (s *Service) checkHouseholdImport(ctx context.Context, item domain.MediaItem, scope importScope, p sqlite.Placement, final bool) error {
 	origin := scope.Household
 	if origin == nil {
 		return nil
@@ -148,7 +154,7 @@ func (s *Service) validateHouseholdImport(ctx context.Context, item domain.Media
 		if file.CopyID != 0 {
 			continue
 		}
-		overlap := item.Kind == domain.KindMovie
+		overlap := item.Kind == domain.KindMovie || len(file.EpisodeIDs) == 0
 		for _, ep := range file.EpisodeIDs {
 			overlap = overlap || slices.Contains(p.EpisodeIDs, ep)
 		}
@@ -165,7 +171,16 @@ func (s *Service) validateHouseholdImport(ctx context.Context, item domain.Media
 		if !info.Mode().IsRegular() {
 			return importPolicyRefusalf("primary file identity needs owner review")
 		}
-		if file.Path == p.Target {
+		if file.Path == p.Target && file.SourceGeneration == scope.SourceGeneration && file.SourceTransfer == scope.Transfer {
+			// Hash outside the global decision lock. Final publication uses the
+			// already measured digest plus the journal's exact observed generation;
+			// publishPlacement repeats that generation fence before rename.
+			if final && p.PreviousSHA256 == p.SHA256 && p.TargetObserved && sameContentGeneration(p.TargetFileGeneration, info) {
+				continue
+			}
+			if final {
+				return importPolicyRefusalf("household target generation changed before publication")
+			}
 			digest, _, e := fileDigest(ctx, file.Path)
 			if e != nil {
 				return e
