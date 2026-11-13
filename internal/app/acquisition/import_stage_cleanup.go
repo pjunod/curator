@@ -25,6 +25,8 @@ type StageCleanupReview struct {
 
 var stageCleanupUnlinkHook = func() {}
 
+var stageCleanupSyncDirectory = syncRootDirectory
+
 func (s *Service) withStageCleanup(ctx context.Context, key sqlite.ImportAttemptKey, ids []string, fn func(context.Context, []sqlite.ImportStageCustody) error) error {
 	if len(ids) == 0 || len(ids) > 100 {
 		return fmt.Errorf("select between 1 and 100 stage IDs")
@@ -229,6 +231,13 @@ func (s *Service) cleanupImportStage(ctx context.Context, key sqlite.ImportAttem
 	if storage != p.StorageIdentity || parentID != p.TargetParentIdentity || !os.SameFile(bound, namedParent) {
 		return fmt.Errorf("stage storage or parent changed before cleanup")
 	}
+	// Recheck the backup through the same verified parent immediately before
+	// disposal. A late backup keeps the placement's reconciliation custody.
+	if p.Backup != "" {
+		if _, err := base.Lstat(filepath.Base(p.Backup)); !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("prior-file backup appeared or cannot be proven absent")
+		}
+	}
 	name := filepath.Base(stage.Stage)
 	current, err := base.Lstat(name)
 	if review.Absent {
@@ -249,9 +258,11 @@ func (s *Service) cleanupImportStage(ctx context.Context, key sqlite.ImportAttem
 		if err = base.Remove(name); err != nil {
 			return err
 		}
-		if err = syncRootDirectory(base, "."); err != nil {
-			return err
-		}
+	}
+	// Absence is not durable evidence until the directory sync succeeds too:
+	// this may be a retry of an unlink whose previous fsync failed.
+	if err = stageCleanupSyncDirectory(base, "."); err != nil {
+		return err
 	}
 	// Only after the physical step. A crash here leaves held evidence; the next
 	// explicitly reviewed absent-stage pass can finish the ledger without unlink.

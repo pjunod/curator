@@ -2,6 +2,7 @@ package acquisition
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -27,7 +28,10 @@ func stageCleanupFixture(t *testing.T) (*Service, *sqlite.DB, sqlite.ImportAttem
 	if err != nil {
 		t.Fatal(err)
 	}
-	parent := t.TempDir()
+	parent := filepath.Join(t.TempDir(), "library")
+	if err := os.Mkdir(parent, 0700); err != nil {
+		t.Fatal(err)
+	}
 	stage := filepath.Join(parent, ".monarr-stage-review")
 	target := filepath.Join(parent, "library.mkv")
 	if err = os.WriteFile(stage, nil, 0600); err != nil {
@@ -201,5 +205,99 @@ func TestStageCleanupHonoursWriterEpochAndTitleFences(t *testing.T) {
 	release()
 	if _, err := svc.PreviewImportStageCleanup(ctx, key, append(ids, ids...)); err == nil {
 		t.Fatal("duplicate stage accepted")
+	}
+}
+
+func TestStageCleanupLateBackupPreservesStageAndPlacementCustody(t *testing.T) {
+	svc, db, key, p := stageCleanupFixture(t)
+	ctx := context.Background()
+	ids := []string{"stage:" + p.ID}
+	previews, err := svc.PreviewImportStageCleanup(ctx, key, ids)
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := stageCleanupUnlinkHook
+	t.Cleanup(func() { stageCleanupUnlinkHook = old })
+	stageCleanupUnlinkHook = func() {
+		if err := os.WriteFile(p.Backup, []byte("prior library bytes"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err = svc.CleanupImportStages(ctx, key, ids, map[string]string{ids[0]: previews[0].Fingerprint}, true); err == nil {
+		t.Fatal("late backup lost its placement custody")
+	}
+	if _, err = os.Lstat(p.Temporary); err != nil {
+		t.Fatal("stage unlinked", err)
+	}
+	saved, err := db.GetPlacement(ctx, p.ID)
+	if err != nil || saved.State != "prepared" {
+		t.Fatalf("lost backup custody: %+v %v", saved, err)
+	}
+}
+
+func TestStageCleanupAbsenceRetryRequiresSuccessfulDirectorySync(t *testing.T) {
+	svc, db, key, p := stageCleanupFixture(t)
+	ctx := context.Background()
+	ids := []string{"stage:" + p.ID}
+	previews, err := svc.PreviewImportStageCleanup(ctx, key, ids)
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := stageCleanupSyncDirectory
+	t.Cleanup(func() { stageCleanupSyncDirectory = old })
+	calls := 0
+	stageCleanupSyncDirectory = func(*os.Root, string) error { calls++; return errors.New("injected directory sync failure") }
+	if _, err = svc.CleanupImportStages(ctx, key, ids, map[string]string{ids[0]: previews[0].Fingerprint}, true); err == nil {
+		t.Fatal("sync failure ignored")
+	}
+	previews, err = svc.PreviewImportStageCleanup(ctx, key, ids)
+	if err != nil || !previews[0].Absent {
+		t.Fatal("missing retry evidence", err)
+	}
+	if _, err = svc.CleanupImportStages(ctx, key, ids, map[string]string{ids[0]: previews[0].Fingerprint}, true); err == nil {
+		t.Fatal("absent retry skipped durable directory sync")
+	}
+	if calls != 2 {
+		t.Fatalf("sync calls=%d want2", calls)
+	}
+	saved, err := db.GetPlacement(ctx, p.ID)
+	if err != nil || saved.State != "prepared" {
+		t.Fatal("non-durable absence was attested", err)
+	}
+	stageCleanupSyncDirectory = old
+	if _, err = svc.CleanupImportStages(ctx, key, ids, map[string]string{ids[0]: previews[0].Fingerprint}, true); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestStageCleanupParentReplacementCannotRedirectUnlink(t *testing.T) {
+	svc, _, key, p := stageCleanupFixture(t)
+	ctx := context.Background()
+	ids := []string{"stage:" + p.ID}
+	previews, err := svc.PreviewImportStageCleanup(ctx, key, ids)
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := stageCleanupUnlinkHook
+	t.Cleanup(func() { stageCleanupUnlinkHook = old })
+	parent := filepath.Dir(p.Temporary)
+	stageCleanupUnlinkHook = func() {
+		if err := os.Rename(parent, parent+".old"); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Mkdir(parent, 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p.Temporary, nil, 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err = svc.CleanupImportStages(ctx, key, ids, map[string]string{ids[0]: previews[0].Fingerprint}, true); err == nil {
+		t.Fatal("replacement parent was accepted")
+	}
+	for _, path := range []string{p.Temporary, filepath.Join(parent+".old", filepath.Base(p.Temporary))} {
+		if _, err := os.Lstat(path); err != nil {
+			t.Fatal("stage removed through wrong parent", err)
+		}
 	}
 }
