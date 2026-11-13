@@ -117,8 +117,15 @@ func verifyPassword(stored, legacySalt, password string) (valid, legacy bool) {
 	if err != nil || len(want) != sha256.Size || len(legacySalt) != 32 {
 		return false, false
 	}
-	sum := sha256.Sum256([]byte(legacySalt + password))
-	return subtle.ConstantTimeCompare(sum[:], want) == 1, true
+	return subtle.ConstantTimeCompare([]byte(hashPassword(legacySalt, password)), []byte(strings.ToLower(stored))) == 1, true
+}
+
+// hashPassword is the original pre-KDF digest, retained only to verify existing
+// credentials. Never write its result: new and migrated credentials must use
+// newPasswordHash, with its salt and work factor embedded in the stored value.
+func hashPassword(salt, password string) string {
+	sum := sha256.Sum256([]byte(salt + password))
+	return hex.EncodeToString(sum[:])
 }
 
 // Only the immediate, explicitly trusted proxy may assert the original scheme.
