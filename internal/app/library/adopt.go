@@ -610,6 +610,16 @@ func (s *Service) Adopt(ctx context.Context, proposals []Proposal, dryRun bool) 
 // already on disk, so nothing is moved or renamed — the promise ADR 0005
 // made about adopting existing layouts.
 func (s *Service) adoptOne(ctx context.Context, p Proposal) error {
+	// A queued scan is only an observation. Revalidate before adoption: the
+	// folder may have been replaced by a symlink since the scan ran.
+	root, err := s.rootFolderFor(ctx, p.Path)
+	if err != nil {
+		return err
+	}
+	if root.ID != p.RootFolderID {
+		return fmt.Errorf("%w: adoption root changed", ErrInvalidInput)
+	}
+	p.Path = filepath.Join(root.Path, filepath.Base(p.Path))
 	win := p.Candidates[0]
 
 	// One folder, one item. Without this, a folder can be adopted twice under
@@ -823,6 +833,7 @@ func (s *Service) AdoptOne(ctx context.Context, path string, pick ports.SearchRe
 	if err != nil {
 		return err
 	}
+	clean = filepath.Join(root.Path, filepath.Base(clean))
 	info, statErr := os.Stat(clean)
 	if statErr != nil || !info.IsDir() {
 		return fmt.Errorf("%w: %s is not a directory on disk", ErrNotFound, clean)
@@ -878,10 +889,16 @@ func (s *Service) rootFolderFor(ctx context.Context, path string) (domain.RootFo
 	if err != nil {
 		return domain.RootFolder{}, err
 	}
-	parent := filepath.Dir(path)
-	for _, rf := range roots {
-		if filepath.Clean(rf.Path) == parent {
-			return rf, nil
+	// Resolve the parent separately so aliases of a configured root work,
+	// while a deeper directory is still not offered as a top-level item.
+	parent, parentErr := filepath.EvalSymlinks(filepath.Dir(path))
+	resolved, resolveErr := filepath.EvalSymlinks(path)
+	if filepath.IsAbs(path) && parentErr == nil && resolveErr == nil {
+		for _, rf := range roots {
+			root, err := filepath.EvalSymlinks(rf.Path)
+			if err == nil && root == parent && isSubPath(root, resolved) {
+				return rf, nil
+			}
 		}
 	}
 	return domain.RootFolder{}, fmt.Errorf(
