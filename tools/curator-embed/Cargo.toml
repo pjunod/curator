@@ -7,9 +7,9 @@ publish = false
 
 [dependencies]
 anyhow = "1"
-candle-core = { version = "=0.11.0", default-features = false }
-candle-nn = { version = "=0.11.0", default-features = false }
-candle-transformers = { version = "=0.11.0", default-features = false }
+candle-core = { version = "=0.11.1", default-features = false }
+candle-nn = { version = "=0.11.1", default-features = false }
+candle-transformers = { version = "=0.11.1", default-features = false }
 rayon = "1.12"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -20,3 +20,15 @@ tokenizers = { version = "0.22", default-features = false, features = ["onig"] }
 strip = true
 codegen-units = 1
 lto = "thin"
+
+[patch.crates-io]
+gemm = { path = "vendor/gemm-0.19.0" }
+gemm-common = { path = "vendor/gemm-common-0.19.0" }
+gemm-f16 = { path = "vendor/gemm-f16-0.19.0" }
+gemm-f32 = { path = "vendor/gemm-f32-0.19.0" }
+gemm-f64 = { path = "vendor/gemm-f64-0.19.0" }
+gemm-c32 = { path = "vendor/gemm-c32-0.19.0" }
+gemm-c64 = { path = "vendor/gemm-c64-0.19.0" }
+pulp_0_22_3 = { package = "pulp", path = "vendor/pulp-0.22.3" }
+tokenizers_0_22_2 = { package = "tokenizers", path = "vendor/tokenizers-0.22.2" }
+tokenizers_0_23_2 = { package = "tokenizers", path = "vendor/tokenizers-0.23.2" }

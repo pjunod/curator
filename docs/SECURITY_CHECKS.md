@@ -11,7 +11,7 @@ Companion to the [security policy](../SECURITY.md) (private reporting) and
 | CodeQL Go | Pull requests, `main`, Monday 08:41 UTC, manual dispatch | Builds the server and runs extended security queries. Findings appear under code scanning; successful execution is not a promise of zero findings. |
 | CodeQL JavaScript/TypeScript | Same as Go | Source analysis covers the web, mobile and test source without installing or executing npm dependencies. Rust is not covered by these CodeQL jobs. |
 | Dependency review | Pull requests | Rejects dependency changes introducing known high or critical vulnerabilities. Existing vulnerabilities require separate review. |
-| Dependabot | Weekly | Update PRs for Go, all three npm lockfiles, the Rust encoder, GitHub Actions and Dockerfiles. Updates are reviewed through normal CI; none are automatically merged. |
+| Dependabot | Weekly | Update PRs for Go, all three npm lockfiles, the Rust encoder, Python reference requirements, GitHub Actions and Dockerfiles. Updates are reviewed through normal CI; none are automatically merged. |
 | Existing tests, lint, compatibility, image build | Pull requests and `main` | Behavior and build checks remain separate from security analysis. |
 
 All workflow Action references are pinned to full commit SHAs. Dependabot
