@@ -27,6 +27,26 @@ permissions limited to code scanning and its OIDC publication token. It uses
 the default GitHub token, not a personal access token. Publication sends
 public repository security-practice results to OpenSSF.
 
+## Logging boundaries
+
+Go logs use structured `slog` JSON or text handlers. Untrusted titles,
+paths and errors stay in fields; the handlers escape record delimiters.
+`TestUntrustedFieldsCannotForgeLogRecords` verifies CR/LF and terminal
+control characters cannot create a second record while JSON retains the
+original field values. The initial 52 Go log-injection findings on 2026-11-13 flow to these
+structured fields, not a raw line writer. A later scan of main `28e6930`
+adds eight offload/re-acquire findings at the same handler boundary; the
+regression also covers untrusted message text. Changing
+media metadata to satisfy taint analysis would damage user data without
+strengthening that output boundary.
+
+Unknown compatibility requests log parameter names, never query values,
+because a supported `apikey` query parameter carries a credential.
+`TestUnknownRouteLogsParameterNamesWithoutCredentials` covers this boundary.
+The fake Arr end-to-end fixture emits JSON for client-controlled diagnostics;
+its IMDb assertion anchors both scheme and host so an unrelated URL cannot
+pass the external-link check.
+
 ## Reading badges and results
 
 The workflow badges link to `pjunod/curator`. Coverage remains the committed
@@ -131,21 +151,3 @@ settings-read error requires authentication instead of opening the gate;
 `TestAuthSettingsReadFailureCannotOpenGate` covers the failure, absent-row
 default and a still-readable API key. This was a confirmed adjacent defect
 found by fault injection during the password-storage review.
-
-## Logging boundaries
-
-Go logs use structured `slog` JSON or text handlers. Untrusted titles,
-paths and errors stay in fields; the handlers escape record delimiters.
-`TestUntrustedFieldsCannotForgeLogRecords` verifies CR/LF and terminal
-control characters cannot create a second record while JSON retains the
-original field values. The 52 Go log-injection findings in the 2026-11-13
-snapshot flow to these structured fields, not a raw line writer. Changing
-media metadata to satisfy taint analysis would damage user data without
-strengthening that output boundary.
-
-Unknown compatibility requests log parameter names, never query values,
-because a supported `apikey` query parameter carries a credential.
-`TestUnknownRouteLogsParameterNamesWithoutCredentials` covers this boundary.
-The fake Arr end-to-end fixture emits JSON for client-controlled diagnostics;
-its IMDb assertion anchors both scheme and host so an unrelated URL cannot
-pass the external-link check.
