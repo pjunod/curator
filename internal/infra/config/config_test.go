@@ -106,3 +106,24 @@ func TestMissingConfigFileErrors(t *testing.T) {
 		t.Error("missing explicit config file should be an error")
 	}
 }
+
+func TestTrustedProxyConfiguration(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.json")
+	if err := os.WriteFile(path, []byte(`{"trustedProxies":["192.0.2.10/32"]}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := load(env(map[string]string{"MONARR_CONFIG": path}))
+	if err != nil || len(cfg.TrustedProxies) != 1 || cfg.TrustedProxies[0].String() != "192.0.2.10/32" {
+		t.Fatalf("file config: %+v %v", cfg, err)
+	}
+	cfg, err = load(env(map[string]string{"MONARR_CONFIG": path, "MONARR_TRUSTED_PROXIES": " 2001:db8::10/128,192.0.2.11/32 "}))
+	if err != nil || len(cfg.TrustedProxies) != 2 || cfg.TrustedProxies[0].String() != "2001:db8::10/128" {
+		t.Fatalf("env config: %+v %v", cfg, err)
+	}
+	for _, value := range []string{"192.0.2.10", "192.0.2.10/99", "not-a-network", "192.0.2.10/32,"} {
+		if _, err := load(env(map[string]string{"MONARR_TRUSTED_PROXIES": value})); err == nil {
+			t.Fatalf("accepted invalid CIDR %q", value)
+		}
+	}
+}

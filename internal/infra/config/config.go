@@ -13,8 +13,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net/netip"
 	"os"
 	"strconv"
+	"strings"
 )
 
 // Defaults.
@@ -25,6 +27,8 @@ const (
 
 // Config is the fully resolved server configuration.
 type Config struct {
+	// TrustedProxies may assert HTTPS using an overwritten X-Forwarded-Proto.
+	TrustedProxies []netip.Prefix `json:"trustedProxies"`
 	// Host is the bind address; empty means all interfaces.
 	Host string `json:"host"`
 	// Port is the HTTP port shared by the UI, /api/v1, and (later) the
@@ -41,11 +45,12 @@ type Config struct {
 // fileConfig mirrors Config with pointers so we can tell "absent" from "zero"
 // when overlaying the optional JSON file.
 type fileConfig struct {
-	Host      *string `json:"host"`
-	Port      *int    `json:"port"`
-	DataDir   *string `json:"dataDir"`
-	LogLevel  *string `json:"logLevel"`
-	LogFormat *string `json:"logFormat"`
+	TrustedProxies *[]netip.Prefix `json:"trustedProxies"`
+	Host           *string         `json:"host"`
+	Port           *int            `json:"port"`
+	DataDir        *string         `json:"dataDir"`
+	LogLevel       *string         `json:"logLevel"`
+	LogFormat      *string         `json:"logFormat"`
 }
 
 // Load resolves configuration from defaults, the optional file named by
@@ -96,6 +101,16 @@ func load(getenv func(string) string) (Config, error) {
 		cfg.LogFormat = v
 	}
 
+	if v := getenv("MONARR_TRUSTED_PROXIES"); v != "" {
+		cfg.TrustedProxies = nil
+		for _, raw := range strings.Split(v, ",") {
+			prefix, err := netip.ParsePrefix(strings.TrimSpace(raw))
+			if err != nil {
+				return Config{}, fmt.Errorf("config: invalid trusted proxy CIDR %q: %w", raw, err)
+			}
+			cfg.TrustedProxies = append(cfg.TrustedProxies, prefix)
+		}
+	}
 	if err := cfg.validate(); err != nil {
 		return Config{}, err
 	}
@@ -103,6 +118,9 @@ func load(getenv func(string) string) (Config, error) {
 }
 
 func overlay(cfg *Config, fc fileConfig) {
+	if fc.TrustedProxies != nil {
+		cfg.TrustedProxies = *fc.TrustedProxies
+	}
 	if fc.Host != nil {
 		cfg.Host = *fc.Host
 	}
