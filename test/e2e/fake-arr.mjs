@@ -208,7 +208,7 @@ createServer((req, res) => {
       const tags = params.get('tags') ?? ''
       const slug = dlURL.split('/').pop()
       const spec = payloads[slug]
-      console.log(`[fake-arr] add slug=${slug} tags=${tags}`)
+      console.log(JSON.stringify({ source: 'fake-arr', event: 'add', slug, tags }))
       if (!spec) {
         res.end('Fails.')
         return
