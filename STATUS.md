@@ -2,7 +2,7 @@
 
 ## Activity attention and superseded scratch — 2026-11-13 · v0.50.2
 
-**Owner:** Codex · **Branch:** `codex/activity-attention-cleanup` · **State:** implementation ready for adversarial review; validation pending.
+**Owner:** Codex · **Branch:** `codex/activity-attention-cleanup` · **State:** implemented and published as `8aad429`; independent adversarial review pending.
 
 Live read-only diagnosis: downloads 1336 and 1326 had already removed their
 rejected Strangers with Candy payloads, but Activity lost the terminal failure
@@ -17,8 +17,13 @@ every publication file was removed as superseded, with no authorizations; it
 checks the recorded mount, parent and stage object and refuses prior-file backups.
 Source payloads and Library targets are never changed by that new path.
 
-PR, review, final gates, merge and cleanup: pending. No production mutation or
-deployment has been performed.
+Pinned lint, full Go tests, 170 web tests and the production web build passed.
+All 262 browser acceptance tests passed, including desktop and phone regressions
+for the removed-failure explanation. Automatic approval review rejected opening
+a draft PR because explicit authorization to publish it to GitHub is required;
+the branch push had already succeeded. PR, independent review, CI, merge and
+deployment remain pending. The owned workspace is retained for that work.
+No production mutation or deployment has been performed.
 
 ## Publication cleanup safety — 2026-11-13 · v0.49.1
 
