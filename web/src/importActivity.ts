@@ -31,7 +31,7 @@ export function importActivityLabel(item: ImportActivityItem) {
 export function importProgress(item: ImportActivityItem) {
   const d = item.download
   // Download percentages and publication sizes are not copy measurements.
-  if (item.category !== 'active' || d.stage !== 'importing' || !d.total || d.bytes === undefined) return null
+  if ((item.category !== 'active' && item.category !== 'progress') || d.stage !== 'importing' || !d.total || d.bytes === undefined) return null
   const bytes = Math.max(0, Math.min(d.bytes, d.total))
   const rate = d.bytesPerSecond && d.bytesPerSecond > 0 ? d.bytesPerSecond : null
   return { bytes, total: d.total, percent: Math.round(bytes / d.total * 100), rate,

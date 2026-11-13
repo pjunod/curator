@@ -931,6 +931,7 @@ export interface QueueItem {
  planId?: number
  planState?: string
  submissionPhase?: string
+ reservationActionable?: boolean
  parkedReason?: string
  selection?: SeasonSelection
   control?: { version: number; revision: string; lifecycle: string; cause: string; stage: string; retry_policy: string; message: string; instance: string }
@@ -1994,7 +1995,7 @@ export const previewCompletedStorageChange = (request: StorageChangeRequest) => 
 export const acceptCompletedStorageChange = (request: StorageChangeRequest) => send('POST', '/downloads/inventory/storage-change/accept', request)
 
 /** Dedicated, server-paged import activity. History follows Activity retention. */
-export type ImportCategory = 'active' | 'queued' | 'attention' | 'imported'
+export type ImportCategory = 'active' | 'queued' | 'attention' | 'imported' | 'progress' | 'history'
 export interface ImportActivityItem {
   download: QueueItem
   category: ImportCategory
@@ -2321,3 +2322,6 @@ export const getItemStatus = (id: number, season?: number) =>
   get<ItemStatus>(`/library/${id}/status${season === undefined ? '' : `?season=${season}`}`)
 export const confirmItemInCinema = (id: number, episodeId?: number) =>
   send<{ queued: number }>('POST', `/library/${id}/status/confirm${episodeId ? `?episode=${episodeId}` : ''}`)
+
+export const getActivity = (view: 'progress' | 'attention' | 'history', scope: 'all' | 'imports', q: string, limit: number, offset: number) =>
+  get<ImportActivityPage>(`/activity?${new URLSearchParams({ view, scope, q, limit: String(limit), offset: String(offset) })}`)

@@ -39,7 +39,7 @@ for (const width of [390, 1280]) {
     await page.route('**/api/v1/notifiers/1/test', route => route.fulfill({ json: {
       message: 'connected; checking the library paths needs a newer cinema',
     } }))
-    await page.goto('/settings')
+    await page.goto('/settings#notifications')
 
     const row = page.getByRole('row').filter({ hasText: 'living room' })
     await row.scrollIntoViewIfNeeded()

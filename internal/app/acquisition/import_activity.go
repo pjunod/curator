@@ -76,3 +76,73 @@ func importActivityCategory(e sqlite.ImportActivityEntry, worker string) string 
 	}
 	return "attention"
 }
+
+// Activity uses one complete local index before filtering, counting and paging.
+// It never combines independently paged queue/import responses in the browser.
+func (s *Service) Activity(ctx context.Context, view, search string, importsOnly bool, limit, offset int) (ImportActivityPage, error) {
+	entries, err := s.db.ActivityIndex(ctx, search, importsOnly)
+	if err != nil {
+		return ImportActivityPage{}, err
+	}
+	page := ImportActivityPage{Rows: []ImportActivityRow{}, Counts: map[string]int{"progress": 0, "attention": 0, "history": 0, "all": 0}}
+	s.importMu.Lock()
+	for _, entry := range entries {
+		worker := ""
+		if ticket := s.importJobs[entry.ID]; ticket != nil {
+			worker = "running"
+		}
+		category := activityCategory(entry, worker)
+		page.Counts[category]++
+		page.Counts["all"]++
+		if category == view {
+			page.Rows = append(page.Rows, ImportActivityRow{ImportActivityEntry: entry, Category: category})
+		}
+	}
+	s.importMu.Unlock()
+	page.Total = len(page.Rows)
+	offset = min(max(0, offset), page.Total)
+	end := min(offset+limit, page.Total)
+	page.HasMore = end < page.Total
+	page.Rows = page.Rows[offset:end]
+	return page, nil
+}
+
+func activityCategory(e sqlite.ImportActivityEntry, worker string) string {
+	// Historical publication IDs are evidence, never mutable queue targets.
+	if e.ID < 0 {
+		return "history"
+	}
+	// An active/cancelling writer keeps custody; do not offer disposition early.
+	if worker != "" {
+		return "progress"
+	}
+	if e.Review || e.State == "awaiting_import" || e.ReservationActionable || e.ActionableFiles {
+		return "attention"
+	}
+	if e.CancelOutcome == "pending" {
+		return "progress"
+	}
+	if e.CancelOutcome == "cancelled" {
+		return "history"
+	}
+	if e.Superseded {
+		return "history"
+	}
+	if e.AutomaticImportRetry {
+		return "progress"
+	}
+	if e.LocalImportFailure && !e.FailedPublication {
+		return "attention"
+	}
+	// A terminal transfer failure remains a failure even after salvage placement.
+	if e.State == "failed" {
+		return "history"
+	}
+	if e.PendingPublication {
+		return "progress"
+	}
+	if e.State == "imported" || e.State == "notified" {
+		return "history"
+	}
+	return "progress"
+}

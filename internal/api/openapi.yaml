@@ -1863,6 +1863,35 @@ paths:
                 items:
                   $ref: "#/components/schemas/HistoryEvent"
 
+  /activity:
+    get:
+      operationId: listActivity
+      summary: Unified download and retained import activity
+      parameters:
+        - name: view
+          in: query
+          schema: { type: string, enum: [progress, attention, history], default: progress }
+        - name: scope
+          in: query
+          schema: { type: string, enum: [all, imports], default: all }
+        - name: q
+          in: query
+          schema: { type: string }
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+        - name: offset
+          in: query
+          schema: { type: integer, minimum: 0, default: 0 }
+      responses:
+        "200":
+          description: Counts cover the complete search and scope; rows are paged after classification. Negative IDs are read-only historical publications.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ImportActivityPage' }
+        "400":
+          description: Invalid view, scope or pagination.
+
   /imports:
     get:
       operationId: listImportActivity
@@ -6752,7 +6781,7 @@ components:
         download:
           allOf: [{ $ref: '#/components/schemas/QueueItem' }]
           description: Negative IDs identify read-only unattributed historical publications, never queue mutation targets.
-        category: { type: string, enum: [active, queued, attention, imported] }
+        category: { type: string, enum: [active, queued, attention, imported, progress, history] }
         title: { type: string }
         kind: { type: string }
         destination: { type: string }
@@ -6778,6 +6807,7 @@ components:
         planId: { type: integer, format: int64 }
         planState: { type: string }
         submissionPhase: { type: string, enum: [pending, submitting, submitted, uncertain, rejected] }
+        reservationActionable: { type: boolean, description: Whether current custody can be explicitly released after duplicate-risk acknowledgement. }
         parkedReason:
           type: string
           description: >

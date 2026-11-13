@@ -4,9 +4,6 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
 import {
   type ManualImportRequest,
-  type ImportAttemptIdentity,
-  type CompletedEntry,
-  type CompletedRoot,
   type QueueItem,
   type PublicationFileAction,
   type QueuePublication,
@@ -16,17 +13,13 @@ import {
   cancelQueueImport,
   getImportReview,
   resolveImportReview,
-  clearFailedQueue,
-  clearFinishedQueue,
   fmtBytes,
   fmtRelative,
-  getCompletedInventory,
   getLibrary,
   getLibraryItem,
   getManualImportDefaultPath,
-  getQueuePage,
-  getQueueSummary,
-  getTasks,
+  getActivity,
+  type ImportActivityItem,
   importQueueItem,
   resumeQueueItem,
   manualImport,
@@ -35,13 +28,13 @@ import {
   setPublicationCleanup,
   resolveQueueReservation,
   scanImportPath,
-  runTask,
   publicationHoldText,
 } from '../api'
 import { PathInput } from '../PathInput'
-import { CompletedFolders } from '../CompletedFolders'
-import { DeliveryLifecycleArchive, DeliveryLifecycleForDownload } from '../DeliveryLifecycle'
 import '../LegacyReview.css'
+import '../ImportQueue.css'
+import '../Activity.css'
+import { canRetryImport, importActivityLabel, importNeedsReview } from '../importActivity'
 import { awaitingText, fmtDuration } from '../queueTime'
 
 const STATE_PILL: Record<string, string> = {
@@ -113,90 +106,6 @@ const STAGE_LABEL: Record<Stage, string> = {
   publication_cleanup: 'Cleaning up publication',
 }
 
-const STAGE_TITLE: Record<Stage, string> = {
-  downloading: 'The download client is fetching articles from the newsgroup server',
-  par_rename: 'The download client is restoring real filenames from the par2 set',
-  par_verify: 'The download client is checking the payload against its par2 blocks',
-  par_repair: 'The download client is rebuilding damaged blocks. This can take a while on a big release',
-  rar_rename: 'The download client is putting the archive volumes back in order',
-  unpack: 'The download client is extracting the archive',
-  cleanup: 'The download client is deleting the archive volumes it no longer needs',
-  move: 'The download client is moving the payload to its finished folder',
-  post_unpack_rename: 'The download client is tidying names after extraction',
-  publication_verify: 'The download client is verifying the completed payload before publication',
-  script: 'The download client is running its post-processing scripts',
-  importing: 'Curator is copying the files into your library. This is the one stage Curator does itself',
-  notifying: 'Curator is telling the media server an import landed',
-  publication_cleanup: 'Curator is verifying the publication files against their manifest digests and removing the ones with evidence; unresolved files stay',
-}
-
-// Sections, in the order a job passes through them. Rendered only when
-// occupied, so an idle instance shows nothing rather than eleven empty
-// headings.
-const STAGES: Stage[] = [
-  'downloading',
-  'par_rename',
-  'par_verify',
-  'par_repair',
-  'rar_rename',
-  'unpack',
-  'cleanup',
-  'move',
-  'post_unpack_rename',
-  'publication_verify',
-  'script',
-  'importing',
-  'notifying',
-  'publication_cleanup',
-]
-
-// Rows with nothing in flight still have to go somewhere, grouped by what a
-// person would do about them: one needs a decision, one is finished, one went
-// wrong.
-const RESTING = [
-  { key: 'held', label: 'Held by Runner', states: ['held'] },
-  { key: 'waiting', label: 'Waiting', states: ['planned', 'grabbed', 'submitting', 'downloaded', 'awaiting_import'] },
-  { key: 'done', label: 'Finished', states: ['imported', 'notified'] },
-  { key: 'failed', label: 'Failed', states: ['failed'] },
-] as const
-
-type Section = { key: string; label: string; title?: string; rows: QueueItem[] }
-
-function sections(rows: QueueItem[]): Section[] {
-  const out: Section[] = []
-  const live = new Set<number>()
-  const queued = rows.filter((r) => r.importState === 'queued')
-  for (const stage of STAGES) {
-    if (stage === 'importing' && queued.length > 0) {
-      queued.forEach((r) => live.add(r.id))
-      out.push({
-        key: 'import-queued',
-        label: 'Waiting to copy',
-        title: 'Accepted by Curator and waiting for an available import worker',
-        rows: queued,
-      })
-    }
-    const inStage = rows.filter(
-      (r) => !live.has(r.id) && r.importState !== 'queued' && r.stage === stage,
-    )
-    inStage.forEach((r) => live.add(r.id))
-    if (inStage.length > 0) {
-      out.push({ key: stage, label: STAGE_LABEL[stage], title: STAGE_TITLE[stage], rows: inStage })
-    }
-  }
-  for (const group of RESTING) {
-    const inGroup = rows.filter((r) => !live.has(r.id) && group.states.includes(r.state as never))
-    if (inGroup.length > 0) out.push({ key: group.key, label: group.label, rows: inGroup })
-  }
-  // Anything in a state this build has not heard of still gets shown. A row
-  // that silently vanishes because of an unrecognised word is worse than an
-  // ugly heading.
-  const placed = new Set(out.flatMap((s) => s.rows.map((r) => r.id)))
-  const rest = rows.filter((r) => !placed.has(r.id))
-  if (rest.length > 0) out.push({ key: 'other', label: 'Other', rows: rest })
-  return out
-}
-
 // Progress the row can actually stand behind.
 //
 // A stage that cannot measure itself gets no bar at all, rather than one
@@ -218,23 +127,23 @@ function StageProgress({ d }: { d: QueueItem }) {
     return <span className="muted">Starting importer…</span>
   }
   if (d.state === 'importing' && !d.stage && !d.importState) {
-    return <span className="error-text">No importer is running</span>
+    return <span className="muted">Waiting for automatic import retry</span>
   }
-  const known = typeof d.total === 'number' && d.total > 0
+  const known = typeof d.total === 'number' && d.total > 0 && typeof d.bytes === 'number'
   const done = d.bytes ?? 0
-  const fraction = known ? Math.min(1, done / (d.total as number)) : d.stage ? null : d.progress
+  const fraction = known ? Math.max(0, Math.min(1, done / (d.total as number))) : !d.stage && d.state === 'downloading' ? d.progress : null
 
   return (
     <div className="stage-progress">
       {fraction !== null && (
-        <div className="progress-track">
+        <div className="progress-track" role="progressbar" aria-label="Measured stage progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(fraction * 100)}>
           <i style={{ width: `${Math.round(fraction * 100)}%` }} />
         </div>
       )}
       {known ? (
         <div className="muted stage-bytes">
           {fmtBytes(done)} / {fmtBytes(d.total as number)}
-          {d.bytesPerSecond ? ` · ${fmtBytes(d.bytesPerSecond)}/s` : ''}
+          {d.bytesPerSecond ? ` · ${fmtBytes(d.bytesPerSecond)}/s · ${fmtDuration(Math.max(0, ((d.total as number) - done) / d.bytesPerSecond))} remaining` : ''}
         </div>
       ) : d.stage ? (
         // Words, not digits — so this one wraps. Forcing the numeric
@@ -254,453 +163,105 @@ function clock(ms: number): string {
   return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
 }
 
-// How many terminal rows one "show more" adds. Small on purpose: the point
-// of this page is what is happening, and the history behind it is opened
-// deliberately, a screenful at a time.
-const PAGE = 25
+const ACTIVITY_PAGE_SIZE = 50
+const ACTIVITY_VIEWS = [['progress', 'In progress'], ['attention', 'Needs attention'], ['history', 'History']] as const
 
-// The groups, in the order they matter. Active is never collapsed and never
-// paged — it is the answer to "what is happening", and an answer that is
-// partly hidden is not one. Finished and Failed are history: collapsed to a
-// count, opened when asked, and paged from there.
-const GROUPS = [
-  { key: 'imported' as const, label: 'Finished' },
-  { key: 'failed' as const, label: 'Failed' },
-]
+function attemptKey(d: QueueItem): string { return JSON.stringify([d.id, d.importControl?.generationKey, d.importControl?.epoch]) }
 
 export function ActivityPage() {
- const actionTrigger=useRef<HTMLElement|null>(null)
- const rememberAction=()=>{actionTrigger.current=document.activeElement instanceof HTMLElement?document.activeElement:null}
   const qc = useQueryClient()
-  const [expanded, setExpanded] = useState<Set<number>>(new Set())
-  const [manual, setManual] = useState<Partial<ManualImportRequest> | null>(null)
-  const [resolveMode, setResolveMode] = useState<'files' | 'delivery' | 'legacy'>('files')
+  const [view, setView] = useState<'progress' | 'attention' | 'history'>('progress')
+  const [scope, setScope] = useState<'all' | 'imports'>(() => new URLSearchParams(window.location.search).get('scope') === 'imports' ? 'imports' : 'all')
   const [search, setSearch] = useState('')
-  const [open, setOpen] = useState<Record<string, boolean>>({})
-  const [shown, setShown] = useState<Record<string, number>>({ imported: PAGE, failed: PAGE })
-  const [confirmClear, setConfirmClear] = useState<'imported' | 'failed' | null>(null)
-  const [actionErr, setActionErr] = useState('')
-
-  // Only the active list polls. Finished and Failed do not change on their
-  // own — something has to finish or fail first, and that moves the counts,
-  // which is what tells this page to look again.
-  const summary = useQuery({
-    queryKey: ['queue-summary'],
-    queryFn: getQueueSummary,
-    refetchInterval: 4_000,
-  })
-  const active = useQuery({
-    queryKey: ['queue', 'active', search],
-    queryFn: () => getQueuePage('active', search, 200),
-    refetchInterval: 4_000,
-  })
-  const finished = useQuery({
-    queryKey: ['queue', 'imported', search, shown.imported],
-    queryFn: () => getQueuePage('imported', search, shown.imported),
-    enabled: !!open.imported,
-  })
-  const failed = useQuery({
-    queryKey: ['queue', 'failed', search, shown.failed],
-    queryFn: () => getQueuePage('failed', search, shown.failed),
-    enabled: !!open.failed,
-  })
-
-  const invalidate = () => {
-    void qc.invalidateQueries({ queryKey: ['queue'] })
-      void qc.invalidateQueries({ queryKey: ['imports'] })
-    void qc.invalidateQueries({ queryKey: ['queue-summary'] })
-  }
-  const remove = useMutation({ mutationFn: (id: number) => removeQueueItem(id, false), onSettled: invalidate })
-  const doImport = useMutation({
-    mutationFn: (id: number) => {
-      const row = active.data?.find((d) => d.id === id)
-      return row?.control?.lifecycle === 'held' ? resumeQueueItem(id) : importQueueItem(id)
-    },
-    onMutate: () => setActionErr(''),
-    onError: (e: Error) => setActionErr(e.message),
-    onSettled: invalidate,
-  })
-  const cancelImport = useMutation({
-    mutationFn: ({id,identity}:{id:number;identity:ImportAttemptIdentity}) => cancelQueueImport(id,identity),
-    onMutate: () => setActionErr(''),
-    onError: (e: Error) => setActionErr(e.message),
-    onSettled: invalidate,
-  })
-  const doBlocklist = useMutation({ mutationFn: (id: number) => blocklistQueueItem(id), onSettled: invalidate })
-  const clearFinished = useMutation({
-    mutationFn: clearFinishedQueue,
-    onSettled: () => {
-      setConfirmClear(null)
-      invalidate()
-    },
-  })
-  const clearFailed = useMutation({
-    mutationFn: clearFailedQueue,
-    onSettled: () => {
-      setConfirmClear(null)
-      invalidate()
-    },
-  })
-
-  const busy =
-    remove.isPending || doImport.isPending || cancelImport.isPending || doBlocklist.isPending ||
-    clearFinished.isPending || clearFailed.isPending
-  const toggle = (id: number) =>
-    setExpanded((prev) => {
-      const next = new Set(prev)
-      if (next.has(id)) next.delete(id)
-      else next.add(id)
-      return next
-    })
-
-  const counts = summary.data?.counts ?? {}
-  const activeRows = active.data ?? []
-  const groupRows: Record<string, QueueItem[]> = {
-    imported: finished.data ?? [],
-    failed: failed.data ?? [],
-  }
-  const retention = summary.data?.retentionDays
-  const nothingAtAll = (summary.data?.total ?? 0) === 0
-
-  const rowProps = (d: QueueItem) => ({
-    d,
-    open: expanded.has(d.id),
-    busy,
-    onToggle: () => toggle(d.id),
-    onImport: () => {rememberAction();doImport.mutate(d.id)},
-    onCancelImport: () => {rememberAction();if(d.importControl)cancelImport.mutate({id:d.id,identity:d.importControl});else setActionErr('Refresh Activity before cancelling this import.')},
-    onBlocklist: () => doBlocklist.mutate(d.id),
-    onRemove: () => remove.mutate(d.id),
-    onManual: () =>
-      setManual({
-        path: d.importPath || d.savePath || '',
-        mediaItemId: d.mediaItemId,
-        copyId: d.copyId,
-        downloadId: d.id,
-      }),
-  })
-
-  const columns = (
-    <>
-      <colgroup>
-        <col className="col-toggle" />
-        <col className="col-release" />
-        <col className="col-quality" />
-        <col className="col-state" />
-        <col className="col-progress" />
-        <col className="col-added" />
-        <col className="col-actions" />
-      </colgroup>
-      <thead>
-        <tr>
-          <th></th>
-          <th>Release</th>
-          <th>Quality</th>
-          <th>Doing it</th>
-          <th>Progress</th>
-          <th>Added</th>
-          <th>Actions</th>
-        </tr>
-      </thead>
-    </>
-  )
-
-  return (
-    <>
-      <header className="page-head">
-        <h1>Activity</h1>
-        <Link to="/imports">Import queue</Link>
-        <button onClick={() => { setResolveMode('files'); setManual(manual ? null : {}) }} aria-expanded={!!manual}>
-          {manual ? 'Close Resolve' : 'Resolve'}
-        </button>
-      </header>
-
-      {manual && <ActionDialog title="Resolve" className="resolve-dialog" onClose={() => setManual(null)}>
-        <ResolvePanel key={manual.path ?? 'resolve'} embedded initialMode={resolveMode} prefill={manual} onDone={() => { setManual(null); invalidate() }} />
-      </ActionDialog>}
-
-      {actionErr && <ActionDialog returnFocus={actionTrigger} title="Activity action failed" onClose={()=>setActionErr('')}><p role="alert">{actionErr}</p></ActionDialog>}
-
-      <CompletedFolders onImport={(path, mode, downloadId) => { setResolveMode(mode === 'legacy' ? 'legacy' : mode === 'delivery' ? 'delivery' : 'files'); setManual({ path, downloadId }) }} />
-
-      <DeliveryLifecycleArchive />
-
-      <div className="activity-toolbar">
-        <input
-          type="search"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          placeholder="Filter by release title"
-          aria-label="Filter by release title"
-        />
-        <span className="muted" data-testid="activity-counts">
-          {summary.data?.active ?? 0} active · {counts.imported ?? 0} finished ·{' '}
-          {counts.failed ?? 0} failed
-        </span>
-      </div>
-
-      {/* ACTIVE — always whole, never paged. */}
-      <section className="panel">
-        {activeRows.length === 0 && (
-          <p className="muted">
-            {nothingAtAll
-              ? 'Nothing in the queue. Grab something from a title\'s search.'
-              : search
-                ? 'Nothing moving matches that.'
-                : 'Nothing moving right now.'}
-          </p>
-        )}
-        {activeRows.length > 0 && (
-          <table className="queue-table">
-            {columns}
-            {sections(activeRows).map((section) => (
-              <tbody key={section.key}>
-                <tr className="section-row">
-                  <td colSpan={7}>
-                    <span className="section-label" title={section.title}>
-                      {section.label}
-                    </span>
-                    <span className="section-count">{section.rows.length}</span>
-                  </td>
-                </tr>
-                {section.rows.map((d) => (
-                  <RowGroup key={d.id} {...rowProps(d)} />
-                ))}
-              </tbody>
-            ))}
-          </table>
-        )}
-      </section>
-
-      {/* FINISHED and FAILED — collapsed to a count. This is the part that
-          used to grow without limit: every receipt Curator ever wrote, in one
-          table, forever. */}
-      {GROUPS.map((group) => {
-        const total = counts[group.key] ?? 0
-        const rows = groupRows[group.key]
-        const isOpen = !!open[group.key]
-        const action = group.key === 'imported' ? clearFinished : clearFailed
-        const actionLabel = group.key === 'imported' ? 'finished' : 'failed'
-        return (
-          <section className="panel activity-group" key={group.key}>
-            <div className="activity-group-head">
-              <button
-                className="link-button"
-                aria-expanded={isOpen}
-                data-testid={`toggle-${group.key}`}
-                onClick={() => setOpen((p) => ({ ...p, [group.key]: !p[group.key] }))}
-              >
-                {isOpen ? '▾' : '▸'} {group.label}
-                <span className="section-count">{total}</span>
-              </button>
-              {total > 0 && (
-                confirmClear === group.key ? (
-                  <span className="confirm-inline">
-                    Clear {total} {actionLabel} row{total === 1 ? '' : 's'}?
-                    <button disabled={busy} onClick={() => action.mutate()}>
-                      Yes, clear
-                    </button>
-                    <button className="link-button" onClick={() => setConfirmClear(null)}>
-                      Cancel
-                    </button>
-                  </span>
-                ) : (
-                  <button
-                    className="link-button"
-                    data-testid={`clear-${actionLabel}`}
-                    onClick={() => setConfirmClear(group.key)}
-                  >
-                    Clear {actionLabel}
-                  </button>
-                )
-              )}
-            </div>
-            {isOpen && (
-              <>
-                {rows.length === 0 && (
-                  <p className="muted">{search ? 'Nothing here matches that.' : 'Nothing here.'}</p>
-                )}
-                {rows.length > 0 && (
-                  <table className="queue-table">
-                    {columns}
-                    <tbody>
-                      {rows.map((d) => (
-                        <RowGroup key={d.id} {...rowProps(d)} />
-                      ))}
-                    </tbody>
-                  </table>
-                )}
-                {rows.length >= (shown[group.key] ?? PAGE) && (
-                  <button
-                    className="link-button"
-                    onClick={() =>
-                      setShown((p) => ({ ...p, [group.key]: (p[group.key] ?? PAGE) + PAGE }))
-                    }
-                  >
-                    Show {PAGE} more
-                  </button>
-                )}
-              </>
-            )}
-          </section>
-        )
-      })}
-
-      <p className="muted" style={{ fontSize: 13 }}>
-        Grouped by what each job is doing right now. Stages up to and including{' '}
-        <span className="mono">Moving</span> happen inside the download client;{' '}
-        <span className="mono">Copying to library</span> is the one Curator does itself. Clients that
-        push report a change within a second; the rest are reconciled by the 30s sweep (task{' '}
-        <span className="mono">queue.refresh</span>). Expand a row for the handoff — every step from
-        grab to import, and the exact paths Curator used.
-        {typeof retention === 'number' && (
-          <>
-            {' '}
-            Finished and failed rows are kept for{' '}
-            {retention === 0 ? 'ever' : `${retention} days`} (Settings → Library).
-          </>
-        )}
-      </p>
-    </>
-  )
-}
-
-export function ResolvePanel({
-  initialMode = 'files',
-  prefill = {},
-  embedded = false,
-  onDone = () => {},
-}: {
-  initialMode?: 'files' | 'delivery' | 'legacy'
-  prefill?: Partial<ManualImportRequest>
-  embedded?: boolean
-  onDone?: () => void
-}) {
-  const [mode, setMode] = useState<'files' | 'delivery' | 'legacy'>(initialMode)
-  const [selectedPath, setSelectedPath] = useState(prefill.path ?? '')
-  const [selectedLegacy, setSelectedLegacy] = useState(false)
-  const [legacyFingerprint, setLegacyFingerprint] = useState('')
-  return <section className={`resolve-panel${embedded ? ' resolve-panel-embedded' : ''}`} aria-label="Resolve downloads">
-    {!embedded && <header className="resolve-heading">
-      <div>
-        <h2>Resolve</h2>
-        <p className="muted">Choose a destination for unassociated files, inspect an existing legacy backlog, or resolve files from an accepted Runner manifest.</p>
-      </div>
-    </header>}
-    <nav className="resolve-modes" aria-label="Resolve source">
-      <button aria-pressed={mode === 'files'} onClick={() => setMode('files')}>Completed files</button>
-      <button aria-pressed={mode === 'delivery'} onClick={() => setMode('delivery')}>Runner delivery</button>
-      <button aria-pressed={mode === 'legacy'} onClick={() => setMode('legacy')}>Legacy backlog</button>
-    </nav>
-    {mode === 'files' ? <ManualImportPanel prefill={{ ...prefill, path: selectedPath || prefill.path, reviewLegacy: selectedLegacy, reviewLegacyFingerprint: legacyFingerprint }} onDone={onDone} /> : mode === 'delivery' ? prefill.downloadId ? <DeliveryLifecycleForDownload downloadId={prefill.downloadId} /> : <DeliveryLifecycleArchive initiallyOpen /> : <LegacyReviewReport onResolve={(path, fingerprint) => { setSelectedPath(path); setSelectedLegacy(true); setMode('files'); setLegacyFingerprint(fingerprint) }} />}
-  </section>
-}
-
-function LegacyReviewReport({ onResolve }: { onResolve: (path: string, fingerprint: string) => void }) {
-  const inventory = useQuery({ queryKey: ['completed-inventory'], queryFn: getCompletedInventory })
-  const tasks = useQuery({ queryKey: ['tasks'], queryFn: getTasks, refetchInterval: 2_000 })
-  const qc = useQueryClient()
-  const [scanRequestedFrom, setScanRequestedFrom] = useState<string | null>(null)
-  const scanTask = tasks.data?.find((task) => task.name === 'downloads.inventory')
-  const scan = useMutation({
-    mutationFn: () => runTask('downloads.inventory'),
-    onMutate: () => setScanRequestedFrom(scanTask?.lastRunAt ?? ''),
-    onSuccess: () => { void qc.invalidateQueries({ queryKey: ['tasks'] }) },
-    onError: () => setScanRequestedFrom(null),
-  })
-  const scanFinished = scanRequestedFrom !== null && !!scanTask && !scanTask.running && scanTask.lastRunAt !== scanRequestedFrom
-  const [selected, setSelected] = useState<Record<string, boolean>>({})
-  const rows = inventory.data?.roots.flatMap((root) => root.entries
-    .filter((entry) => entry.legacyReview || entry.receipts.some((receipt) => receipt.legacyReview))
-    .map((entry) => ({ root, entry }))) ?? []
-  const selectedRows = rows.filter(({ entry }) => selected[entry.path])
-  const selectedBytes = selectedRows.reduce((sum, row) => sum + row.entry.bytes, 0)
-  const exportReport = () => {
-    const quote = (value: string) => `"${value.replaceAll('"', '""')}"`
-    const lines = [['payload', 'file', 'bytes', 'modified_at', 'mode', 'snapshot_identity', 'download_ids', 'titles', 'proposed_outcome']]
-    for (const { entry } of selectedRows) {
-      const receipts = entry.receipts.filter((receipt) => receipt.legacyReview)
-      for (const file of entry.reviewFiles ?? []) {
-        lines.push([entry.path, file.path, String(file.sizeBytes), file.modifiedAt, file.mode, file.snapshotIdentity,
-          receipts.map((receipt) => String(receipt.downloadId)).join(';'),
-          receipts.map((receipt) => receipt.title).join(';'),
-          'Manual preview required; select exact files and target before importing'])
-      }
-      if (!entry.reviewFiles?.length) {
-        lines.push([entry.path, '', String(entry.bytes), '', '', entry.fingerprint,
-          receipts.map((receipt) => String(receipt.downloadId)).join(';'),
-          receipts.map((receipt) => receipt.title).join(';'),
-          'Refresh inventory, then inspect exact files before choosing an action'])
-      }
+  const [offset, setOffset] = useState(0)
+  const [detail, setDetail] = useState<ImportActivityItem | null>(null)
+  const [manual, setManual] = useState<Partial<ManualImportRequest> | null>(null)
+  const [review, setReview] = useState<number | null>(null)
+  const [selected, setSelected] = useState<Set<string>>(new Set())
+  const opener = useRef<HTMLElement | null>(null)
+  const heading = useRef<HTMLHeadingElement | null>(null)
+  const query = useQuery({ queryKey: ['activity', view, scope, search, offset], queryFn: () => getActivity(view, scope, search, ACTIVITY_PAGE_SIZE, offset), refetchInterval: 4000, retry: false })
+  const data = query.data
+  useEffect(() => {
+    if (data && offset > 0 && offset >= data.total) {
+      setOffset(Math.max(0, Math.ceil(data.total / ACTIVITY_PAGE_SIZE) - 1) * ACTIVITY_PAGE_SIZE)
+      setSelected(new Set())
     }
-    const csv = lines.map((line) => line.map(quote).join(',')).join('\r\n')
-    const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }))
-    const anchor = document.createElement('a')
-    anchor.href = url
-    anchor.download = 'curator-legacy-review-proposal.csv'
-    anchor.click()
-    URL.revokeObjectURL(url)
+  }, [data, offset])
+  const invalidate = () => {
+    for (const key of ['activity', 'queue', 'imports', 'queue-summary']) void qc.invalidateQueries({ queryKey: [key] })
   }
-  return <section className="panel legacy-review-report" aria-label="Legacy backlog review report">
-    <h3>Existing backlog review</h3>
-    <p className="muted">Read-only report of pre-delivery downloads. Each proposal uses the current complete file inventory and associated download records. Resolve opens the existing explicit file-selection preview; it does not import until you choose files and a destination.</p>
-    <div className="row-actions">
-      <button disabled={scan.isPending || !!scanTask?.running} onClick={() => scan.mutate()}>{scanTask?.running ? 'Refreshing inventory…' : 'Refresh inventory'}</button>
-      {scanFinished && <span role="status" className={scanTask?.lastError ? 'error-text' : 'muted'}>{scanTask?.lastError ? `Scan failed: ${scanTask.lastError}` : 'Inventory refreshed.'}</span>}
-      {scan.error && <span role="alert" className="error-text">{scan.error.message}</span>}
-    </div>
-    {inventory.isLoading && <p role="status">Loading the latest completed-storage inventory…</p>}
-    {inventory.error && <p role="alert" className="error-text">{inventory.error.message}</p>}
-    {inventory.data?.roots.some((root) => root.error) && <p role="alert" className="warning-text">One or more storage scans are incomplete. The report uses the last complete inventory for those roots; scan them before approving any future action.</p>}
-    <p><strong>{rows.length}</strong> legacy payloads · <strong>{rows.reduce((sum, row) => sum + row.entry.files, 0)}</strong> files · <strong>{fmtBytes(rows.reduce((sum, row) => sum + row.entry.bytes, 0))}</strong></p>
-    <div className="row-actions">
-      <button disabled={!rows.length} onClick={() => setSelected(Object.fromEntries(rows.map(({ entry }) => [entry.path, true])))}>Select all for proposal</button>
-      <button disabled={!selectedRows.length} onClick={() => setSelected({})}>Clear proposal selection</button>
-      <button disabled={!selectedRows.length} onClick={exportReport}>Export selected proposal</button>
-      <span className="muted">{selectedRows.length} selected · {fmtBytes(selectedBytes)}</span>
-    </div>
-    {rows.length === 0 ? <p className="muted">No legacy review entries are visible in the latest completed-storage scan.</p> : <div className="legacy-review-list">
-      {rows.map(({ root, entry }) => <LegacyReviewEntry key={entry.path} root={root} entry={entry} selected={!!selected[entry.path]} onSelect={(checked) => setSelected((previous) => ({ ...previous, [entry.path]: checked }))} onResolve={onResolve} />)}
-    </div>}
-  </section>
-}
-
-function LegacyReviewEntry({ root, entry, selected, onSelect, onResolve }: {
-  root: CompletedRoot
-  entry: CompletedEntry
-  selected: boolean
-  onSelect: (checked: boolean) => void
-  onResolve: (path: string, fingerprint: string) => void
-}) {
-  const receipts = entry.receipts.filter((receipt) => receipt.legacyReview)
-  const primaryReceipt = receipts.find((receipt) => (receipt.mediaItemId ?? 0) > 0)
-  const target = useQuery({
-    queryKey: ['library', primaryReceipt?.mediaItemId],
-    queryFn: () => getLibraryItem(primaryReceipt!.mediaItemId!),
-    enabled: !!primaryReceipt,
+  const remember = () => { opener.current = document.activeElement instanceof HTMLElement ? document.activeElement : heading.current }
+  const close = () => {
+    if (!opener.current?.isConnected || opener.current.matches(':disabled')) opener.current = heading.current
+    setDetail(null); setManual(null); setReview(null); invalidate()
+  }
+  const [result, setResult] = useState<string[] | null>(null)
+  const action = useMutation({
+    mutationFn: async ({ rows, kind }: { rows: QueueItem[]; kind: 'import' | 'cancel' | 'remove' | 'blocklist' }) => {
+      const results: string[] = []
+      for (const snapshot of rows) {
+        const cached = qc.getQueryData<NonNullable<typeof data>>(['activity', view, scope, search, offset])
+        const d = cached?.items.find(i => i.download.id === snapshot.id)?.download
+        try {
+          if (query.isError || qc.getQueryState(['activity', view, scope, search, offset])?.status === 'error' || !d || d.id < 1 || attemptKey(d) !== attemptKey(snapshot)) throw new Error('This import attempt changed. Refresh and select it again.')
+          if (kind === 'import') {
+            if (d.control?.lifecycle === 'held') await resumeQueueItem(d.id)
+            else await importQueueItem(d.id)
+          } else if (kind === 'cancel') {
+            if (!d.importControl) throw new Error('Refresh before cancelling this import.')
+            await cancelQueueImport(snapshot.id, snapshot.importControl!)
+          } else if (kind === 'remove') await removeQueueItem(d.id, false)
+          else await blocklistQueueItem(d.id)
+          results.push(`${d.title}: ${kind === 'cancel' ? 'Cancellation requested. Files stay protected until the writer stops.' : kind === 'import' ? 'Import accepted. Follow its status in Activity.' : kind === 'remove' ? 'Eligible download record removed. Library files were left in place.' : 'Blocklist request completed.'}`)
+        } catch (e) { results.push(`${snapshot.title}: ${e instanceof Error ? e.message : String(e)}`) }
+        setResult([...results])
+      }
+      return results
+    },
+    onError: (error: Error) => setResult([error.message]),
+    onSettled: () => { setSelected(new Set()); invalidate() },
   })
-  const matchingCopyFiles = target.data?.files.filter((file) => (file.copyId ?? 0) === (primaryReceipt?.copyId ?? 0)) ?? []
-  const proposed = entry.reviewFiles?.length
-    ? 'Inspect the listed files in the explicit importer, then choose the exact title and copy.'
-    : 'Refresh the inventory before deciding.'
-  return <article className="legacy-review-entry">
-    <label><input type="checkbox" checked={selected} onChange={(event) => onSelect(event.target.checked)} /> Include in proposal</label>
-    <strong className="mono">{entry.path}</strong>
-    <p>{entry.files} files · {fmtBytes(entry.bytes)} · {entry.reason}</p>
-    <p className="muted">Proposal: {proposed}</p>
-    <button disabled={!entry.reviewFiles?.length} onClick={() => onResolve(entry.path, entry.fingerprint)}>Inspect files and choose destination</button>
-    <details><summary>Current file identities and evidence</summary>
-      <p className="muted">Payload snapshot {entry.fingerprint}. Root scan: {root.lastCompleteAt ? new Date(root.lastCompleteAt).toLocaleString() : 'unknown'}. Snapshot identities describe current metadata only; they do not prove storage identity or authorize cleanup.</p>
-      <p>Associated history: {receipts.map((receipt) => `#${receipt.downloadId} ${receipt.title}`).join('; ') || 'orphaned legacy path'}.</p>
-      {primaryReceipt && <div className="legacy-target-evidence">
-        <strong>Recorded destination: {target.data?.title ?? `library item #${primaryReceipt.mediaItemId}`} · {primaryReceipt.copyId ? `copy #${primaryReceipt.copyId}` : 'primary copy'}</strong>
-        {target.isLoading ? <p className="muted">Checking the recorded destination…</p> : target.error ? <p className="error-text">The recorded library target could not be read: {target.error.message}</p> : matchingCopyFiles.length
-          ? <><p className="muted">Same-copy library files are listed below. Current content health is unverified by this report; filenames, sizes, and old receipts do not prove equivalent or safe-to-remove content.</p><ul>{matchingCopyFiles.map((file) => <li key={file.id}><span className="mono">{file.path}</span> · {fmtBytes(file.size)} · quality evidence {file.verified ? 'verified' : 'unverified'}</li>)}</ul></>
-          : <p className="muted">No current files are recorded for this exact copy. The report cannot propose a duplicate or cleanup outcome.</p>}
-      </div>}
-      {entry.reviewFiles?.length ? <ul>{entry.reviewFiles.map((file) => <li key={file.path}><span className="mono">{file.path}</span> · {fmtBytes(file.sizeBytes)} · {new Date(file.modifiedAt).toLocaleString()} · {file.mode} <details><summary>Snapshot identity</summary><code>{file.snapshotIdentity}</code></details></li>)}</ul> : <p className="muted">A fresh complete inventory scan is needed to enumerate current files.</p>}
-    </details>
-  </article>
+  const run = (rows: QueueItem[], kind: 'import' | 'cancel' | 'remove' | 'blocklist') => { if (!detail) remember(); setDetail(null); setResult([]); action.mutate({ rows, kind }) }
+  const changeView = (next: typeof view) => { setView(next); setOffset(0); setSelected(new Set()) }
+  const items = data?.items ?? []
+  const retryable = items.filter(canRetryImport)
+  const selectedItems = retryable.filter(i => selected.has(attemptKey(i.download)))
+  const liveDetail = detail && items.find(i => i.download.id === detail.download.id)
+  const staleDetail = !!detail && (!liveDetail || attemptKey(liveDetail.download) !== attemptKey(detail.download))
+  const currentDetail = detail && (!staleDetail && liveDetail ? liveDetail : detail)
+  const busy = action.isPending || query.isError || !data
+  return <div className="activity-feed">
+    <header className="page-head"><div><h1 ref={heading} tabIndex={-1}>Activity</h1><p className="muted">Downloads and imports, in one place.</p></div><span className="muted small">{query.dataUpdatedAt ? `Updated ${new Date(query.dataUpdatedAt).toLocaleTimeString()}` : 'Waiting for activity'}</span></header>
+    <nav className="activity-tabs" aria-label="Activity views">{ACTIVITY_VIEWS.map(([key, text]) => <button key={key} aria-pressed={view === key} onClick={() => changeView(key)}>{text} <span>{data?.counts[key] ?? '…'}</span></button>)}</nav>
+    <div className="activity-toolbar"><input type="search" aria-label="Find a title or release" placeholder="Find a title or release" value={search} onChange={e => { setSearch(e.target.value); setOffset(0); setSelected(new Set()) }} /><label>Show <select aria-label="Activity scope" value={scope} onChange={e => { setScope(e.target.value as typeof scope); setOffset(0); setSelected(new Set()) }}><option value="all">All work</option><option value="imports">Imports only</option></select></label></div>
+    {query.isLoading && <p role="status">Loading activity…</p>}
+    {query.isError && <div className="banner warning" role="alert">Could not refresh activity: {query.error.message}. {data ? 'Showing the last successful snapshot; actions are disabled.' : 'Activity and counts are unavailable.'} <button onClick={() => void query.refetch()}>Try again</button></div>}
+    {data && view === 'progress' && data.counts.attention > 0 && <div className="import-attention-banner"><div><strong>{data.counts.attention} item{data.counts.attention === 1 ? '' : 's'} need{data.counts.attention === 1 ? 's' : ''} a decision</strong><p className="muted small">Other downloads and imports continue automatically.</p></div><button onClick={() => changeView('attention')}>Review</button></div>}
+    {view === 'attention' && retryable.length > 0 && <div className="row-actions"><label><input type="checkbox" aria-label="Select retryable imports on this page" checked={selectedItems.length === retryable.length} onChange={e => setSelected(new Set(e.target.checked ? retryable.map(i => attemptKey(i.download)) : []))} /> Select page</label><button disabled={busy || selectedItems.length === 0} onClick={event => { focusActionTrigger(event); run(selectedItems.map(i => i.download), 'import') }}>Retry selected ({selectedItems.length})</button></div>}
+    {data && items.length === 0 && !query.isError && <section className="activity-empty"><h2>{search ? 'No activity matches this search' : view === 'progress' ? 'Nothing in progress' : view === 'attention' ? 'Nothing needs your attention' : 'No retained history'}</h2><p className="muted">{view === 'progress' ? 'New downloads and imports appear here. Automatic retries continue without a separate recovery queue.' : 'Only recorded attempts in this view and scope appear here.'}</p>{search && <button onClick={() => { setSearch(''); setOffset(0) }}>Clear search</button>}</section>}
+    {items.map(item => {
+      const d = item.download
+      const stage = d.importControl?.outcome === 'pending' ? 'Cancelling import' : d.stage ? STAGE_LABEL[d.stage] : d.importState === 'queued' ? 'Waiting to import' : d.importState === 'running' ? 'Starting importer' : d.state === 'importing' ? 'Waiting for automatic import retry' : item.category === 'attention' ? importActivityLabel(item) : label(STATE_LABEL, d.state)
+      return <article className="activity-attempt" key={d.id} data-activity-id={d.id}>
+        <div className="activity-attempt-heading"><div>{canRetryImport(item) && <input type="checkbox" aria-label={`Select ${item.title}`} checked={selected.has(attemptKey(d))} onChange={e => setSelected(prev => { const next = new Set(prev); if (e.target.checked) next.add(attemptKey(d)); else next.delete(attemptKey(d)); return next })} />}{d.mediaItemId > 0 ? <Link className="activity-title" to="/library/$id" params={{ id: String(d.mediaItemId) }}>{item.title}</Link> : <strong>{item.title}</strong>}<p className="muted small activity-release" title={d.title}>{d.title}</p><p className="muted small">{[item.kind, d.quality, d.id < 0 ? 'Historical import · read only' : d.protocol === 'manual' ? 'Manual import' : null].filter(Boolean).join(' · ')}</p></div><span className={`pill ${view === 'attention' ? 'pill-warning' : 'pill-neutral'}`}>{stage}</span></div>
+        {view === 'progress' && <StageProgress d={d} />}
+        {d.state === 'held' && <HeldLine d={d} />}
+        {d.error && <p className="muted small">{d.error}</p>}
+        {d.importBlockedSince && <p className="muted small">Waiting on the environment · {d.importRetryAt ? `next retry ${fmtRelative(d.importRetryAt)}` : 'automatic retry pending'}</p>}
+        <div className="activity-attempt-footer"><span className="muted small">Updated {fmtRelative(item.updatedAt)}</span><div className="row-actions">
+          {d.id > 0 && importNeedsReview(item) && <button disabled={busy} onClick={event => { focusActionTrigger(event); remember(); setReview(d.id) }}>Review retained files</button>}
+          {d.state === 'awaiting_import' && canRetryImport(item) && <button disabled={busy} onClick={event => { focusActionTrigger(event); run([d], 'import') }}>Approve import</button>}
+          <button onClick={event => { focusActionTrigger(event); remember(); setDetail(item) }}>Details</button>
+        </div></div>
+      </article>
+    })}
+    {data && <footer className="import-footer"><div className="row-actions"><button disabled={offset === 0} onClick={() => { setOffset(Math.max(0, offset - ACTIVITY_PAGE_SIZE)); setSelected(new Set()) }}>Previous</button><span>{data.total ? `${offset + 1}–${Math.min(offset + ACTIVITY_PAGE_SIZE, data.total)} of ${data.total}` : '0 attempts'}</span><button disabled={!data.hasMore} onClick={() => { setOffset(offset + ACTIVITY_PAGE_SIZE); setSelected(new Set()) }}>Next</button></div><p className="muted small">{data.retentionDays === 0 ? 'Automatic history expiry is disabled.' : `History is retained for ${data.retentionDays} days.`} Storage tools are under <Link to="/system" hash="storage">System → Storage</Link>.</p></footer>}
+    {currentDetail && <ActionDialog title={currentDetail.title} returnFocus={opener} onClose={close} className="activity-detail-dialog"><p className="muted">{currentDetail.download.title}</p>{currentDetail.destination && <p>Library destination <span className="path-chip">{currentDetail.destination}</span></p>}{staleDetail && <p role="status">This attempt moved out of the current view. Refresh the view before changing it.</p>}{currentDetail.download.id < 0 ? <PublicationList d={currentDetail.download} readOnly /> : <table className="queue-table"><tbody><RowGroup d={currentDetail.download} open busy={busy || staleDetail} onToggle={close} onImport={() => run([currentDetail.download], 'import')} onCancelImport={() => run([currentDetail.download], 'cancel')} onBlocklist={() => run([currentDetail.download], 'blocklist')} onRemove={() => run([currentDetail.download], 'remove')} onManual={() => { setDetail(null); setManual({ path: currentDetail.download.importPath || currentDetail.download.savePath, downloadId: currentDetail.download.id, mediaItemId: currentDetail.download.mediaItemId, copyId: currentDetail.download.copyId }) }} /></tbody></table>}</ActionDialog>}
+    {manual && <ActionDialog title="Choose files to import" returnFocus={opener} onClose={close}><ManualImportPanel prefill={manual} onDone={close} /></ActionDialog>}
+    {review !== null && <ActionDialog title="Review retained files" returnFocus={opener} onClose={close}><ImportReviewPanel id={review} readOnly={busy} /></ActionDialog>}
+    {result && <ActionDialog title="Activity action results" returnFocus={opener} onClose={() => { if (!action.isPending) { if (!opener.current?.isConnected || opener.current.matches(':disabled')) opener.current = heading.current; setResult(null) } }}><div aria-live="polite">{action.isPending && <p role="status">Submitting actions…</p>}{result.map((message, i) => <p key={i}>{message}</p>)}</div></ActionDialog>}
+  </div>
 }
 
 function RowGroup(props: {
@@ -719,7 +280,7 @@ function RowGroup(props: {
   const [reviewOpen,setReviewOpen]=useState(false)
   const [acknowledged,setAcknowledged]=useState(false)
   const qc=useQueryClient()
-  const resolve=useMutation({mutationFn:()=>resolveQueueReservation(d.id),onSuccess:()=>{setReviewOpen(false);void qc.invalidateQueries({queryKey:['queue']});void qc.invalidateQueries({queryKey:['imports']});void qc.invalidateQueries({queryKey:['queue-summary']})}})
+  const resolve=useMutation({mutationFn:()=>resolveQueueReservation(d.id),onSuccess:()=>{setReviewOpen(false);void qc.invalidateQueries({queryKey:['activity']});void qc.invalidateQueries({queryKey:['queue']});void qc.invalidateQueries({queryKey:['imports']});void qc.invalidateQueries({queryKey:['queue-summary']})}})
   const [importReviewOpen,setImportReviewOpen]=useState(false)
   const cancellationPending=d.importControl?.outcome==='pending'
   const publicationReview=!!d.importControl?.retainedPublications||!!d.importControl?.pendingPublications
@@ -766,7 +327,7 @@ function RowGroup(props: {
             <p>{d.parkedReason || 'Submission acceptance is uncertain.'}</p>
             <label><input type="checkbox" checked={acknowledged} onChange={(e)=>setAcknowledged(e.target.checked)}/>I acknowledge the possible duplicate and have reviewed the client.</label>
             {resolve.error && <p role="alert">{resolve.error.message}</p>}
-            <button disabled={!acknowledged || resolve.isPending} onClick={()=>resolve.mutate()}>Release reservation</button>
+            <button disabled={busy || !acknowledged || resolve.isPending} onClick={()=>resolve.mutate()}>Release reservation</button>
           </ActionDialog>}
           {whyOpen && <ActionDialog title="Why chosen" onClose={()=>setWhyOpen(false)}>
             {d.selection ? <>
@@ -820,9 +381,9 @@ function RowGroup(props: {
           <div className="row-actions">
             <button onClick={(event)=>{focusActionTrigger(event);setWhyOpen(true)}}>Why chosen</button>
             {(d.importControl?.outcome==='pending'||d.importControl?.outcome==='cancelled'||publicationReview||!!d.importControl?.heldStages)&&<button onClick={(event)=>{focusActionTrigger(event);setImportReviewOpen(true)}}>Review retained import</button>}
-            {importReviewOpen&&<ActionDialog title="Review retained import" onClose={()=>setImportReviewOpen(false)}><ImportReviewPanel id={d.id}/></ActionDialog>}
+            {importReviewOpen&&<ActionDialog title="Review retained import" onClose={()=>setImportReviewOpen(false)}><ImportReviewPanel id={d.id} readOnly={busy}/></ActionDialog>}
 
-            {(d.parkedReason || d.submissionPhase==='uncertain') && <button onClick={(event)=>{focusActionTrigger(event);setAcknowledged(false);resolve.reset();setReviewOpen(true)}}>Review reservation</button>}
+            {d.reservationActionable && <button disabled={busy} onClick={(event)=>{focusActionTrigger(event);setAcknowledged(false);resolve.reset();setReviewOpen(true)}}>Review reservation</button>}
             {held && d.control?.retry_policy === 'resume_same_job' && <button onClick={(event)=>{focusActionTrigger(event);props.onImport()}} disabled={busy}>Resume same job</button>}
             {canImport && !held && (
               <button onClick={(event)=>{focusActionTrigger(event);props.onImport()}} disabled={busy}>
@@ -875,7 +436,7 @@ function RowGroup(props: {
         <tr className="handoff-row">
           <td></td>
           <td colSpan={6}>
-            <HandoffDetail d={d} />
+            <HandoffDetail d={d} readOnly={busy} />
           </td>
         </tr>
       )}
@@ -925,9 +486,9 @@ export function PublicationList({ d, readOnly = false }: { d: QueueItem; readOnl
     mutationFn: (v: { pub: number; path: string; action: PublicationFileAction }) => resolvePublicationFile(d.id, v.pub, v.path, v.action),
     onSuccess: (_r, v) => {
       const key = `${v.pub}/${v.path}`
-      setDone((prev) => ({ ...prev, [key]: v.action === 'place' ? 'queued for import' : v.action === 'discard' ? 'discarded and removed' : 'kept' }))
+      setDone((prev) => ({ ...prev, [key]: v.action === 'place' ? 'queued for import' : v.action === 'discard' ? 'Marked for cleanup' : 'kept' }))
       setFocusKey(key)
-      void qc.invalidateQueries({ queryKey: ['queue'] })
+      void qc.invalidateQueries({ queryKey: ['activity'] }); void qc.invalidateQueries({ queryKey: ['queue'] })
       void qc.invalidateQueries({ queryKey: ['imports'] })
     },
     onError: (e, v) => {
@@ -993,7 +554,7 @@ function PublicationCleanupLine({ pub }: { pub: QueuePublication }) {
   const [note, setNote] = useState('')
   const act = useMutation({
     mutationFn: (action: 'pause' | 'resume') => setPublicationCleanup(pub.id, action),
-    onSuccess: (_r, action) => { setNote(action === 'pause' ? 'Cleanup paused' : 'Cleanup resumed and queued'); void qc.invalidateQueries({ queryKey: ['queue'] })
+    onSuccess: (_r, action) => { setNote(action === 'pause' ? 'Cleanup paused' : 'Cleanup resumed and queued'); void qc.invalidateQueries({ queryKey: ['activity'] }); void qc.invalidateQueries({ queryKey: ['queue'] })
       void qc.invalidateQueries({ queryKey: ['imports'] }) },
     onError: (e) => setNote(e instanceof Error ? e.message : String(e)),
   })
@@ -1010,12 +571,12 @@ function PublicationCleanupLine({ pub }: { pub: QueuePublication }) {
   )
 }
 
-function HandoffDetail({ d }: { d: QueueItem }) {
+function HandoffDetail({ d, readOnly = false }: { d: QueueItem; readOnly?: boolean }) {
   const steps = d.handoff ?? []
   return (
     <div className="handoff">
-      <PublicationList d={d} />
-      <DeliveryLifecycleForDownload downloadId={d.id} />
+      <PublicationList d={d} readOnly={readOnly} />
+
       {d.error && <p className="error-text"><strong>Latest error:</strong> {d.error}</p>}
       {(d.savePath || d.importPath) && (
         <div className="handoff-paths">
@@ -1053,7 +614,7 @@ function HandoffDetail({ d }: { d: QueueItem }) {
   )
 }
 
-function ManualImportPanel({
+export function ManualImportPanel({
   prefill,
   onDone,
 }: {
@@ -1278,11 +839,13 @@ function ManualImportPanel({
   )
 }
 
-export function ImportReviewPanel({id}:{id:number}) {
+export function ImportReviewPanel({id,readOnly=false}:{id:number;readOnly?:boolean}) {
   const qc=useQueryClient()
-  const [ack,setAck]=useState(false)
+  const [ackSnapshot,setAckSnapshot]=useState<string|null>(null)
   const review=useQuery({queryKey:['import-review',id],queryFn:()=>getImportReview(id),refetchInterval:4000})
-  const action=useMutation({mutationFn:({action,ids}:{action:string;ids:string[]})=>resolveImportReview(id,review.data!.attempt,action,ids,ack),onSuccess:()=>{setAck(false);void qc.invalidateQueries({queryKey:['import-review',id]});void qc.invalidateQueries({queryKey:['queue']});void qc.invalidateQueries({queryKey:['imports']})}})
+  const snapshot=review.data ? JSON.stringify([review.data.attempt,review.data.publications,review.data.stages]) : ''
+  const ack=!!snapshot && ackSnapshot===snapshot
+  const action=useMutation({mutationFn:({action,ids}:{action:string;ids:string[]})=>{if(readOnly||!ack||review.isError||review.data?.writerActive)throw new Error('Review and acknowledge the current exact records before acting.');return resolveImportReview(id,review.data!.attempt,action,ids,ack)},onSuccess:()=>{setAckSnapshot(null);void qc.invalidateQueries({queryKey:['import-review',id]});void qc.invalidateQueries({queryKey:['activity']});void qc.invalidateQueries({queryKey:['queue']});void qc.invalidateQueries({queryKey:['imports']})}})
   const data=review.data
   if(review.isLoading)return <p role="status">Loading durable import custody…</p>
   if(review.error)return <p role="alert">{review.error.message}</p>
@@ -1290,12 +853,12 @@ export function ImportReviewPanel({id}:{id:number}) {
   const pending=data.publications.filter(p=>p.outcome==='pending')
   const retained=data.publications.filter(p=>p.resolution==='retained_for_review'||p.resolution==='operator_adopted')
   const stages=data.stages??[]
-  const disabled=!ack||action.isPending||data.writerActive
+  const disabled=readOnly||!ack||action.isPending||data.writerActive
   return <>
     <p>Attempt {data.attempt.epoch}: {data.attempt.outcome||'active'}. {data.writerActive?'An importer still owns this work. Wait for its actual exit.':'No local importer ticket is active.'}</p>
     <p>These records describe retained custody. They do not prove whether a target was published. Review the source, stage and Library before disposition.</p>
     <ul>{data.publications.filter(p=>p.outcome==='pending'||p.resolution).map(p=><li key={p.id}><strong>{p.outcome} {p.resolution}</strong><p className="path-chip">{p.source} → {p.target}</p></li>)}{stages.map(p=><li key={p.id}>Retained stage <span className="path-chip">{p.stage}</span><p>{p.source} → {p.target}</p></li>)}</ul>
-    <label><input type="checkbox" checked={ack} onChange={e=>setAck(e.target.checked)}/>I have fenced every external writer and reviewed these exact records. For disposition, I have independently handled all listed bytes; for adoption, I have verified the current Library ownership. Curator will retain files and perform no deletion.</label>
+    <label><input type="checkbox" checked={ack} onChange={e=>setAckSnapshot(e.target.checked?snapshot:null)}/>I have fenced every external writer and reviewed these exact records. For disposition, I have independently handled all listed bytes; for adoption, I have verified the current Library ownership. Curator will retain files and perform no deletion.</label>
     {action.error&&<p role="alert">{action.error.message}</p>}
     {action.isSuccess&&<p role="status">Review recorded. Retained filesystem bytes were left in place.</p>}
     {pending.length>0&&<button disabled={disabled} onClick={()=>action.mutate({action:'retain_uncertain',ids:pending.map(p=>p.id)})}>Finalize cancellation and retain uncertain bytes</button>}

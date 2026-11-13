@@ -345,7 +345,7 @@ That reported path must be **openable by Monarr as-is**:
   container at `/pool/downloads/...` → map `/data/completed` →
   `/pool/downloads`.
 
-Activity → **Manual import** starts at the completed folder Monarr sees. A
+System → Storage → **Import files…** starts at the completed folder Monarr sees. A
 remote-path mapping's local prefix is authoritative; without one, Monarr uses
 the parent of a recent completed payload, then `/pool/downloads` as the
 standard-deployment fallback. This is a convenience default, not a second
@@ -382,7 +382,7 @@ payload (nothing importable, every file declined by policy), the retry waits
 about as long as the delivery has already been blocked — up to once an hour —
 and a repeat of the same failure adds no new history entry or notification.
 While Runner's acknowledgement is still pending the 5-minute pace holds.
-**Retry** in Activity or Resolve retries one immediately. The
+**Retry import** in Activity retries one immediately. The
 lifecycle trace shows the cause and next attempt; a rejected or conflicting
 manifest requires review. A missing path in a legacy client row
 still uses the explicit Retry action described above.
@@ -396,19 +396,17 @@ churns through replacements behind your back.
 
 An **importing** row with a live worker shows its bytes, total, rate, elapsed
 time, and current detail. If Monarr stopped after persisting `importing`, the
-worker disappeared but the row survived; that row is labelled **interrupted**
-instead of pretending to be busy forever. **Restart import** queues it again,
+worker disappeared but the row survived; Activity shows **Waiting for automatic
+import retry** instead of pretending it is busy.
 and **Cancel import** stops queued/live work while keeping the source payload
 for a later restart. The normal client reconciliation also restarts an
 interrupted row automatically after Monarr comes back up.
 
-When the failures are no longer useful, **Clear failed** on the Failed
-grouping dismisses all failed Activity rows after confirmation. This cleans
-up the queue view only: it does not delete a payload or library file, change
-a blocklist, or remove anything from a download client. The native app shows
-the same action beneath Activity's filters when Failed is selected. A failed
-Runner row whose salvage publication is still to come is hidden instead of
-deleted, so that publication still has its download when Runner delivers it.
+The consolidated web page offers per-attempt **Remove** for eligible records;
+it does not expose global failed-history deletion. Removal leaves library files
+in place. Protected custody and retained publication obligations still fence
+record deletion. The native app retains its existing Failed filter and bulk
+clear workflow. Automatic history retention remains configured below.
 
 ### Activity retention
 
@@ -759,9 +757,8 @@ Testing a **saved** notifier also records what its plurx supports. A plurx
 with `removed_paths` lets a Re-match drop the old entry when files move
 (Usage → Re-match and Move to…); without it a move scans only the new folder
 and the old entry stays until plurx's next reconcile scan. Nothing is turned
-off either way; the Re-match preview says which applies, and Settings → Dev →
-**Cinema features** shows each Cinema notifier's support and when it was last
-read.
+off either way; the Re-match preview says which applies, and Settings → Connections shows support and its last-read time beside each
+Cinema notifier’s Test button.
 
 **Test** sends plurx the library roots from Settings → Library as
 `probe_paths` and asks which it can see: it proves the URL, the key, the scope
@@ -1001,7 +998,7 @@ Native Runner downloads are imported and cleaned up by publication (pipeline
 contract v2): a file of the publication is removed only when it was placed and
 the library copy still matches its manifest digest, or when it was discarded.
 Every file of an automatic import ends placed or discarded (only a manual or
-approval-held import leaves a file for Resolve). This per-file cleanup always
+approval-held import leaves a file awaiting explicit import approval). This per-file cleanup always
 applies to Runner publications and is not controlled by the legacy **Clean up
 after import** setting used for other clients.
 
@@ -1020,35 +1017,28 @@ After 30 minutes blocked, the trace calls out that the operator should review
 the recorded cause. Explicit deletion is per selected manifest file; it keeps
 unselected siblings and the remaining receipt visible.
 
-## Recovery and Dev settings
+## Runner published-file mapping
 
-Settings → Dev configures automatic recovery status refresh, the exact Runner
-published prefix, Curator's read-only mount and a separate recovery credential.
-Prerequisite status is advisory: it never disables enablement. Settings →
-Recovery is a three-step flow: choose a handoff (a table of what Runner has
-staged, named by the folder it came from, with its state — only a *ready*
-or *claimed* copy can be chosen; a failed staging shows Runner's reason and
-says to cancel it in Runner's Files tab), pick the library title (searchable;
-the copy selector appears only when the title has more than one copy; series
-files take a `season:episodes` mapping, blank lets the filename decide), then
-preview and import. A readiness strip at the top reports whether Runner is
-reachable, whether the recovery mount is present, and whether the credential
-is set; the Preview button says which of those, or which step, is missing
-instead of failing on the click.
+Settings has **General** and **Connections** tabs. Resolve and Dev are removed.
+Under Connections → Download clients, expand the Runner integration to configure
+its exact published prefix, Curator's read-only mount and separate credential.
+Existing saved refresh settings are preserved; the old automatic-refresh toggle
+and staged-recovery wizard are no longer exposed in ordinary navigation.
 
-Runner's full processing tree must not be mounted as recovery input. Mount only
-`/processing/recovery/published` at `/recovery:ro` and keep it outside all library
-and ordinary completed-download roots. The configured prefixes must match.
+Runner's full processing tree must not be mounted as import input. Mount only
+`/processing/recovery/published` at `/recovery:ro`, outside library and ordinary
+completed-download roots. The configured prefixes must match. Ordinary imports
+operate independently of this optional historical staged-copy integration.
+Existing staged-copy APIs and durable receipts are preserved. Their cancellation,
+preview invalidation and writer-quiescence rules still apply; removing a UI does
+not permit deleting a held source. See
+[ADR 0021](adr/0021-file-lifecycle-recovery.md) for the receipt contract.
 
-Recovery activity and copied bytes survive page reloads. Cancellation waits for
-worker quiescence and preserves files already committed to the library. The
-preview names concrete destinations and existing files in the chosen copy.
-Native container recognition is not a full decode/completeness check.
-
-A library, profile, episode or copy edit during copying can invalidate the
-preview. The initial database revision is intentionally global: an unrelated
-library edit can also require another preview. See
-[ADR 0020](adr/0021-file-lifecycle-recovery.md) for the placement and receipt contract.
+System → **Storage** contains disk inventory, scoped manual import, identity-checked
+deletion and conditional historical delivery tools. System → **Diagnostics**
+contains health, connection checks, scheduled tasks and backup controls. Cinema
+capability advice lives beside the corresponding saved notifier's **Test** button
+under Connections; unknown or absent capabilities remain explicit.
 
 ## Series monitoring policy
 
@@ -1127,7 +1117,7 @@ The legacy review cohort keeps its cleanup fence after upgrade. Historical trace
 evidence may permit an acquisition that was still in flight at cutover to finish
 importing, but it grants no automatic deletion authority over old payloads.
 
-Intentional download-storage replacement is reviewed from Activity → Download
+Intentional download-storage replacement is reviewed from System → Storage → Download
 storage. The action compares the exact expected and observed identities and
 previews affected custody. It applies only to the selected root and cannot grant
 old acquisitions cleanup authority on the replacement volume. Ordinary return of

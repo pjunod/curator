@@ -15,14 +15,14 @@ interface Destination {
 }
 
 const PAGES: Destination[] = [
-  { label: 'Import queue', sub: 'page', to: '/imports', keywords: 'imports import queue copying retry failed history files library' },
   { label: 'Library', sub: 'page', to: '/', keywords: 'library home posters movies series books' },
   { label: 'Add media', sub: 'page', to: '/add', keywords: 'add new search tmdb movie series book' },
   { label: 'Discover', sub: 'page', to: '/discover', keywords: 'discover browse trending popular top rated new releases upcoming anticipated box office trakt what to watch' },
   { label: 'Wanted', sub: 'page', to: '/wanted', keywords: 'wanted missing cutoff upgrade backlog' },
   { label: 'Calendar', sub: 'page', to: '/calendar', keywords: 'calendar schedule air dates releases' },
-  { label: 'Activity', sub: 'page', to: '/activity', keywords: 'activity queue downloads history blocklist' },
+  { label: 'Activity', sub: 'page', to: '/activity', keywords: 'activity queue downloads imports copying retry failed history files library blocklist' },
   { label: 'Dashboard', sub: 'page', to: '/dashboard', keywords: 'dashboard status overview stats' },
+  { label: 'Storage tools', sub: 'system', to: '/system', hash: 'storage', keywords: 'storage completed folders disk scan manual import historical delivery files cleanup' },
   { label: 'System', sub: 'page', to: '/system', keywords: 'system tasks backups logs health version' },
   { label: 'Settings', sub: 'page', to: '/settings', keywords: 'settings configuration' },
   { label: 'Access', sub: 'page', to: '/access', keywords: 'access users login security api key mobile pairing qr code' },
@@ -30,7 +30,7 @@ const PAGES: Destination[] = [
   { label: 'Mobile pairing', sub: 'access', to: '/access', hash: 'mobile-pairing', keywords: 'mobile phone tablet app qr code link pair connect' },
   { label: 'API access', sub: 'access', to: '/access', hash: 'api-access', keywords: 'api key integration sonarr radarr reveal credential' },
   { label: 'Metadata provider', sub: 'setting', to: '/settings', hash: 'metadata', keywords: 'tmdb api key metadata provider' },
-  { label: 'Root folders', sub: 'setting', to: '/settings', hash: 'rootfolders', keywords: 'root folders storage library paths disk' },
+  { label: 'Root folders', sub: 'setting', to: '/settings', hash: 'library-folders', keywords: 'root folders storage library paths disk' },
   { label: 'Disk scan', sub: 'setting', to: '/settings', hash: 'scan', keywords: 'scan disk rescan reconcile import existing' },
   { label: 'Indexers', sub: 'setting', to: '/settings', hash: 'indexers', keywords: 'indexers usenet torrent newznab torznab drunkenslug prowlarr jackett' },
   { label: 'Download clients', sub: 'setting', to: '/settings', hash: 'downloadclients', keywords: 'download clients nzbget sabnzbd qbittorrent transmission deluge path mapping' },
@@ -85,7 +85,7 @@ export function GlobalSearch() {
   }
   const goPage = (d: Destination) => {
     close()
-    void navigate({ to: d.to, search: (d.search ?? {}) as never })
+    void navigate({ to: d.to, hash: d.hash ?? '', search: (d.search ?? {}) as never })
     if (d.hash) {
       // Give the settings page a beat to render, then bring the section in.
       setTimeout(() => document.getElementById(d.hash!)?.scrollIntoView({ behavior: 'smooth' }), 150)

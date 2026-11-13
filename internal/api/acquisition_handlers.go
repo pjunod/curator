@@ -899,6 +899,8 @@ func (s *Server) queueItems(ctx context.Context, rows []sqlite.Download) ([]apig
 		phase, parked := apigen.QueueItemSubmissionPhase(d.SubmissionPhase), d.ParkedReason
 		item.SubmissionPhase = &phase
 		item.ParkedReason = &parked
+		reservationActionable := !d.Superseded && !d.CleanupPending && d.State != "imported" && d.State != "importing" && (d.SubmissionPhase == "uncertain" || d.ParkedAt.UnixMilli() > 0)
+		item.ReservationActionable = &reservationActionable
 		s.fillPipelineV2(&item, d, publications[d.ID], publicationFiles)
 		if d.PlanID != 0 {
 			item.PlanId = &d.PlanID

@@ -43,6 +43,8 @@ when one is missing or a relative link in any document does not resolve. Start w
 
 ## Delivery and status ledgers
 
+- [UI_CONSOLIDATION_STATUS.md](UI_CONSOLIDATION_STATUS.md) — implementation, review, validation and delivery of the approved queue/Settings consolidation.
+
 Each records what was built, reviewed and verified for one piece of work.
 
 | File | What it is |

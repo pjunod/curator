@@ -37,7 +37,7 @@ export function ActionDialog({ title, className = '', onClose, children, returnF
 
   return (
     <dialog ref={dialog} className="action-dialog" aria-labelledby={titleId}
-      onCancel={(event) => { event.preventDefault(); onClose() }}>
+      onCancel={(event) => { event.preventDefault(); event.stopPropagation(); onClose() }}>
       <section className={`panel ${className}`}>
         <header className="action-dialog-head">
           <h2 id={titleId} ref={heading} tabIndex={-1}>{title}</h2>

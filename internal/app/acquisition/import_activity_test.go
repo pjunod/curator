@@ -31,3 +31,35 @@ func TestImportActivityClassifiesOwnershipBeforePersistedState(t *testing.T) {
 		})
 	}
 }
+
+func TestActivityCategorySeparatesAutomaticWorkFromOperatorDecisions(t *testing.T) {
+	for _, tc := range []struct {
+		name, worker, want string
+		entry              sqlite.ImportActivityEntry
+	}{
+		{"fetching", "", "progress", sqlite.ImportActivityEntry{ID: 1, State: "downloading"}},
+		{"Runner environmental hold", "", "progress", sqlite.ImportActivityEntry{ID: 1, State: "held"}},
+		{"interrupted import recovers automatically", "", "progress", sqlite.ImportActivityEntry{ID: 1, State: "importing"}},
+		{"approval is explicit", "", "attention", sqlite.ImportActivityEntry{ID: 1, State: "awaiting_import"}},
+		{"writer keeps custody", "running", "progress", sqlite.ImportActivityEntry{ID: 1, State: "failed", Review: true}},
+		{"cancellation waits for writer", "", "progress", sqlite.ImportActivityEntry{ID: 1, CancelOutcome: "pending"}},
+		{"cancellation requires exact disposition", "", "attention", sqlite.ImportActivityEntry{ID: 1, CancelOutcome: "pending", Review: true}},
+		{"cancelled without obligations", "", "history", sqlite.ImportActivityEntry{ID: 1, CancelOutcome: "cancelled"}},
+		{"uncertain submission", "", "attention", sqlite.ImportActivityEntry{ID: 1, ReservationActionable: true, SubmissionPhase: "uncertain"}},
+		{"local import failure", "", "attention", sqlite.ImportActivityEntry{ID: 1, State: "failed", LocalImportFailure: true}},
+		{"local environment retries", "", "progress", sqlite.ImportActivityEntry{ID: 1, State: "failed", LocalImportFailure: true, AutomaticImportRetry: true}},
+		{"publication failure is replaced", "", "history", sqlite.ImportActivityEntry{ID: 1, State: "failed", LocalImportFailure: true, FailedPublication: true}},
+		{"released uncertain reservation", "", "history", sqlite.ImportActivityEntry{ID: 1, SubmissionPhase: "uncertain", Superseded: true}},
+		{"automatic unresolved failure remains terminal", "", "history", sqlite.ImportActivityEntry{ID: 1, State: "failed", Unresolved: true}},
+		{"manual unresolved files", "", "attention", sqlite.ImportActivityEntry{ID: 1, Protocol: "manual", Unresolved: true, ActionableFiles: true}},
+		{"failed attempt with later salvage", "", "history", sqlite.ImportActivityEntry{ID: 1, State: "failed", ImportedPublication: true}},
+		{"pending publication on completed download", "", "progress", sqlite.ImportActivityEntry{ID: 1, State: "imported", PendingPublication: true}},
+		{"historical records are read only", "", "history", sqlite.ImportActivityEntry{ID: -1, State: "import_failed", Unresolved: true, Review: true}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := activityCategory(tc.entry, tc.worker); got != tc.want {
+				t.Fatalf("got %s want %s", got, tc.want)
+			}
+		})
+	}
+}

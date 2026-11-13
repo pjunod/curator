@@ -1,3 +1,4 @@
+import { mockActivity, openAttempt } from '../activity-fixture'
 import { expect, test, type Page } from '@playwright/test'
 
 // Pipeline contract v2 in Activity (IMPL_CURATOR section 5.9): a held row
@@ -39,14 +40,7 @@ const withPublication = {
 }
 
 async function mockQueue(page: Page, resolveCalls: { path: string; action: string }[]) {
-  await page.route('**/api/v1/queue/summary', route => route.fulfill({ json: {
-    total: 4, active: 3, counts: { held: 2, importing: 1, failed: 1, imported: 0 },
-  } }))
-  await page.route('**/api/v1/queue?*', route => {
-    const filter = new URL(route.request().url()).searchParams.get('filter')
-    const rows = filter === 'failed' ? [provisional] : filter === 'active' ? [held, stale, withPublication] : []
-    return route.fulfill({ json: rows })
-  })
+  await mockActivity(page,()=>[held,stale,provisional,withPublication])
   await page.route('**/api/v1/downloads/deliveries?*', route => route.fulfill({ json: { items: [], nextBeforeId: 0 } }))
   await page.route('**/api/v1/queue/954/publications/77/files/resolve', async route => {
     resolveCalls.push(route.request().postDataJSON())
@@ -75,13 +69,15 @@ for (const viewport of [{ name: 'desktop', width: 1280, height: 800 }, { name: '
     test('held rows show the hold and its deadline, stale holds say so, provisional failures say so', async ({ page }) => {
       await mockQueue(page, [])
       await page.goto('/activity')
-      await expect(page.getByText('Held by Runner').first()).toBeVisible()
-      await expect(page.getByText(/Held: waiting for disk · Runner ends it in (1h|2h)/)).toBeVisible()
-      await expect(page.getByText(/Held \(stale\)/).first()).toBeVisible()
+      await openAttempt(page,held.title)
+      await expect(page.getByRole('dialog').getByText(/Held: waiting for disk · Runner ends it in (1h|2h)/)).toBeVisible()
+      await page.keyboard.press('Escape')
+      await openAttempt(page,stale.title)
+      await expect(page.getByRole('dialog').getByText(/Held \(stale\)/)).toBeVisible()
+      await page.keyboard.press('Escape')
 
-      await page.getByTestId('toggle-failed').click()
-      const failedRow = page.getByRole('row').filter({ hasText: provisional.title }).first()
-      await expect(failedRow).toBeVisible()
+      await page.getByRole('button',{name:/^History /}).click()
+      await openAttempt(page,provisional.title)
       await expect(page.getByText(/Provisional: lost — re-opens if Runner reports this transfer/)).toBeVisible()
     })
 
@@ -89,8 +85,7 @@ for (const viewport of [{ name: 'desktop', width: 1280, height: 800 }, { name: '
       const calls: { path: string; action: string }[] = []
       await mockQueue(page, calls)
       await page.goto('/activity')
-      const row = page.getByRole('row').filter({ hasText: withPublication.title }).first()
-      await row.getByRole('button', { name: 'Show handoff' }).click()
+      await openAttempt(page,withPublication.title)
 
       const file = page.locator('.publication-files li[data-file="Published.Show.S01E01.nfo"]')
       await expect(file).toBeVisible()
@@ -104,7 +99,7 @@ for (const viewport of [{ name: 'desktop', width: 1280, height: 800 }, { name: '
       await discard.scrollIntoViewIfNeeded()
       await discard.click()
       const result = file.getByRole('status')
-      await expect(result).toHaveText(/discarded/)
+      await expect(result).toHaveText(/Marked for cleanup/)
       await expectOnScreen(page, result)
       // The decided file's buttons go with its outcome: focus moves to the
       // result, never left on a removed control (CLAUDE.md section 5).

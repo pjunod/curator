@@ -309,7 +309,9 @@ func (e HealthStatus) Valid() bool {
 const (
 	ImportActivityItemCategoryActive    ImportActivityItemCategory = "active"
 	ImportActivityItemCategoryAttention ImportActivityItemCategory = "attention"
+	ImportActivityItemCategoryHistory   ImportActivityItemCategory = "history"
 	ImportActivityItemCategoryImported  ImportActivityItemCategory = "imported"
+	ImportActivityItemCategoryProgress  ImportActivityItemCategory = "progress"
 	ImportActivityItemCategoryQueued    ImportActivityItemCategory = "queued"
 )
 
@@ -320,7 +322,11 @@ func (e ImportActivityItemCategory) Valid() bool {
 		return true
 	case ImportActivityItemCategoryAttention:
 		return true
+	case ImportActivityItemCategoryHistory:
+		return true
 	case ImportActivityItemCategoryImported:
+		return true
+	case ImportActivityItemCategoryProgress:
 		return true
 	case ImportActivityItemCategoryQueued:
 		return true
@@ -1916,6 +1922,45 @@ func (e WantedSearchScopeScope) Valid() bool {
 	case WantedSearchScopeScopeReason:
 		return true
 	case WantedSearchScopeScopeTarget:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ListActivityParamsView.
+const (
+	ListActivityParamsViewAttention ListActivityParamsView = "attention"
+	ListActivityParamsViewHistory   ListActivityParamsView = "history"
+	ListActivityParamsViewProgress  ListActivityParamsView = "progress"
+)
+
+// Valid indicates whether the value is a known member of the ListActivityParamsView enum.
+func (e ListActivityParamsView) Valid() bool {
+	switch e {
+	case ListActivityParamsViewAttention:
+		return true
+	case ListActivityParamsViewHistory:
+		return true
+	case ListActivityParamsViewProgress:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ListActivityParamsScope.
+const (
+	ListActivityParamsScopeAll     ListActivityParamsScope = "all"
+	ListActivityParamsScopeImports ListActivityParamsScope = "imports"
+)
+
+// Valid indicates whether the value is a known member of the ListActivityParamsScope enum.
+func (e ListActivityParamsScope) Valid() bool {
+	switch e {
+	case ListActivityParamsScopeAll:
+		return true
+	case ListActivityParamsScopeImports:
 		return true
 	default:
 		return false
@@ -3693,6 +3738,9 @@ type QueueItem struct {
 	Publications *[]QueuePublication `json:"publications,omitempty"`
 	Quality      string              `json:"quality"`
 
+	// ReservationActionable Whether current custody can be explicitly released after duplicate-risk acknowledgement.
+	ReservationActionable *bool `json:"reservationActionable,omitempty"`
+
 	// RunnerOutcome The recorded terminal - completed | failed | cancelled - or absent while open.
 	RunnerOutcome *string `json:"runnerOutcome,omitempty"`
 
@@ -4943,6 +4991,21 @@ type WantedSearchScopeScope string
 // WantedSearchRunId defines model for WantedSearchRunId.
 type WantedSearchRunId = string
 
+// ListActivityParams defines parameters for ListActivity.
+type ListActivityParams struct {
+	View   *ListActivityParamsView  `form:"view,omitempty" json:"view,omitempty"`
+	Scope  *ListActivityParamsScope `form:"scope,omitempty" json:"scope,omitempty"`
+	Q      *string                  `form:"q,omitempty" json:"q,omitempty"`
+	Limit  *int                     `form:"limit,omitempty" json:"limit,omitempty"`
+	Offset *int                     `form:"offset,omitempty" json:"offset,omitempty"`
+}
+
+// ListActivityParamsView defines parameters for ListActivity.
+type ListActivityParamsView string
+
+// ListActivityParamsScope defines parameters for ListActivity.
+type ListActivityParamsScope string
+
 // LoginJSONBody defines parameters for Login.
 type LoginJSONBody struct {
 	Password string `json:"password"`
@@ -5445,6 +5508,9 @@ type PlurxWebhookJSONRequestBody = PlurxWatchedEvent
 
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
+	// ListActivity Unified download and retained import activity
+	// (GET /activity)
+	ListActivity(w http.ResponseWriter, r *http.Request, params ListActivityParams)
 	// Login Session login for the UI (when auth is enabled)
 	// (POST /auth/login)
 	Login(w http.ResponseWriter, r *http.Request)
@@ -5962,6 +6028,91 @@ type ServerInterfaceWrapper struct {
 }
 
 type MiddlewareFunc func(http.Handler) http.Handler
+
+// ListActivity operation middleware
+func (siw *ServerInterfaceWrapper) ListActivity(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListActivityParams
+
+	// ------------- Optional query parameter "view" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "view", r.URL.Query(), &params.View, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "view"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "view", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "scope" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "scope", r.URL.Query(), &params.Scope, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "scope"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "scope", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "q" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "q", r.URL.Query(), &params.Q, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "q"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "q", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "limit", r.URL.Query(), &params.Limit, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "limit"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "limit", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "offset" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "offset", r.URL.Query(), &params.Offset, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "offset"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "offset", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListActivity(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
 
 // Login operation middleware
 func (siw *ServerInterfaceWrapper) Login(w http.ResponseWriter, r *http.Request) {
@@ -10333,6 +10484,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/queue/finished", wrapper.ClearFinishedQueue)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/queue/failed", wrapper.ClearFailedQueue)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/history", wrapper.ListHistory)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/activity", wrapper.ListActivity)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/imports", wrapper.ListImportActivity)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/queue/{id}", wrapper.RemoveQueueItem)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/queue/{id}", wrapper.GetQueueItem)
