@@ -120,7 +120,11 @@ Proposed capabilities distinguish owner/admin administration, member
 requests, and optional trusted auto-approval. Enforce permissions on the
 server and on native/compat routes, not only by hiding buttons. Each device
 gets revocable credentials with a bounded scope. Plan owner recovery and
-session revocation before exposing invitations.
+session revocation before exposing invitations. Review password hashing,
+login throttling, CSRF defenses, cookie settings and device-token handling
+as part of that contract; the current salted SHA-256 password hash is not a
+password-hardening KDF. Inventory stored service secrets and design encrypted
+storage/key backup before promising encrypted credentials at rest.
 
 Request records need stable media/provider identity, requester, selected
 season/copy/edition, approval policy and timestamps. Admission must be
@@ -279,7 +283,9 @@ and ranking capabilities.
 | Subtitle acquisition | Keep Bazarr compatibility. Consider built-in missing-language visibility first; provider search, matching and synchronization need a separate scope and must not be advertised before enabled. |
 | Music | Defer until product demand justifies artists/albums/tracks, metadata, matching, naming and profiles. The common pipeline helps but does not supply that model for free. |
 | Localization | Extract strings and establish translation/review tooling before choosing languages. Cover errors, pluralization, dates, accessibility and native clients; avoid a headline language count without maintained coverage. |
+| Plugins/extensions | Prefer versioned APIs and webhooks initially. An in-process plugin system needs a trust, compatibility and isolation model; do not load untrusted code into the acquisition process. |
 | MCP/AI connection | Consider a separately authenticated, capability-limited interface after request authorization. Start read-only; writes must use existing request approval, idempotency and audit rules. |
+| Debrid providers | Demand-gated adapter work with explicit provider identity, credential and completion/custody semantics. Existing downloader contracts must not treat a remote listing as a safely imported file. |
 | Phone/TV | Continue the existing native companion. TV browsing/request clients require demand and device-specific accessibility work; playback stays with Cinema/Plex/Jellyfin. |
 | Metadata convenience | Improve provider setup and failure explanations. Keep direct keys/provider choice; an operator-funded mandatory proxy is an ongoing service commitment. |
 | Popularity/social badges | Optional public-launch work. Prefer release/license/security evidence over follower counts. |
