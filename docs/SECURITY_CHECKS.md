@@ -18,8 +18,8 @@ All workflow Action references are pinned to full commit SHAs. Dependabot
 maintains those pins. Checkouts do not retain write credentials. New security
 jobs and all pull-request jobs use GitHub-hosted Ubuntu runners. Main-branch
 builds also use fresh hosted VMs under the [CI policy](CI_POLICY.md). Hosted Go tests use
-eight race shards; lab builds retain one shard. Playwright installation and
-Go cache selection follow the actual runner environment.
+eight race shards. Playwright installs its browser dependencies in each fresh
+job, and Go caching uses the hosted cache service.
 
 Scorecard publication follows the upstream restrictions: a dedicated hosted
 job, only approved Actions, no shell steps, no PR trigger, and write
