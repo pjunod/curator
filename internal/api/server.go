@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"net/netip"
 	"sync"
 	"time"
 
@@ -43,6 +44,8 @@ const ScanTaskName = "library.reconcile"
 
 // Deps is everything the server needs, wired in cmd/monarr.
 type Deps struct {
+	// TrustedProxies may assert HTTPS only through an overwritten X-Forwarded-Proto.
+	TrustedProxies []netip.Prefix
 	// Context owns background work; request cancellation remains separate so
 	// ordinary handlers retain their HTTP shutdown grace.
 	Context     context.Context
@@ -92,7 +95,8 @@ type Deps struct {
 
 // Server implements apigen.ServerInterface.
 type Server struct {
-	deps Deps
+	authMu sync.Mutex
+	deps   Deps
 
 	streamsCtx         context.Context
 	cancelStreams      context.CancelFunc

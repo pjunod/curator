@@ -619,6 +619,7 @@ func serve(ctx context.Context, cfg config.Config, log *slog.Logger, listener ne
 
 	// HTTP.
 	srv := api.New(api.Deps{
+		TrustedProxies:      cfg.TrustedProxies,
 		Maintenance:         admission,
 		Context:             ctx,
 		Log:                 log,
