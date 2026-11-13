@@ -61,5 +61,18 @@
       "sha256": "7afbf6e88718afcc138bad01d6ccc3051dbbc3b2ce9793d8b8a3aeb610969cfc",
       "url": "https://static.crates.io/crates/tokenizers/tokenizers-0.23.2.crate"
     }
-  ]
+  ],
+  "omitted_files": [
+    "gemm-c32-0.19.0/Cargo.lock",
+    "tokenizers-0.23.2/Cargo.lock",
+    "gemm-f64-0.19.0/Cargo.lock",
+    "pulp-0.22.3/Cargo.lock",
+    "gemm-0.19.0/Cargo.lock",
+    "gemm-c64-0.19.0/Cargo.lock",
+    "gemm-common-0.19.0/Cargo.lock",
+    "gemm-f32-0.19.0/Cargo.lock",
+    "gemm-f16-0.19.0/Cargo.lock",
+    "tokenizers-0.22.2/Cargo.lock"
+  ],
+  "omission_reason": "Published library development lockfiles are not used by curator-embed. The root Cargo.lock is the sole supported build graph; keeping unused nested graphs would create misleading dependency inventories."
 }

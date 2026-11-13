@@ -28,7 +28,9 @@ the local compatibility package.
 
 `tools/curator-embed/vendor` contains ten checksum-verified published crates:
 seven GEMM 0.19.0 crates, pulp 0.22.3, and tokenizers 0.22.2 and 0.23.2. Their
-implementation files and licenses are unchanged. Each normalized Cargo manifest
+implementation files and licenses are unchanged. Unused published library
+development lockfiles are omitted and listed in the provenance file; the root
+Cargo.lock is the sole supported build graph. Each normalized Cargo manifest
 changes only the `paste` dependency to package `pastey` 0.2.3, retaining the
 `paste` import alias. Root Cargo patches select these local crates. The lockfile
 contains `pastey` and no longer contains the unmaintained `paste` package
