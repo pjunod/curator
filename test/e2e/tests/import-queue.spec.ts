@@ -25,3 +25,20 @@ for(const width of [1280,390]) {
   await page.setViewportSize({width,height:850});await page.route('**/api/v1/activity?*',route=>route.fulfill({status:503,json:{message:'Local status unavailable'}}));await page.goto('/activity');await expect(page.getByRole('alert')).toContainText('Activity and counts are unavailable');await expect(page.getByText('Nothing in progress',{exact:true})).toHaveCount(0);await expect(page.getByRole('heading',{name:'Download storage',exact:true})).toHaveCount(0);await expect(page.getByRole('button',{name:'Resolve',exact:true})).toHaveCount(0)
  })
 }
+
+for (const width of [1280, 390]) {
+ test(`cleaned import failures show their cause as history at ${width}px`, async ({page}) => {
+  await page.setViewportSize({width,height:850})
+  const row = item(501,'history')
+  Object.assign(row.download,{state:'failed',error:'publication import_failed: nothing importable: runner-swc-s02e08.avi: episode 8 outside planned import allowlist',publications:[{id:882,kind:'completed',state:'removed',path:'/completed/rejected',files:[]}]})
+  await mockActivity(page,()=>[row])
+  await page.goto('/activity')
+  await page.getByRole('button',{name:/^History 1/}).click()
+  const card=page.locator('[data-activity-id="501"]')
+  await expect(card.locator('.activity-attempt-heading .pill')).toHaveText('failed')
+  await expect(card.getByText('nothing importable: runner-swc-s02e08.avi: episode 8 outside planned import allowlist',{exact:true})).toBeInViewport({ratio:1})
+  await expect(card.getByText('Publication files have been removed. This record is retained history.',{exact:true})).toBeInViewport({ratio:1})
+  await expect(card.getByRole('checkbox')).toHaveCount(0)
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(width)
+ })
+}

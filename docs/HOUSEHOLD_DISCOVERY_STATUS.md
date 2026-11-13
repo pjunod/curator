@@ -1,7 +1,8 @@
 # Household discovery — delivery status and review decisions
 
-**Status:** implementing owner discovery · **Updated:** 2026-11-13 ·
-**Baseline:** `4a9c10c` (main 0.50.1, after the 0.50.0 release).
+**Status:** owner implementation reviewed; protected CI pending · **Updated:** 2026-11-13 ·
+**Baseline:** `d2e1594` (main, including the separately completed security fixes).
+**PR:** [#160](https://github.com/pjunod/curator/pull/160).
 
 Companion to the [approved plan](HOUSEHOLD_DISCOVERY_PLAN.md),
 [shared availability decision](adr/0029-shared-availability.md),
@@ -15,10 +16,11 @@ requests using Cinema login. Existing source and runtime storage stay external.
 - [x] Correct independent catalogue/presence/acquisition/request facts, exact
   identities/scope, movie provider path, real phone layouts and Cinema /me route.
 - [x] Owner discovery precedes all household Request controls. Preserve Add/View.
-- [~] Revision-fenced primary-copy presence observations and shared read projection.
-- [~] Kind-aware library-seed recommendations, collections and season review.
-- [~] Web/native parity, unknown/stale/error and viewport/focus behavior.
-- [ ] Complete regressions, final adversarial review, required local and CI gates.
+- [x] Revision-fenced primary-copy presence observations and shared read projection.
+- [x] Kind-aware library-seed recommendations, collections and season review.
+- [x] Web/native parity, unknown/stale/error and viewport/focus behavior.
+- [x] Complete regressions, final adversarial review and required local gates.
+- [ ] Required hosted CI gates and protected merge.
 - [ ] Owner discovery PR, merge and task storage receipt.
 - [ ] Reviewed Cinema issuer/subject/revocation and single-use sign-in handoff.
 - [ ] Household capability boundary and safe web/native DTO/navigation.
@@ -71,7 +73,31 @@ scopes and claim overlapping episode/copy targets atomically with durable
 idempotent admission, including crash and withdrawal/approval races. Browsing
 proof alone is not admission proof. Setup, migration and watch history stay out.
 
-## Verification
+## Review and verification
+
+Astra's final review and static finding rechecks cleared the implementation.
+Corrected findings cover atomic scan races, scope/symlink completeness, retained
+custody, root-ID reuse, native stale callbacks, truthful inventory labels,
+post-provider seed conflicts, credential-scoped provider caching and presence
+validity through descriptive metadata/quality updates. Browser checks also fixed
+grid overflow and user-triggered alternate-name reveal without polling scroll.
+
+Local results on 2026-11-13:
+
+- `make test`: passed after scanner and API-fixture corrections.
+- `make lint`: passed, zero issues.
+- `make test-web`: 172 tests plus seven dependency-patch regressions passed.
+- `make test-mobile`: typecheck and 143 tests passed.
+- `make test-e2e`: all 263 desktop, phone and lifecycle-phone tests passed.
+- `make gen`: API and SQL bindings regenerated; schema 0083 migration/bootstrap,
+  changed-volume, foreign-path and import-race regressions passed.
+
+Final browser captures include real 1280px and 390px discovery, in-viewport Add
+and volume dialogs, acknowledgment gating and return focus. Hosted CI and merge
+are tracked by PR #160; this document does not claim deployment or native device
+execution. Durable logs and captures remain in the owned external-drive receipt.
+
+## Verification policy
 
 Compile/typecheck checks are allowed during implementation. Per CLAUDE.md,
 application unit/browser suites and required CI run after complete implementation

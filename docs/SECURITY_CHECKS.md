@@ -27,6 +27,26 @@ permissions limited to code scanning and its OIDC publication token. It uses
 the default GitHub token, not a personal access token. Publication sends
 public repository security-practice results to OpenSSF.
 
+## Logging boundaries
+
+Go logs use structured `slog` JSON or text handlers. Untrusted titles,
+paths and errors stay in fields; the handlers escape record delimiters.
+`TestUntrustedFieldsCannotForgeLogRecords` verifies CR/LF and terminal
+control characters cannot create a second record while JSON retains the
+original field values. The initial 52 Go log-injection findings on 2026-11-13 flow to these
+structured fields, not a raw line writer. A later scan of main `28e6930`
+adds eight offload/re-acquire findings at the same handler boundary; the
+regression also covers untrusted message text. Changing
+media metadata to satisfy taint analysis would damage user data without
+strengthening that output boundary.
+
+Unknown compatibility requests log parameter names, never query values,
+because a supported `apikey` query parameter carries a credential.
+`TestUnknownRouteLogsParameterNamesWithoutCredentials` covers this boundary.
+The fake Arr end-to-end fixture emits JSON for client-controlled diagnostics;
+its IMDb assertion anchors both scheme and host so an unrelated URL cannot
+pass the external-link check.
+
 ## Reading badges and results
 
 The workflow badges link to `pjunod/curator`. Coverage remains the committed
@@ -45,6 +65,27 @@ CodeQL can successfully complete while reporting vulnerabilities. Read
 Security > Code scanning, triage the findings, and configure required checks
 or code-scanning merge protection deliberately. Do not interpret a green
 Security workflow badge as an assertion of zero vulnerabilities.
+
+## Library path containment
+
+Adoption and manual entry accept an existing direct child of a configured
+library root. Parent spelling alone does not prove containment: a child
+symlink can resolve outside the root. Both the parent and selected directory
+are now resolved before acceptance, and the directory must remain strictly
+inside the resolved root. Configured root aliases and links to directories
+within the root remain usable; stored paths retain the registered root's
+spelling so scans claim the same folders. Queued adoption repeats this check
+because its earlier scan is only an observation.
+
+`TestAdoptionAndManualEntryRejectSymlinkOutsideRoot` reproduces the prior
+bypass. `TestRootContainmentPreservesRootAliasesAndInternalLinks` and
+`TestQueuedAdoptionRevalidatesRootContainment` cover aliases, internal links,
+prefix siblings and stale scans. This validation does not promise a sandbox
+against a local actor replacing filesystem components concurrently. Library
+root configuration remains an operator capability; arbitrary configured roots
+are supported. Acquisition has separate manifest, custody, mount identity,
+placement and recovery rules described by the [pipeline contract](PIPELINE_CONTRACT.md).
+
 
 ## Repository settings and remaining work
 
