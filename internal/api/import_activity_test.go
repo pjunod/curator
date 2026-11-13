@@ -246,7 +246,11 @@ func TestCancelledImportHistoryPreservesAuditAndUnresolvedCustody(t *testing.T) 
 			case "reservation":
 				exec(`UPDATE downloads SET submission_phase='uncertain' WHERE id=?`, id)
 			case "stale_generation":
-				exec(`UPDATE downloads SET generation_key='new-generation' WHERE id=?`, id)
+				// Real download generations are immutable. A historical control must
+				// not override the current attempt's held stage.
+				exec(`UPDATE import_attempt_controls SET outcome='',requested_at=NULL,finalized_at=NULL WHERE download_id=?`, id)
+				exec(`INSERT INTO import_attempt_controls(download_id,generation_key,outcome,requested_at,finalized_at) VALUES(?,'old-generation','cancelled',1,2)`, id)
+				exec(`UPDATE import_attempt_stages SET state='held' WHERE download_id=?`, id)
 			}
 			// Snapshot every persisted table touched by the fixture before GETs.
 			snapshot := func() string {
