@@ -55,6 +55,10 @@ Dependabot security updates, secret scanning and push protection should be
 enabled so the policy and dependency checks have working services behind
 them. These were enabled on 2026-11-13. The repository default workflow token
 was changed to read-only and Actions may no longer approve pull requests.
+Workflow approval is required for all external contributors. Review workflow
+edits before approving runs: runner selection in a PR-editable workflow does
+not prevent a malicious workflow from targeting an available lab runner.
+Stronger runner-group isolation remains a separate infrastructure decision.
 
 No branch protection or repository ruleset existed at inspection. This change
 does not impose required approvals on a solo maintainer. Select required CI
