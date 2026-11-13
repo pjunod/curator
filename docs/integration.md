@@ -471,7 +471,9 @@ The historical batch-approval and storage-identity fences still apply.
   `discarded{superseded|duplicate|rejected}`. Both outcomes still require
   the source's size and SHA-256 to match its manifest before deletion;
   a matching old library copy cannot authorise deleting replacement source
-  bytes. Legacy manifests with no digest use their recorded size and stable
+  bytes. This adds one source verification read at cleanup: placement plus
+  cleanup reads about one payload for a hardlink, two for a copied placement.
+  Legacy manifests with no digest use their recorded size and stable
   file identity, and that exception is logged. `unresolved` and `pending`
   files are never touched.
 - **Re-checked before every unlink**, in order: the generation (the

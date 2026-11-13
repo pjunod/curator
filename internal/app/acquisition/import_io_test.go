@@ -37,19 +37,19 @@ func processIO(t *testing.T) (read, written int64) {
 	return read, written
 }
 
-// Acceptance (Fable plan, Curator A): an import of a Runner publication,
-// cleanup included, reads each payload byte at most once — a copy reads it
-// once and writes it once, a same-filesystem placement is a hard link and
-// reads nothing. Field data before this: 12 bytes read per byte written.
-func TestPublicationImportReadsEachByteOnce(t *testing.T) {
+// Placement copies each source byte once (or hardlinks without reading it).
+// Cleanup independently verifies the current source against its manifest,
+// adding one required read before unlink. Bound the complete lifecycle to
+// those reads so another redundant full-payload read remains a regression.
+func TestPublicationImportAndCleanupBoundTheirPayloadReads(t *testing.T) {
 	body := string(bytes.Repeat([]byte("monarr-io-"), (16<<20)/10))
 	size := int64(len(body))
 	for _, tc := range []struct {
 		name    string
 		library func(t *testing.T) string // "" keeps the fixture's library
 	}{
-		{name: "same filesystem: a link, nothing read"},
-		{name: "another filesystem: one read, one write", library: func(t *testing.T) string {
+		{name: "same filesystem: a link and one cleanup verification"},
+		{name: "another filesystem: copy plus cleanup verification", library: func(t *testing.T) string {
 			dir, err := os.MkdirTemp("/dev/shm", "monarr-library-")
 			if err != nil {
 				t.Skip("no /dev/shm to put the library on another filesystem")
@@ -94,16 +94,16 @@ func TestPublicationImportReadsEachByteOnce(t *testing.T) {
 				if !os.SameFile(source, lib) {
 					t.Fatal("a same-filesystem placement copied instead of linking")
 				}
-				if read > slack {
-					t.Fatalf("a linked import read %d bytes, want ~0", read)
+				if read < size || read > size*11/10+slack {
+					t.Fatalf("a linked import and cleanup read %d bytes, want one %d-byte verification plus overhead", read, size)
 				}
 				return
 			}
 			if written < size {
 				t.Fatalf("wrote %d bytes, want the %d-byte copy", written, size)
 			}
-			if read > size*11/10+slack {
-				t.Fatalf("read %d bytes for a %d-byte import (%.2f:1), want at most 1.1:1", read, size, float64(read)/float64(size))
+			if read < size*2 || read > size*21/10+slack {
+				t.Fatalf("read %d bytes for a %d-byte import and cleanup (%.2f:1), want copy plus verification at most 2.1:1", read, size, float64(read)/float64(size))
 			}
 		})
 	}
