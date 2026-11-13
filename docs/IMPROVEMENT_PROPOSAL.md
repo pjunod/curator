@@ -68,6 +68,8 @@ against the latest pipeline contract and recent queue changes. Removing a
 screen does not authorize removing a necessary backend invariant.
 
 Astra supplies an evidence-backed keep/merge/remove/move recommendation.
+See the [consolidation proposal and renderings](UI_CONSOLIDATION_PROPOSAL.md)
+and [Astra review](UI_CONSOLIDATION_ASTRA_REVIEW.md).
 Show desktop and phone renderings, including ordinary progress, an actionable
 exception and a clean empty state, before changing application UI code.
 The owner must see and approve the proposed UI before implementation. Apply
