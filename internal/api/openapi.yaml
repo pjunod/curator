@@ -6908,7 +6908,7 @@ components:
           type: string
           description: live | historical. historical publications are never deleted automatically until their review batch is approved.
         path: { type: string }
-        manifestSource: { type: string, description: "file | v1_record | none" }
+        manifestSource: { type: string, description: "file | none (v1_record on a removed publication until migration 0079 normalises it)" }
         error: { type: string }
         held:
           type: boolean

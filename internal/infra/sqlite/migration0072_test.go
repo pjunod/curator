@@ -90,8 +90,9 @@ func TestMigration0072(t *testing.T) {
 	_ = fk.Close()
 
 	// The rest reads through the current query layer, which needs the
-	// whole schema (0073 adds columns it scans).
-	if err := db.Migrate(ctx); err != nil {
+	// whole schema (0073, 0076 and 0077 change what it scans); stopping
+	// before 0079 keeps these v1_record rows as 0072 wrote them.
+	if err := goose.UpToContext(ctx, db.W, "migrations", retireV1RecordVersion-1); err != nil {
 		t.Fatal(err)
 	}
 	get := func(id int64) Download {

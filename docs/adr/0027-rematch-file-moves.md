@@ -1,6 +1,6 @@
 # ADR 0027 — Re-match: move files to the right item or episode
 
-**Status:** accepted (curator 0.47.0) · **Date:** 2026-11-11 ·
+**Status:** accepted (curator 0.48.0) · **Date:** 2026-11-11 ·
 **Contract:** [amendment: removed paths](../PIPELINE_CONTRACT.md#44-moves--removed_paths-gone-operation-keyed-sub-deliveries-amendment-2026-11-11) (sections 4.4, 5.3, 6)
 
 **Read with:** [ADR 0020](0020-one-folder-one-item.md) (one folder, one item;
@@ -117,7 +117,7 @@ file between items, and Cinema cannot be told that a path went away
   Cinema capability as advisory.
 - The migration adds `media_items.origin`, rebuilds `replacement_operations`
   for the `rematch` intent, and adds `rematch_operations` (next free number
-  after every branch's claim: 0079).
+  after every branch's claim: 0080, with 0081 for dismissed rows).
 - A rename is atomic per file, not per operation; a crash mid-operation
   leaves some files moved and the journal resumes the rest.
 - ADR 0020's "existing folders are never renamed" holds: the vacated folder
@@ -136,7 +136,7 @@ file between items, and Cinema cannot be told that a path went away
   the per-answer check is the backstop. Cinema deletes an item whose last
   file is gone.
 
-## Implementation notes (0.47.0)
+## Implementation notes (0.48.0)
 
 - **Same kind only.** A movie's files move to a movie, a series' to a
   series, a book's to an edition of the same medium.

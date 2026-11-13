@@ -1,5 +1,185 @@
 # Monarr — Project Status
 
+## Pipeline contract v2, M6b (curator part): the v1 strings and the v1 manifest source go — 2026-11-08 · v0.47.0 (rebased onto main 53fc80c, 2026-11-12)
+
+**Status:** branch `claude/pipeline-v2-m6b-curator`, rebased onto `origin/main`
+53fc80c (v0.46.2: salvage retries leave the row's state alone, finished
+attempts do not hold the overdue exit, superseded stages settle themselves
+— with backup handling — at startup, retry and the hourly pass; v0.46.1:
+item status, the overdue queue-only cancel, the
+payload-mismatch continue for series/movie packs and audiobook
+all-or-nothing, plus overdue exits, adoption, completed-root guard, record
+closure and historical approvals, all kept) · owner: Claude (Sonnet builder) · pushed,
+**no PR** (by instruction), not reviewed, not merged, not deployed.
+
+**Merge after runner M6b is deployed** (Curator now reads only typed
+terminals). Migration 0079 refuses nothing: live `v1_record` publications
+(v0.45.x stamps nearly every new one) keep their stored manifest and drain;
+only removed ones are normalised.
+
+**Migration renumbered 2026-11-12:** main took `0077_unwedge_legacy_imports.sql`, so
+this branch's `retire_v1_record` became **0078**, and is now **0079**
+(`migration0079.go`, `retireV1RecordVersion = 79`) because main's
+`claude/item-status` took `0078_item_status.sql`. VERSION is 0.47.0 (minor
+over main's 0.46.1).
+
+Manifest source check after the rebase: `verifyBookParts` (audiobook
+all-or-nothing) and the placement digest checks read the expected digests
+and sizes the publication import binds from `publicationManifest` — the
+directory's `.runner-manifest.json` through `readManifestFile`, or a stored
+body when the file is gone — so every check agrees on one manifest. The v0.46.2 superseded-stage sweep
+works on placement records and library stages only and reads no manifest,
+so it is unaffected by the manifest-source change.
+
+Built (plan M6 curator item 1, IMPL_CURATOR section 9):
+
+- **Typed terminals only.** `translate()`, the history reader and
+  `ppFinishedFact` no longer read `pp_status` / `final_dir`;
+  `ports.LegacyTerminal`, `LegacyPPStatus`, `LegacyFinalDir` and
+  `ManifestFromRunnerFiles` are deleted. A row with no `outcome`, or a
+  completed one with no publication, makes no fact. A `/deliveries` row with
+  no `kind` is a completed terminal.
+- **`v1_record` manifest source retired.** `publicationManifest` reads only
+  `.runner-manifest.json`; `attachManifest`, `AttachPublicationManifest` and
+  the delivery lookup port are gone. Migration 0079 normalises removed
+  `v1_record` rows to `none`; it refuses nothing (Fable review, 2026-11-12:
+  the refusal would have stopped Curator on the live DB). A publication with a
+  stored body falls back to it; one whose manifest an import or adoption
+  reads from its file records it as `file`.
+- Docs: integration.md, ADR 0026 addendum decisions 31-33, OpenAPI `manifestSource`.
+
+Fable review of this branch (2026-11-12), all fixed:
+
+| # | Finding | Fix |
+|---|---|---|
+| 1 B | The retire migration refused on the live DB (v0.45.x stamps v1_record on nearly every publication) | Refusal and preflight removed; v1 writers and the GetDelivery lookup stay gone; `publicationManifest` falls back to a stored body; only removed rows normalised. Test at goose 77 with a live imported v1_record row whose manifest file is on disk |
+| 2 B | Feed publications had source `none`, disabling the cleanup's missing-manifest guard; inventory called every live one manifestless | The import (at seeding) and adoption record the file's manifest as `file`; the "no manifest… delete it from here" label is for record-only publications only |
+| 3 | Legacy receipt status without a typed reason mapped to io, unblamed | Prefix map (health, fetch, par, unpack, script: blamed); otherwise io, not blamed |
+| 4 | Stale docs | integration.md upgrade section, usage.md upgrade note, ADR 0026 decisions 31–32, these STATUS notes |
+| 5 | No live-row migration test | `TestMigration0079MigratesLiveV1RecordRowsAndNormalisesOnlyRemoved` |
+| 6 | Manifest reads followed symlinks, unbounded | `readManifestFile`: `openDeliveryFileNoSymlinks`, 8 MiB cap, in `publicationManifest` and adoption |
+
+**Not done, and why (decision for Paul):** `runner_delivery_receipts` and
+`runner_delivery_file_outcomes` are **not dropped**. The receipt lifecycle
+(`/downloads/deliveries*`, `delivery_lifecycle.go`, `delivery_receipts.go`,
+the Activity delivery panel, joined timeline, Completed folders, four e2e
+specs) still reads them: about 1,900 non-test Go lines plus UI. The plan has
+no replacement for that screen, so dropping the tables would retire it
+silently. The `manifest_source` CHECK is also left as is (narrowing it means
+rebuilding `publications` with its cascading FKs).
+
+Verified (fast lane only): see the builder report. `make test`, `make
+test-web`, `make test-e2e` and the coverage floor were not run, by
+instruction.
+
+## A salvage import never strands its download in downloaded — 2026-11-12 · v0.46.2
+
+**Status:** built, targeted tests and lint run (see the commit report) · branch
+`claude/overdue-downloaded` from `origin/main` d3b351a · no PR · not merged,
+not deployed.
+
+**Field case:** download 1196 (Strangers.With.Candy.S01E10, Runner job 2799 on
+nuc4) sat in `downloaded` about 7 h past its deadline. Runner had failed it
+`failed{publish}` with salvage pending, and its receipt still says so. The job
+is no longer in Runner's queue. The salvage publication (737) was imported
+and removed, and Cinema shows it. Runner job 2710 is a different transfer (the
+season pack), and no Curator row points at it. Nothing waits on Runner here.
+
+**Root cause:** (1) The salvage import hit a sealed plan from epoch 0 and
+reopened the attempt with `BeginImportRetry`. Its `writeImportState` moved the
+Runner-failed row to `downloaded` (a 6 h deadline). The salvage then imported
+in epoch 1, but only a completed publication sets the row's state (contract
+3.1), so nothing ever moved the row again. (2) The overdue exit's
+`publicationOwnsExit` counted epoch 0's stage as open custody. That stage is
+still `prepared` because placement reconciliation leaves it for the title's
+next import or for disposal. So every poll skipped the row before it reached
+the "Runner's terminal is recorded" branch.
+
+**Fix (5d173a7):** `publicationOwnsExit` no longer lets a finished attempt
+(outcome completed) own the exit.
+
+**Review findings (Fable review of 5d173a7, 4 blocking), fixed:**
+1. A salvage arriving after an imported completed publication still wedged
+   the row, and the overdue exit then failed it. Now the kind of the
+   publication being imported decides: a salvage retry
+   (`BeginSalvageImportRetry`, publications.go enqueue and the sealed-plan
+   path) records only the step.
+2. The leftover `prepared` stage was a permanent manual item. A stage of an
+   epoch below the attempt's current one (or of a completed attempt) with no
+   authorization is swept: `reconcilePlacement` and every import retry remove
+   only its `.monarr-stage-` temporary and mark it `rolled_back`. The target is
+   never touched (not `rollbackPlacement`).
+   **Decision (the coordinator's, 2026-11-12, for Paul's review): a stage
+   whose prior-file backup is on disk.** Its backup is settled under the
+   title's import lock by reconciliation and by a new hourly pass
+   (`sweepAllSupersededStages` in `CleanupPayloads`). Reconciliation alone
+   runs only at start, so without the hourly pass "the next pass" would not be
+   bounded. Import retries leave these stages to those two passes.
+   - **An existing target is never overwritten** (revised 2026-11-12). Our
+     backup is removed whether the target verifies as the committed import,
+     holds the prior file, or holds bytes nothing recorded. In the last case
+     someone else put a file there, and it is kept and logged.
+   - **Target missing:** a backup whose bytes are the recorded prior file is
+     renamed back onto the target. Any other backup is a Curator-created file
+     in a closed scope under the title's lock, so it is removed and logged.
+   - **Nothing provable** (an I/O error, or a target directory whose identity
+     is not the recorded one): left for the next hourly pass. That is bounded
+     and is not a terminal state.
+   - In every case the temporary is removed and the stage is marked
+     `rolled_back`. Nothing waits on a person.
+3. The salvage guard swallowed `completeImportAttempt`, so a successful manual
+   import left the row failed. The guard now applies only to the
+   `import_queued` and `import_cancelled` writes. `imported` is always written.
+4. `ImportNow` moved a failed row with no publications to `downloaded`. An
+   `import_queued` or `import_cancelled` step on a terminal row (failed,
+   imported, notified) or a salvage-only row now writes only the step. The
+   import moves the state itself (importing, then imported or failed).
+
+Tests: `TestOverdueDownloadedSalvageRowTakesRunnersTerminal` (1196's exact
+shape), `TestOverdueSalvageImportRetryKeepsTheRowFailed`,
+`TestSalvageAfterAnImportedCompletedKeepsTheRowImported`,
+`TestSupersededStageIsSweptWithoutTouchingTheLibrary`,
+`TestCompletingAnImportOfASalvageOnlyRowWritesImported`,
+`TestImportNowOnAFailedRowKeepsItFailedUntilTheImportMovesIt`,
+`TestSupersededStageBackupRemovedWhenTheUpgradeLanded`,
+`TestSupersededStageBackupNeverOverwritesAnExistingTarget`,
+`TestSupersededStageBackupLeftWhenNothingCanBeProven`. After a
+deploy, 1196 exits at the next poll as `failed{publish}` (blameless). Its
+re-grab is filtered because the episode is in the library. Its epoch 0 stage
+is swept.
+
+## Overdue exit cancels a still-listed stalled job in Runner — 2026-11-12 · v0.46.1
+
+**Status:** built, targeted tests and lint run (see the commit report) · branch
+`claude/overdue-cancel` from `origin/main` 9a5821d · no PR · not merged.
+`overdue.go` gains `cancelOverdueInRunner`; `ports.QueueCanceller` and
+nzbd `CancelQueued`; tests `TestOverdueStalledJobGetsOneBestEffortRunnerCancel`,
+`TestOverdueCancelOfAJobThatFinishedMeanwhileKeepsItsHistory`,
+`TestCancelQueuedNeverTouchesHistory`; `docs/usage.md`
+(pipeline:overdue). Decision recorded under the v0.45.2 section below.
+
+**CI race-shard failure fixed (2026-11-12):** `TestEndedPackRecordsWhatItPlaced`
+failed ~10% of runs (with or without `-race`) on main since 0.45.x. Root
+cause, not a cleanup race: `importDownloadFiles` returned at the first file
+that did not match its manifest, so the outcome depended on manifest order
+(the fixture builds it from a Go map; forcing E02 first fails 5/5). The good
+file after a mismatch was never placed, and the mismatched file never got an
+attempt outcome, so the attempt's plan stayed pending ("import selection
+changed; explicit retry required"). The cleanup runs only after the import
+completes. Fix: a payload mismatch is that file's outcome (recorded in the
+attempt), the rest of the payload is still tried, then the publication ends
+keeping what was placed. Regression test
+`TestPayloadMismatchListedFirstStillPlacesTheRest` (fails without the fix).
+`go test -race -run '^TestEndedPackRecordsWhatItPlaced$' -count=50`: 0 failures.
+Review of 8d42eec: a multipart audiobook is all or nothing —
+`verifyBookParts` checks every manifest-constrained part (size and digest)
+before any part is placed; one mismatch places nothing, the publication ends
+import_failed and the book is grabbed again (blameless; still wanted). Test
+`TestAudiobookWithACorruptPartPlacesNothing`. Residual: a part that changes
+on disk between that check and its own copy still stops the import after the
+parts before it (the old behaviour for books). `docs/usage.md` documents the
+partial-keep rule for series/movie packs.
+
 ## Overdue downloads exit on their own; sealed plans do not wedge imports — 2026-11-12 · v0.45.2
 
 **Status:** built, targeted tests and lint pass, pushed · owner: Claude Opus
@@ -68,9 +248,14 @@ Adversarial review of this branch — 6 findings, all fixed:
 Expected-on-deploy timings shift accordingly: rows absent from Runner's
 queue fail after 10 minutes of successful polls; #733 after 15 minutes.
 
-Decision for Paul to review: a job Runner still lists but has not moved for
-24 h past its deadline is failed and re-grabbed; Curator does not cancel it
-in Runner (a late completion there is superseded by the precedence rule).
+Decision (Paul, v0.46.1): a job Runner still lists that has not moved for
+24 h past its deadline, or that Runner holds blocked past its own retry
+deadline, is failed and re-grabbed, and then Curator makes one best-effort
+cancel of it in Runner (a queue-only `CancelQueued`, never the history-delete
+fallback of Remove; 404 is ignored; data kept; 3 s timeout; fired in the
+background after the loop, once the fail is committed). A failed cancel is logged at WARN and
+ignored, never retried; the fail and regrab do not depend on it. No cancel
+for a job absent from Runner's queue or one with a Runner terminal.
 
 Validation (after the review fixes): gofmt, `go vet`, pinned golangci-lint
 on `internal/app/acquisition/...` and `internal/infra/sqlite/...` 0 issues;
@@ -87,7 +272,7 @@ not merged, not deployed.
 **Merge order (decision, 2026-11-12, coordinator):** this branch ships
 before M6b and owns migration **0077** (`0077_unwedge_legacy_imports.sql`),
 so it applies on main by itself. `claude/pipeline-v2-m6b-curator`'s
-`0077_retire_v1_record.sql` must be renumbered (0078) when M6b is rebased.
+`0077_retire_v1_record.sql` must be renumbered (done on rebase: now `0079_retire_v1_record.sql`, after main's `0078_item_status.sql`).
 The M6b build was never deployed, so no live database is at goose 77 from
 it (nuc3 is at 76); this branch's 0077 is the first 0077 any database sees.
 Older notes in the v0.44.0 section that call M6b's migration 0077 are
@@ -271,7 +456,7 @@ Decisions taken without Paul (for review):
 - Migration 0076 also requeues "cannot determine episodes" failures (E makes
   most of them importable; one that still is not fails again once, normally).
 - Migration number 0076: `claude/pipeline-v2-m6b-curator` had claimed 0075;
-  it is now 0077 on that branch (`d61ea59`), so the two merge in either order. *(Superseded 2026-11-12: `claude/unwedge-legacy` owns 0077 and ships first; M6b renumbers to 0078 when rebased.)*
+  it is now 0077 on that branch (`d61ea59`), so the two merge in either order. *(Superseded 2026-11-12: `claude/unwedge-legacy` owns 0077 and ships first; M6b renumbered to 0079 on rebase, after main's `0078_item_status.sql`.)*
 - Manual and approval-held imports keep the files the person did not select
   as `unresolved` (the person asked to decide); every automatic path decides.
 
@@ -294,7 +479,7 @@ the last token only; 10 placed-subtitle lookup is a byte range on an
 indexed column; 11 0076 retires (discarded{superseded}) wedged rows whose
 want a later import satisfied and releases the custody rows of requeued
 ones; 12 `claude/pipeline-v2-m6b-curator` renumbered its migration to 0077
-(`d61ea59`). *(Superseded 2026-11-12: `claude/unwedge-legacy` owns 0077 and ships first; M6b renumbers to 0078 when rebased.)*
+(`d61ea59`). *(Superseded 2026-11-12: `claude/unwedge-legacy` owns 0077 and ships first; M6b renumbered to 0079 on rebase, after main's `0078_item_status.sql`.)*
 
 Adversarial re-review r2 (Fable, of `032720d`) — 8 findings, all fixed:
 1 environmental stops (blocked/full library, storage identity, a manifest
@@ -323,7 +508,7 @@ the configured completed roots is a hold. Web: `tsc --noEmit` and
 
 **Merge order: merge `claude/no-wedge` first, then
 `claude/pipeline-v2-m6b-curator`** (rebased onto this branch; its migration
-is 0077 after this branch's 0076). *(Superseded 2026-11-12: `claude/unwedge-legacy` owns 0077 and ships first; M6b renumbers to 0078 when rebased.)*
+is 0077 after this branch's 0076). *(Superseded 2026-11-12: `claude/unwedge-legacy` owns 0077 and ships first; M6b renumbered to 0079 on rebase, after main's `0078_item_status.sql`.)*
 
 **Deploy order:** a same-filesystem placement hard-links Runner's file,
 which moves its ctime: deploy this curator only after the Runner build whose

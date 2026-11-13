@@ -1564,6 +1564,35 @@ decides nothing. A download whose client was deleted or disabled is ended the
 same way by the hourly cleanup. The reason is on the row (`overdue: …`) and
 in History. An unreachable Runner decides nothing.
 
+When the failed job is still listed in Runner's queue (stalled, or blocked
+past Runner's own deadline), Curator also asks Runner once to cancel it
+(v0.46.1), in the background after the failure is recorded. The cancel only
+removes the job from Runner's queue: a job that has finished meanwhile is left
+alone, and its history record is never deleted. It is best effort: if it
+fails or times out (3 seconds) it is logged and ignored, never retried, and
+the failure and re-grab stand. A job absent from Runner's queue is not
+cancelled.
+
+A salvage import never changes its download's state (v0.46.2). When Runner
+fails a job but offers what it could save (salvage), the download stays
+failed while Curator imports the salvage, including on a retry, and a salvage
+arriving after the download was imported leaves it imported; History and the
+handoff trace show the import. Retrying the import of a failed download
+records the retry and leaves the download failed until the import itself
+moves it (importing, then imported or failed). Until v0.46.2 a retry put the
+download back in *downloaded*, where a salvage import left it past its
+deadline for good. A download stranded that way now takes Runner's recorded
+failure at its deadline. A finished import never holds a download's exit
+open, and the half-written stage an earlier import attempt left behind
+(`.monarr-stage-…` next to the library file) is removed automatically. If
+that attempt had already moved the previous library file aside
+(`.monarr-prior-…`), the hourly cleanup removes that copy when a library
+file is in place. It never overwrites a file at that path, including one you
+put there yourself. When the library file is missing, it puts the previous
+file back if the copy matches it, and otherwise removes the copy. If the
+folder cannot be checked (for example, an unmounted share), it waits for the
+next pass.
+
 ### Held, provisional and publications in Activity
 
 - **Held by Runner** is its own section. The row says what Runner is waiting
@@ -1604,8 +1633,14 @@ in History. An unreachable Runner decides nothing.
   Nothing an automatic import does is left *unresolved*: a file the importer
   cannot place (an episode it cannot identify, a file of another attempt) is
   discarded with its reason, and a publication that gave the library nothing
-  ends *import failed* with its want grabbed again. A file that does not
-  match Runner's manifest (missing, resized, different bytes) does the same.
+  ends *import failed* with its want grabbed again. A file that is missing
+  or resized against Runner's manifest ends the publication before anything
+  is placed. A file whose bytes differ from the manifest is discarded with
+  that reason while the rest of a season pack (or a movie's other files) is
+  still imported; the publication then ends, keeping what it placed, and the
+  rest of the want is grabbed again (v0.46.1). A multipart audiobook is
+  placed whole or not at all: every part is checked against the manifest
+  first, and one bad part places nothing and grabs the book again.
   Publications an earlier version failed with a reason this one no longer
   has (*N file(s) unresolved: …*, *holds no importable media*) are decided
   again by v0.45.1: imported again with fresh limits when their want is still
@@ -1767,6 +1802,15 @@ versions. Overlapping episode assignments or destinations require a new preview.
 Recognized obfuscated video keeps its source filename and receives a native
 container extension at its library destination. Cancellation rolls back any
 published placement that has not yet committed library metadata.
+
+## Upgrading past the v1 record (v0.47.0)
+
+Curator reads only Runner's typed terminal and each publication's
+`.runner-manifest.json`; the old `pp_status` / `final_dir` strings and the
+`v1_record` manifest source are no longer written. Upgrade Runner first.
+Publications an earlier version recorded with Runner's v1 record keep it and
+finish importing and cleaning up on their own; nothing needs resolving
+first.
 
 ## Runner holds and retained recovery plans
 

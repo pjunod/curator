@@ -414,9 +414,6 @@ func (s *Service) recordTerminalWith(ctx context.Context, dl sqlite.Download, cf
 	}
 	// The import worker and the grab worker are kicked only after commit;
 	// both are idempotent on the rows the transaction wrote.
-	if pub != nil && pub.Manifest != nil {
-		s.attachManifest(ctx, dl.ID, ports.MapRemotePath(cfg.PathMappings, pub.Path), *pub.Manifest)
-	}
 	if !won {
 		if pub != nil {
 			s.kickPublicationImports(ctx, dl, cfg)
@@ -477,34 +474,8 @@ func (s *Service) replacementDue(dl sqlite.Download, t ports.RunnerTerminal, pro
 func (s *Service) publicationWrite(downloadID int64, mapped string, pub ports.RunnerPublication, kind string) *sqlite.PublicationWrite {
 	w := &sqlite.PublicationWrite{DownloadID: downloadID, Generation: pub.Generation, Kind: kind, Path: mapped,
 		RemotePath: pub.Path, CrossVolume: pub.CrossVolume, Cohort: "live"}
-	if pub.Manifest != nil {
-		if raw, err := json.Marshal(pub.Manifest); err == nil {
-			w.ManifestJSON, w.Source = string(raw), pub.Manifest.Source
-		}
-	}
-	if w.Source == "" {
-		w.Source = "none"
-	}
+	w.Source = "none"
 	return w
-}
-
-// attachManifest fills in a v1 record for a publication that had none.
-func (s *Service) attachManifest(ctx context.Context, downloadID int64, mapped string, m ports.Manifest) {
-	p, ok, err := s.db.PublicationByPath(ctx, mapped)
-	if err != nil || !ok || p.DownloadID != downloadID || p.ManifestSource != "none" {
-		return
-	}
-	raw, err := json.Marshal(m)
-	if err != nil {
-		return
-	}
-	source := m.Source
-	if source == "" {
-		source = "v1_record"
-	}
-	if err := s.db.AttachPublicationManifest(ctx, p.ID, string(raw), source, m.CrossVolume); err != nil {
-		s.log.Warn("publication manifest could not be attached", "publication", p.ID, "err", err)
-	}
 }
 
 // recordSalvage is publication_ready: a salvage publication of a failed job.
@@ -523,9 +494,6 @@ func (s *Service) recordSalvage(ctx context.Context, dl sqlite.Download, cfg por
 	if existing, ok, err := s.db.PublicationByPath(ctx, mapped); err != nil {
 		return err
 	} else if ok {
-		if pub.Manifest != nil {
-			s.attachManifest(ctx, dl.ID, mapped, *pub.Manifest)
-		}
 		if existing.DownloadID == dl.ID {
 			s.kickPublicationImports(ctx, dl, cfg)
 		}
@@ -853,13 +821,14 @@ func admissionTerminal(adm ports.RequestAdmission) (ports.RunnerTerminal, bool) 
 				t.BlamesRelease = *adm.BlamesRelease
 			}
 		} else {
-			t = ports.LegacyTerminal(adm.TerminalOutcome, false)
-			if t.Outcome != ports.OutcomeFailed {
-				t = ports.RunnerTerminal{Outcome: ports.OutcomeFailed, Reason: ports.ReasonIO, Message: adm.TerminalOutcome}
-			}
-			if adm.FailureCause != "" {
-				t.Message = strings.TrimSpace(t.Message + ": " + adm.FailureCause)
-			}
+			// A receipt from a Runner older than the typed fields names its
+			// failure only as a legacy status: its prefix gives the reason,
+			// and a release that died on health, fetch, repair, unpack or its
+			// script is blamed (blocklisted) as before. An unrecognised one
+			// is io: not blamed, its want grabbed again.
+			reason, stage, blamed := legacyReceiptReason(adm.TerminalOutcome)
+			t = ports.RunnerTerminal{Outcome: ports.OutcomeFailed, Reason: reason, Stage: stage, BlamesRelease: blamed,
+				Message: strings.Join(nonEmpty(adm.TerminalOutcome, adm.FailureCause), ": ")}
 		}
 		if t.Salvage == "" {
 			t.Salvage = "none"
@@ -1059,4 +1028,33 @@ func (s *Service) handleRunnerEvent(ctx context.Context, cfg ports.ClientConfig,
 // published automatically.
 func operatorCancelled(dl *sqlite.Download) bool {
 	return strings.HasPrefix(dl.ParkedReason, "operator cancellation") || dl.RunnerOutcome == ports.OutcomeCancelled
+}
+
+// nonEmpty drops the empty strings, so a joined message has no dangling ": ".
+func nonEmpty(parts ...string) []string {
+	var out []string
+	for _, p := range parts {
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// legacyReceiptReason maps a legacy receipt status (a Runner older than the
+// typed failure fields) to its reason, stage and whether the release is to
+// blame, by prefix.
+func legacyReceiptReason(status string) (reason, stage string, blamed bool) {
+	for _, m := range []struct{ prefix, reason, stage string }{
+		{"FAILURE/HEALTH", ports.ReasonHealth, "health"},
+		{"FAILURE/FETCH", ports.ReasonFetch, "fetch"},
+		{"PAR_FAILURE", ports.ReasonPar, "par_repair"},
+		{"UNPACK_FAILURE", ports.ReasonUnpack, "unpack"},
+		{"SCRIPT_FAILURE", ports.ReasonScript, "script"},
+	} {
+		if strings.HasPrefix(status, m.prefix) {
+			return m.reason, m.stage, true
+		}
+	}
+	return ports.ReasonIO, "", false
 }

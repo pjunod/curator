@@ -10,6 +10,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/pjunod/monarr/internal/ports"
 )
 
 // Rooted, symlink-refusing file access shared by the publication cleanup,
@@ -125,4 +127,39 @@ func syncRootDirectory(root *os.Root, path string) error {
 		return err
 	}
 	return f.Close()
+}
+
+// maxManifestBytes caps a .runner-manifest.json read: a manifest lists file
+// paths, sizes and digests, so even a large season pack is a few hundred KB.
+const maxManifestBytes = 8 << 20
+
+// errManifestTooLarge is a manifest file past maxManifestBytes.
+var errManifestTooLarge = errors.New("manifest file is larger than the read cap")
+
+// readManifestFile reads dir's .runner-manifest.json without following a
+// symlink at the file (openDeliveryFileNoSymlinks) and with a size cap. A
+// missing file or directory is os.ErrNotExist.
+func readManifestFile(dir string) ([]byte, error) {
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = root.Close() }()
+	parent, file, info, err := openDeliveryFileNoSymlinks(root, ports.ManifestFileName)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = parent.Close() }()
+	defer func() { _ = file.Close() }()
+	if info.Size() > maxManifestBytes {
+		return nil, fmt.Errorf("%w: %d bytes", errManifestTooLarge, info.Size())
+	}
+	raw, err := io.ReadAll(io.LimitReader(file, maxManifestBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(raw) > maxManifestBytes {
+		return nil, fmt.Errorf("%w: grew past %d bytes while read", errManifestTooLarge, maxManifestBytes)
+	}
+	return raw, nil
 }

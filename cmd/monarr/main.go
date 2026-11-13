@@ -12,6 +12,7 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -111,6 +112,18 @@ func main() {
 }
 
 func run(ctx context.Context, cfg config.Config, log *slog.Logger) error {
+	return serve(ctx, cfg, log, nil)
+}
+
+// serve is run on a listener the caller already bound (nil: bind cfg.Addr()
+// when serving starts). A test hands it a listener bound to port 0, so it
+// never picks a free port, releases it, and races another process for it.
+func serve(ctx context.Context, cfg config.Config, log *slog.Logger, listener net.Listener) error {
+	if listener != nil {
+		if addr, ok := listener.Addr().(*net.TCPAddr); ok {
+			cfg.Port = addr.Port
+		}
+	}
 	ctx, cancelRun := context.WithCancel(ctx)
 	defer log.Info("goodbye") // registered first: registered cleanup precedes it.
 	defer cancelRun()
@@ -659,8 +672,16 @@ func run(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 
 	errCh := make(chan error, 1)
 	go func() {
-		log.Info("http listening", "addr", cfg.Addr())
-		if err := httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		ln := listener
+		if ln == nil {
+			var err error
+			if ln, err = net.Listen("tcp", cfg.Addr()); err != nil {
+				errCh <- err
+				return
+			}
+		}
+		log.Info("http listening", "addr", ln.Addr().String())
+		if err := httpServer.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errCh <- err
 		}
 	}()

@@ -43,7 +43,9 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-          cache: true
+          # Self-hosted runners keep ~/go/pkg/mod between jobs; restoring the
+          # tarball over it hits thousands of "File exists" and can time a job out.
+          cache: ${{ vars.CI_RUNNER_MODE == 'github' }}
       - name: Run exact test partition with race and coverage
         run: python3 scripts/ci-go-shard.py run --count "${{ strategy.job-total }}" --index "${{ matrix.shard }}" --root "go-coverage-${{ matrix.shard }}"
       - name: Preserve shard evidence
@@ -95,7 +97,9 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-          cache: true
+          # Self-hosted runners keep ~/go/pkg/mod between jobs; restoring the
+          # tarball over it hits thousands of "File exists" and can time a job out.
+          cache: ${{ vars.CI_RUNNER_MODE == 'github' }}
 
       - name: Verify generated code is up to date (sqlc + oapi-codegen)
         run: |
@@ -194,7 +198,9 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-          cache: true
+          # Self-hosted runners keep ~/go/pkg/mod between jobs; restoring the
+          # tarball over it hits thousands of "File exists" and can time a job out.
+          cache: ${{ vars.CI_RUNNER_MODE == 'github' }}
 
       - name: Build binary with embedded UI
         run: make build

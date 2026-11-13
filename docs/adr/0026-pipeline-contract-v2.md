@@ -58,8 +58,8 @@ grabs to exactly those seams.
    move it; a changed incarnation or a pruned gap looks every outstanding
    transfer up by its token.
 7. **Publications are the import unit.** One per Runner generation, imported
-   through the v1 adapter (`.runner-manifest.json`, else the v1 delivery
-   record) with a per-file outcome (`placed`, `discarded{superseded,
+   through their `.runner-manifest.json` (until M6b also through the v1
+   adapter: Runner's v1 delivery record) with a per-file outcome (`placed`, `discarded{superseded,
    duplicate, rejected}`, `unresolved`). Destination conflicts are decided by
    `wantable_attempts` — the download Curator last chose for each wantable,
    recorded by triggers on every insert — never by generation ids or time;
@@ -207,7 +207,12 @@ restart, and publications left in Resolve for their subtitles and `.nfo`s.
     sweep never discards pending media. Only typed payload failures
     (`errPlacementConflict`) count toward the attempt cap, spaced on
     `backoff.Retry` (`retry_at`); a malformed manifest (`errManifestInvalid`)
-    or a file that does not match it ends at once. Ending
+    or a file missing or resized against it ends at once; a file whose bytes
+    do not match it (found while it is placed) is that file's outcome, the
+    rest of the payload is still imported, and the publication then ends
+    (v0.46.1: the result no longer depends on manifest order). A multipart
+    audiobook is the exception: all its parts are verified against the
+    manifest before any is placed, and one mismatch places none. Ending
     (`endPublication`) records the publication's committed placements through
     `completePublication` (history, outbox to Cinema), discards the rest and
     writes a replacement grab the worker filters by what is still wanted. A
@@ -281,4 +286,34 @@ restart, and publications left in Resolve for their subtitles and `.nfo`s.
     files are deleted only after its review batch is approved. A different
     payload published at a removed publication's path is a new publication,
     never attached to the removed one.
+
+## Addendum — M6b, the v1 strings and the v1 manifest source go (v0.47.0)
+
+31. **Curator reads Runner's typed terminal only.** The `translate()` branch for
+    `job_pp_finished`, the ordered history reader and the receipt lookup no
+    longer fall back to the v1 `pp_status` / `final_dir` strings
+    (`ports.LegacyTerminal` is deleted); a row without `outcome`, or a
+    completed row without its publication, is not a terminal. A request
+    receipt from a Runner older than the typed failure fields maps its legacy
+    status by prefix (`FAILURE/HEALTH`, `FAILURE/FETCH`, `PAR_FAILURE`,
+    `UNPACK_FAILURE`, `SCRIPT_FAILURE`: that reason, the release blamed);
+    anything else is `io`, not blamed. A `/deliveries`
+    row with no `kind` is a completed terminal.
+32. **Nothing writes the `v1_record` manifest source any more.** A
+    publication's manifest is its `.runner-manifest.json`, read without
+    following a symlink and size-capped; when an import or adoption reads it
+    onto a publication that had none, the body is stored with
+    `manifest_source = 'file'`, so the per-file cleanup keeps requiring the
+    file while files remain. Curator no longer asks Runner for a v1 delivery
+    record. A publication that already carries a stored body (`v1_record`,
+    written by v0.45.x and earlier) falls back to it when its file is gone and
+    drains through its import and cleanup. Migration 0079 (after 0077,
+    unwedge, and 0078, item status) refuses nothing; it normalises only `removed` `v1_record` rows
+    to `none`.
+33. **Not done in M6b**: dropping `runner_delivery_receipts` and
+    `runner_delivery_file_outcomes`. The receipts lifecycle
+    (`/downloads/deliveries*`, the Activity delivery panel, the joined
+    timeline, Completed folders) still reads them and has no replacement in
+    the plan; dropping the tables is a decision to retire that screen, left
+    for Paul.
 

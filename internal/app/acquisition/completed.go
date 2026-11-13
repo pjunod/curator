@@ -574,7 +574,10 @@ func classifyPublication(e *CompletedEntry, pub sqlite.Publication) {
 	switch {
 	case pub.Cohort == "historical" && pub.CleanupApprovedAt.IsZero():
 		e.Status, e.Reason = "retained", "Historical publication (frozen at the pipeline v2 cutover); nothing deletes it until its review batch is approved"
-	case pub.ManifestSource == "none":
+	case pub.ManifestSource == "none" && pub.DownloadID == 0:
+		// A record-only publication (no download row, no manifest): nothing
+		// can clean it file by file. A live publication whose manifest is
+		// read from its directory at import is not one of these.
 		e.Status, e.Reason = "retained", "Approved for cleanup, but it has no manifest to remove it file by file; delete it from here"
 	case pub.State == "discovered" || pub.State == "importing":
 		e.Status, e.Reason = "awaiting_import", "Publication is waiting for import"

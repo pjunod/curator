@@ -515,6 +515,16 @@ func (s *Service) importDownloadFiles(ctx context.Context, dl sqlite.Download, s
 
 	if audioPlan != nil {
 		scope.PublishedDigests = map[string]string{}
+		// A multipart audiobook is one edition: all of it or none of it.
+		// Every part a manifest constrains is verified against it before
+		// any part is placed (one read each, on top of the copy's own
+		// stream check), so a corrupt part places nothing: the publication
+		// ends import_failed and the book is grabbed again, instead of the
+		// surviving parts landing as an incomplete book that no longer
+		// looks wanted.
+		if result, err := s.verifyBookParts(ctx, videos, bookQualities); err != nil {
+			return result, err
+		}
 	}
 	// The borrow below asks how many media files the whole payload holds,
 	// not how many were selected: choosing one of two anonymous files in a
@@ -529,6 +539,7 @@ func (s *Service) importDownloadFiles(ctx context.Context, dl sqlite.Download, s
 	}
 	grabbedSeason, grabbedEpisodes := grabbedEpisodeTargets(dl.WantableIDs, item.ID)
 	result := ImportResult{Files: make([]FileOutcome, 0, len(videos))}
+	var mismatch error // the first file that did not match its manifest
 	for fileIndex, src := range videos {
 		if err := ctx.Err(); err != nil {
 			return result, err
@@ -628,6 +639,25 @@ func (s *Service) importDownloadFiles(ctx context.Context, dl sqlite.Download, s
 			if errors.Is(err, context.Canceled) || errors.Is(err, ErrImportControl) {
 				return result, err
 			}
+			if errors.Is(err, errPayloadMismatch) && audioPlan == nil {
+				// This file is not the bytes Runner's manifest names: its own
+				// outcome, recorded in the attempt like any other refusal,
+				// and the rest of the payload is still tried. Stopping here
+				// made the result depend on manifest order: a mismatch listed
+				// first left every good file after it unplaced (and the
+				// attempt's plan unsettled, so it refused every retry). The
+				// publication still ends below, keeping what was placed.
+				outcome.Reason = err.Error()
+				if e := s.recordSkippedImportFile(ctx, src); e != nil {
+					return result, e
+				}
+				if mismatch == nil {
+					mismatch = err
+				}
+				s.log.Warn("import: file does not match its manifest; the rest of the payload is still imported", "file", outcome.Name, "reason", err)
+				result.Files = append(result.Files, outcome)
+				continue
+			}
 			if !retryableIO(err) && !isImportPolicyRefusal(err) {
 				return result, err
 			}
@@ -696,6 +726,11 @@ func (s *Service) importDownloadFiles(ctx context.Context, dl sqlite.Download, s
 			"remaining", len(videos)-result.Imported)
 		return result, fmt.Errorf("%w: %d of %d files placed from %s before it stopped: %v",
 			ErrImportBlocked, result.Imported, len(videos), savePath, result.Blocked)
+	}
+	if mismatch != nil {
+		// Every file was tried; the publication cannot be imported whole.
+		// The caller ends it, recording what this attempt placed.
+		return result, mismatch
 	}
 	if result.Imported == 0 {
 		// Say WHY, per file. This is the message a user actually reads when
@@ -1634,4 +1669,59 @@ func (c *countingReader) Read(p []byte) (int, error) {
 		}
 	}
 	return n, err
+}
+
+// verifyBookParts checks every part of a multipart audiobook that an
+// accepted manifest constrains against its digest and size before any part
+// is placed. A mismatch records every part as skipped (the attempt's plan
+// settles) and returns errPayloadMismatch, so nothing is placed and the
+// publication ends with its want grabbed again.
+func (s *Service) verifyBookParts(ctx context.Context, parts []string, qualities []quality.Quality) (ImportResult, error) {
+	expected, _ := ctx.Value(expectedSourceDigestsKey{}).(map[string]string)
+	sizes, _ := ctx.Value(expectedSourceSizesKey{}).(map[string]int64)
+	if len(expected) == 0 {
+		return ImportResult{}, nil
+	}
+	var bad error
+	for _, src := range parts {
+		want := expected[filepath.Clean(src)]
+		if want == "" {
+			continue
+		}
+		if err := rejectSymlinks(src, false); err != nil {
+			return ImportResult{}, err
+		}
+		if n, known := sizes[filepath.Clean(src)]; known {
+			if info, err := os.Lstat(src); err != nil {
+				return ImportResult{}, err
+			} else if info.Size() != n {
+				bad = fmt.Errorf("%w: %s is %d bytes, the manifest says %d", errPayloadMismatch, src, info.Size(), n)
+				break
+			}
+		}
+		sum, _, err := fileDigest(ctx, src)
+		if err != nil {
+			return ImportResult{}, err
+		}
+		if sum != want {
+			bad = fmt.Errorf("%w: source file no longer matches its accepted delivery manifest: %s", errPayloadMismatch, src)
+			break
+		}
+	}
+	if bad == nil {
+		return ImportResult{}, nil
+	}
+	result := ImportResult{Files: make([]FileOutcome, 0, len(parts))}
+	for i, src := range parts {
+		o := FileOutcome{Name: filepath.Base(src), SourcePath: src, Reason: "the audiobook is placed whole or not at all: " + bad.Error()}
+		if i < len(qualities) {
+			o.Quality = qualities[i].Display()
+		}
+		if e := s.recordSkippedImportFile(ctx, src); e != nil {
+			return result, e
+		}
+		result.Files = append(result.Files, o)
+	}
+	s.log.Warn("import: an audiobook part does not match its manifest; nothing of it is placed", "reason", bad)
+	return result, bad
 }

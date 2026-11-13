@@ -1,6 +1,6 @@
 # ADR 0028 — Offload: free the space, keep the title
 
-**Status:** accepted (curator 0.48.0) · **Date:** 2026-11-12 ·
+**Status:** accepted (curator 0.49.0) · **Date:** 2026-11-12 ·
 **Contract:** [offload](../PIPELINE_CONTRACT.md#45-offload--offloaded_paths-the-offload-event-and-get-it-back) (sections 4.5 to 4.7, 6)
 
 **Read with:** [ADR 0027](0027-rematch-file-moves.md) (the operation, worker,
@@ -18,7 +18,7 @@ on purpose, keep everything else, and let me get it back".
 ## Decision
 
 1. **One stored state, `offloaded_at`.** On the rows that hold `monitored`:
-   the movie item, a season and an episode (migration `0081`). It is its own
+   the movie item, a season and an episode (migration `0082`). It is its own
    state, not just "unmonitored": it is folded into the single `Mon`
    computation (`targetCopy`, `wantedEpisodes`, `buildWanted`, season
    discovery), so no search, RSS pass, upgrade or season pack ever grabs it.
