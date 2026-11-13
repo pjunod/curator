@@ -138,7 +138,7 @@ client as `http://qbittorrent:8080` (same compose network) or `http://<host>:808
 
 ### From source
 
-Requires Go ≥ 1.25 and Node ≥ 20.
+Requires Go ≥ 1.26.11 and Node ≥ 20.
 
 ```sh
 make build          # builds web UI, embeds it, compiles ./bin/monarr

@@ -18,6 +18,7 @@ when one is missing or a relative link in any document does not resolve. Start w
 | [architecture.md](architecture.md) | Architecture blueprint. |
 | [deployment.md](deployment.md) | Storage, floating nodes and HA. |
 | [SECURITY_CHECKS.md](SECURITY_CHECKS.md) | Security workflows, badge interpretation and remaining repository controls. |
+| [SECURITY_TRIAGE.md](SECURITY_TRIAGE.md) | 2026-11-13 security finding triage, boundary evidence, dependency remediation and owner decisions. |
 
 ## Decisions
 
