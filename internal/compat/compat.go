@@ -17,6 +17,7 @@ import (
 	"log/slog"
 	"net/http"
 	"regexp"
+	"sort"
 	"strings"
 	"sync/atomic"
 
@@ -149,9 +150,17 @@ func (p *Personality) auth(next http.Handler) http.Handler {
 
 func (p *Personality) logUnknown(w http.ResponseWriter, r *http.Request) {
 	n := p.unknown.Add(1)
+	// Query values may contain API keys or other credentials. Parameter names
+	// are sufficient to diagnose an unsupported consumer request.
+	query := r.URL.Query()
+	keys := make([]string, 0, len(query))
+	for key := range query {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
 	p.deps.Log.Warn("compat: unknown v3 request — extend the shim if a consumer needs it",
 		"personality", p.app, "method", r.Method, "path", r.URL.Path,
-		"query", r.URL.RawQuery, "totalUnknown", n)
+		"queryKeys", keys, "totalUnknown", n)
 	writeJSON(w, http.StatusNotFound, map[string]string{"message": "not implemented by monarr compat shim"})
 }
 

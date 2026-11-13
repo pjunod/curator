@@ -67,7 +67,7 @@ test('detail page shows labeled facts: location chip, profile, rating, links', a
   // External links open in a new tab.
   const imdb = page.getByRole('link', { name: /IMDb/ })
   await expect(imdb).toHaveAttribute('target', '_blank')
-  await expect(imdb).toHaveAttribute('href', /imdb\.com\/title\/tt6010001/)
+  await expect(imdb).toHaveAttribute('href', /^https:\/\/(?:www\.)?imdb\.com\/title\/tt6010001\/?$/)
 })
 
 test('interactive search titles link to the indexer details page', async ({ page, request }) => {
