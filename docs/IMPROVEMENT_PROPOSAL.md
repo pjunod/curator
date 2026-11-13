@@ -7,7 +7,8 @@
 Companion to the [usage guide](usage.md) (existing behavior),
 [architecture](architecture.md) (original design), and
 [security checks in PR #118](https://github.com/pjunod/curator/pull/118/files) (the separate OpenSSF implementation).
-This proposal covers the HolyArrs comparison and the resulting product,
+The [pipeline contract](PIPELINE_CONTRACT.md) remains authoritative over the
+original architecture blueprint. This proposal covers the HolyArrs comparison and the resulting product,
 architecture, packaging and release suggestions. It authorizes no product
 implementation. Build one approved milestone at a time; re-verify source
 interfaces and the baseline before editing code.

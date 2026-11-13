@@ -28,6 +28,7 @@ when one is missing or a relative link in any document does not resolve. Start w
 
 | File | What it is |
 |---|---|
+| [IMPROVEMENT_PROPOSAL.md](IMPROVEMENT_PROPOSAL.md) | Product and architecture follow-ups to the HolyArrs comparison: priorities, proposed contracts and acceptance criteria. |
 | [plan-calendar.md](plan-calendar.md) | Calendar rebuilt: a readable month and a rich agenda. |
 | [plan-discover.md](plan-discover.md) | Discover, a browse surface inside Monarr. |
 | [plan-quality-truth.md](plan-quality-truth.md) | Quality truth: implementation plan. |
