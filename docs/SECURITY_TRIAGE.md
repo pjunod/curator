@@ -36,6 +36,24 @@ secret logging and vulnerable dependencies precede certification or historical
 score changes. This work does not implement the product/architecture proposal
 in [PR #119](https://github.com/pjunod/curator/pull/119).
 
+
+### Recheck after upstream main changed
+
+A later complete re-query on 2026-11-13, after unrelated offload work was
+merged into main `28e6930`, returned **166 open default-branch alerts**:
+150 CodeQL and 16 Scorecard. The additions are eight Go log dataflows at
+four offload/re-acquire logging sites and Scorecard's `CITests` history
+finding (6 of 7 merged PRs checked by CI). The new message and attribute
+flows reach the same escaping `slog` handlers; PR #148's regression now
+also verifies untrusted message text. No new path or password-storage
+root cause appeared in that scan.
+
+The CI-history finding describes a previously merged changeset without
+checks. It cannot be repaired by rerunning a different commit or claiming
+approval afterward; future required checks and CI-skip policy remain an
+explicit owner decision. All original snapshot assessments remain available
+above, rather than rewriting history to make the totals look unchanged.
+
 ## Paths — operator capabilities and mutation authority differ
 
 All 83 Go path results were grouped by sink: **6 library**, **75 acquisition
