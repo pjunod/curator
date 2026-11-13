@@ -1512,6 +1512,17 @@ func (s *Service) sweepSupersededStage(ctx context.Context, p sqlite.Placement, 
 	if p.Temporary == "" || p.Temporary == p.Target || !strings.HasPrefix(filepath.Base(p.Temporary), ".monarr-stage-") {
 		return false
 	}
+	// Cancellation alone retains custody. A fully superseded publication can
+	// retire its scratch, but only the recorded object on the recorded mount.
+	if a, err := s.db.GetImportAttempt(ctx, p.DownloadID, p.SourceGeneration); err != nil {
+		return false
+	} else if a.Outcome == "cancelled" {
+		if !s.removeCancelledSupersededScratch(ctx, p) {
+			return false
+		}
+		ok, err := s.db.RollBackSupersededStage(context.WithoutCancel(ctx), p.ID)
+		return err == nil && ok
+	}
 	if p.Backup != "" {
 		_, err := os.Lstat(p.Backup)
 		switch {
@@ -1533,6 +1544,52 @@ func (s *Service) sweepSupersededStage(ctx context.Context, p sqlite.Placement, 
 	}
 	s.log.Info("superseded import stage removed", "placement", p.ID, "download", p.DownloadID)
 	return true
+}
+
+var supersededScratchSyncDirectory = syncRootDirectory
+
+// removeCancelledSupersededScratch never changes a target or prior-file
+// backup. Missing/changed identity evidence waits for a later pass.
+func (s *Service) removeCancelledSupersededScratch(ctx context.Context, p sqlite.Placement) bool {
+	parent := filepath.Dir(p.Target)
+	if ctx.Err() != nil || p.Temporary != filepath.Join(parent, ".monarr-stage-"+p.ID) || p.StorageIdentity == "" || p.TargetParentIdentity == "" {
+		return false
+	}
+	storage, identity, err := placementParentIdentity(p.Target)
+	if err != nil || storage != p.StorageIdentity || identity != p.TargetParentIdentity {
+		return false
+	}
+	if p.Backup != "" {
+		if _, err := os.Lstat(p.Backup); !errors.Is(err, os.ErrNotExist) {
+			return false
+		}
+	}
+	root, err := os.OpenRoot(parent)
+	if err != nil {
+		return false
+	}
+	defer func() { _ = root.Close() }()
+	bound, err := root.Stat(".")
+	if err != nil || deliveryDirectoryObjectIdentity(bound) != p.TargetParentIdentity {
+		return false
+	}
+	named, err := os.Lstat(parent)
+	if err != nil || !os.SameFile(bound, named) {
+		return false
+	}
+	name := filepath.Base(p.Temporary)
+	info, err := root.Lstat(name)
+	if errors.Is(err, os.ErrNotExist) {
+		// Retry the durability step even when an earlier unlink succeeded.
+		return supersededScratchSyncDirectory(root, ".") == nil
+	}
+	if err != nil || !info.Mode().IsRegular() || p.TemporaryObjectIdentity == "" || deliveryFileStableIdentity(info) != p.TemporaryObjectIdentity {
+		return false
+	}
+	if err := root.Remove(name); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return false
+	}
+	return supersededScratchSyncDirectory(root, ".") == nil
 }
 
 // settleSupersededBackup decides a superseded stage's prior-file backup, a

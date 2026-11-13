@@ -1284,7 +1284,13 @@ post from that indexer) is never chosen again.
 
 Use **History** for completed attempts and terminal transfer failures. Local
 placement failures that require a decision appear under **Needs attention**;
-environmental retries remain **In progress**. Search and pagination cover the
+environmental retries remain **In progress**. Rejected publications are cleaned
+automatically and remain in **History** after their files are removed. The row
+shows the original failure reason; retained history does not mean retained files.
+Cancelled scratch stages whose entire publication was removed as superseded are
+retired automatically at startup and by the hourly cleanup pass, when their
+recorded storage and object identities still match and no publication
+authorization or prior-file backup holds them. Search and pagination cover the
 complete selected view. **Details → Remove** removes an eligible download
 record without deleting library files; durable custody checks can refuse it.
 Bulk history deletion is not offered on the consolidated web page.
