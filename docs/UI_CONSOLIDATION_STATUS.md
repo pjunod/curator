@@ -1,6 +1,6 @@
 # UI consolidation — implementation and verification
 
-**Status:** reviewed; browser gate running · **Updated:** 2026-11-13 · **Baseline:** `6219581`
+**Status:** reviewed; final gates on [PR #153](https://github.com/pjunod/curator/pull/153) · **Updated:** 2026-11-13 · **Baseline:** `6219581`
 
 Companion to the [usage guide](usage.md), [settings reference](settings.md)
 and [pipeline contract](PIPELINE_CONTRACT.md). The owner approved the rendered
@@ -63,3 +63,11 @@ The first 260-case browser run found stale test navigation/selectors and nested
 Escape bubbling through Activity details. The shared dialog now stops cancel
 propagation, reviewed by Astra. A complete browser rerun covers that fix and the
 new storage navigation. Final browser and CI results remain pending.
+
+PR #153 is the canonical live CI and merge record. The storage remount regression
+now uses More → System → Storage and matches the System link including its
+health indicator. Its focused rerun passed. The nested-dialog propagation fix
+and explicit Safari opener focus were independently rechecked by Astra. Local
+browser rerun and required current-head CI must pass before merge; no branch
+protection bypass is authorized. Task cleanup is recorded through the registered
+external-drive storage lifecycle after merge.
