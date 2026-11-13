@@ -232,6 +232,8 @@ the cost is one `coverage: NN.N%` commit from CI whenever the number actually ch
 
 ## Documentation
 
+- **[Product and architecture improvement proposal](docs/IMPROVEMENT_PROPOSAL.md)** — prioritized follow-ups to the HolyArrs comparison; proposed scope, contracts and acceptance checks.
+
 - **[Storage association fix](docs/STORAGE_ASSOCIATION_STATUS.md)** — shared-folder receipt diagnosis, review, validation and delivery.
 - **[Season acquisition status](docs/SEASON_ACQUISITION_STATUS.md)** — build progress, review, checks, and merge.
 - **[Season acquisition contract](docs/plan-season-acquisition.md)** and **[review record](docs/plan-season-acquisition-review.md)** — authoritative round-3 policy and execution requirements.
