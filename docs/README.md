@@ -146,3 +146,5 @@ Superseded plans and proposals, kept as history. Each starts with a one-line poi
 ## Renderings
 
 - [renderings/](renderings/) — HTML and PNG captures the proposals and previews were reviewed against (`download-lifecycle/`, `media-preview/`).
+
+- [Dependency patches](SECURITY_DEPENDENCY_PATCHES.md) — provenance, validation and removal of local upstream fixes.

@@ -1,0 +1,65 @@
+{
+  "change": "Only Cargo.toml changes: retain the paste import alias and use maintained pastey 0.2.3. Published implementation files are unchanged.",
+  "crates": [
+    {
+      "name": "gemm",
+      "version": "0.19.0",
+      "sha256": "aa0673db364b12263d103b68337a68fbecc541d6f6b61ba72fe438654709eacb",
+      "url": "https://static.crates.io/crates/gemm/gemm-0.19.0.crate"
+    },
+    {
+      "name": "gemm-common",
+      "version": "0.19.0",
+      "sha256": "88027625910cc9b1085aaaa1c4bc46bb3a36aad323452b33c25b5e4e7c8e2a3e",
+      "url": "https://static.crates.io/crates/gemm-common/gemm-common-0.19.0.crate"
+    },
+    {
+      "name": "gemm-f16",
+      "version": "0.19.0",
+      "sha256": "e3df7a55202e6cd6739d82ae3399c8e0c7e1402859b30e4cb780e61525d9486e",
+      "url": "https://static.crates.io/crates/gemm-f16/gemm-f16-0.19.0.crate"
+    },
+    {
+      "name": "gemm-f32",
+      "version": "0.19.0",
+      "sha256": "02e0b8c9da1fbec6e3e3ab2ce6bc259ef18eb5f6f0d3e4edf54b75f9fd41a81c",
+      "url": "https://static.crates.io/crates/gemm-f32/gemm-f32-0.19.0.crate"
+    },
+    {
+      "name": "gemm-f64",
+      "version": "0.19.0",
+      "sha256": "056131e8f2a521bfab322f804ccd652520c79700d81209e9d9275bbdecaadc6a",
+      "url": "https://static.crates.io/crates/gemm-f64/gemm-f64-0.19.0.crate"
+    },
+    {
+      "name": "gemm-c32",
+      "version": "0.19.0",
+      "sha256": "086936dbdcb99e37aad81d320f98f670e53c1e55a98bee70573e83f95beb128c",
+      "url": "https://static.crates.io/crates/gemm-c32/gemm-c32-0.19.0.crate"
+    },
+    {
+      "name": "gemm-c64",
+      "version": "0.19.0",
+      "sha256": "20c8aeeeec425959bda4d9827664029ba1501a90a0d1e6228e48bef741db3a3f",
+      "url": "https://static.crates.io/crates/gemm-c64/gemm-c64-0.19.0.crate"
+    },
+    {
+      "name": "pulp",
+      "version": "0.22.3",
+      "sha256": "046aa45b989642ec2e4717c8e72d677b13edd831a4d3b6cf37d9a3e54912496a",
+      "url": "https://static.crates.io/crates/pulp/pulp-0.22.3.crate"
+    },
+    {
+      "name": "tokenizers",
+      "version": "0.22.2",
+      "sha256": "b238e22d44a15349529690fb07bd645cf58149a1b1e44d6cb5bd1641ff1a6223",
+      "url": "https://static.crates.io/crates/tokenizers/tokenizers-0.22.2.crate"
+    },
+    {
+      "name": "tokenizers",
+      "version": "0.23.2",
+      "sha256": "7afbf6e88718afcc138bad01d6ccc3051dbbc3b2ce9793d8b8a3aeb610969cfc",
+      "url": "https://static.crates.io/crates/tokenizers/tokenizers-0.23.2.crate"
+    }
+  ]
+}

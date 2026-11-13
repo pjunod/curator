@@ -7,9 +7,10 @@
     "dev": "vite",
     "build": "tsc --noEmit && vite build && node -e \"require('fs').writeFileSync('dist/.gitkeep','')\"",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run",
+    "test": "npm run test:dependency-patches && vitest run",
     "test:watch": "vitest",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test:dependency-patches": "node --test vendor/deepmerge/regressions.cjs"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.60.0",
@@ -25,11 +26,15 @@
     "typescript": "^5.6.0",
     "vite": "^7.0.0",
     "vite-plugin-pwa": "^1.3.0",
-    "vitest": "^4.1.0"
+    "vitest": "^4.1.0",
+    "deepmerge": "file:vendor/deepmerge"
   },
   "overrides": {
     "workbox-build": {
       "glob": "^14.0.4"
+    },
+    "@rollup/plugin-node-resolve": {
+      "deepmerge": "$deepmerge"
     }
   }
 }

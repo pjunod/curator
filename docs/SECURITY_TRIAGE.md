@@ -149,10 +149,19 @@ Dependabot coverage. The reference tool explicitly requires local
 safetensors and disables remote code; it still verifies every pinned model
 file. Original committed vector fixtures remain unchanged.
 
-| Remaining dependency | Exposure and follow-up |
-|---|---|
-| `deepmerge` 4.3.1, [GHSA-gcqx-w48m-w2h4](https://github.com/advisories/GHSA-gcqx-w48m-w2h4) | Low-severity prototype poisoning in the Rollup/PWA build-tool chain, not a served runtime dependency. No upstream fixed release was available in the audit. Track a compatible upstream replacement or patch; do not force a PWA downgrade or hide the alert. npm expands this one issue into four low-severity package-chain entries. |
-| `paste` 1.0.15, [RUSTSEC-2024-0436](https://rustsec.org/advisories/RUSTSEC-2024-0436.html) | Unmaintained compile-time macro crate reached through Candle's GEMM dependencies. This is maintenance risk, not a demonstrated runtime exploit. No patched version exists. Track upstream migration to a maintained replacement; do not relabel the existing crate as fixed. |
+The two dependencies without fixed upstream releases now have explicit local
+remediations, documented in [Dependency patches](SECURITY_DEPENDENCY_PATCHES.md).
+Rollup uses a vendored `deepmerge` compatibility package with safe data-property
+writes and executable poisoning regressions. All ten Rust crates that depended
+on `paste` use the maintained `pastey` package under the existing import alias;
+their published implementation files are unchanged. Original archive checksums
+and licenses are retained. No advisory is suppressed or upstream version
+misrepresented. These local forks require maintenance until upstream catches up.
+A refreshed all-manifest OSV query reports 183 advisory IDs on the original
+baseline and zero after these fixes. It includes the original names and
+versions of vendored Rust crates. The local JavaScript patch is additionally
+validated by executable poisoning regressions; package identity changes alone
+are not evidence that a vulnerability is resolved.
 
 Local validation covers web type/unit/PWA build, mobile type/unit/both
 exports, Rust unit tests plus pinned tokenizer/vector parity, and regenerated
@@ -161,27 +170,18 @@ absolute vector errors were below 0.0000002. Go vulnerability analysis found
 no findings. Final race/lint and hosted-CI status belong in the remediation
 PR; an open PR is not a deployed fix.
 
-## Repository controls — owner decisions remain explicit
+## Repository controls — applied owner decisions
 
-Owner-compatible branch protection can require pull requests, stable required
-CI checks, resolved conversations and blocked force pushes/deletions while
-requiring **zero approvals** until an independent reviewer is available.
-Select actual final check names after healthy CI, document a recovery path
-and decide who may bypass it. Requiring approval of the solo owner's own PR
-would lock out normal maintenance. No setting change is bundled here, and
-zero required approvals must not be described as independent code review.
+The owner authorized main protection on 2026-11-13: up-to-date branches,
+19 publisher-bound required checks, pull requests with zero required approvals,
+resolved conversations, administrator enforcement, and no force pushes or branch
+deletions. Zero approvals preserves solo maintenance and is not independent
+review. No standing bypass actor is configured.
 
-PR job routing to hosted runners is useful but is not a boundary against a
-malicious workflow edit selecting an available lab runner. Review all
-external workflow changes before approving them. A stronger option is to
-remove shared lab runners from public-repository access or provision isolated
-ephemeral runners with no lab secrets/network access. Organization runner
-groups can additionally restrict trusted workflow references; see
-[GitHub's access controls](https://docs.github.com/en/actions/how-tos/manage-runners/self-hosted-runners/manage-access).
-This requires an infrastructure/ownership decision, not another label in a
-PR-editable workflow.
-
-SAST history will improve as scanned commits enter Scorecard's sample.
-Best Practices certification and independent code review require actual
-practice and owner participation. No badges, approvals or protections are
-fabricated to improve the numerical score.
+New jobs use standard GitHub-hosted Ubuntu VMs. Both persistent Curator lab
+runner registrations were removed after their active workflows completed.
+The CI policy PR makes that routing explicit and documents normal full CI for
+metadata and build-number PRs. See the companion
+[CI policy PR](https://github.com/pjunod/curator/pull/155) for the policy and
+recovery procedure. These settings do not erase historical Scorecard findings.
+Best Practices certification still requires an honest owner assessment.

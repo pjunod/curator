@@ -3,6 +3,7 @@
 FROM rust:1.97.1-bookworm@sha256:0e2bcaef56d041a486784e54104a81aebe0da44bd03019bd70bc0401e42e4a97 AS embed
 WORKDIR /src/tools/curator-embed
 COPY tools/curator-embed/Cargo.toml tools/curator-embed/Cargo.lock ./
+COPY tools/curator-embed/vendor ./vendor
 COPY tools/curator-embed/src ./src
 RUN cargo build --locked --release
 RUN ldd target/release/curator-embed && readelf -l target/release/curator-embed | grep interpreter
@@ -10,6 +11,7 @@ RUN ldd target/release/curator-embed && readelf -l target/release/curator-embed 
 FROM node:22-alpine@sha256:1314fb30ec37592d5845e5a160d522c0e680972aa534549940b8d73bde88481a AS web
 WORKDIR /src/web
 COPY web/package.json web/package-lock.json ./
+COPY web/vendor ./vendor
 RUN npm ci
 COPY web/ ./
 RUN npm run build
