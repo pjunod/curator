@@ -17,9 +17,9 @@ Companion to the [security policy](../SECURITY.md) (private reporting) and
 All workflow Action references are pinned to full commit SHAs. Dependabot
 maintains those pins. Checkouts do not retain write credentials. New security
 jobs and all pull-request jobs use GitHub-hosted Ubuntu runners. Main-branch
-builds retain the existing configurable runner selection. Hosted Go tests use
-eight race shards; lab builds retain one shard. Playwright installation and
-Go cache selection follow the actual runner environment.
+builds also use fresh hosted VMs under the [CI policy](CI_POLICY.md). Hosted Go tests use
+eight race shards. Playwright installs its browser dependencies in each fresh
+job, and Go caching uses the hosted cache service.
 
 Scorecard publication follows the upstream restrictions: a dedicated hosted
 job, only approved Actions, no shell steps, no PR trigger, and write
@@ -76,3 +76,58 @@ practices and repository controls exist.
 - [Scorecard Action](https://github.com/ossf/scorecard-action): inputs, publication restrictions and badge behavior.
 - [OpenSSF Scorecard](https://scorecard.dev/): check meanings and remediation.
 - [OpenSSF Best Practices](https://www.bestpractices.dev/): a separate self-certification program, not awarded by this workflow.
+
+## Protected merges and ephemeral runners
+
+On 2026-11-13 the owner authorized required PRs and all 19 verified CI/check
+contexts on up-to-date branches, with administrator enforcement, resolved
+conversations, zero required approvals, and blocked force pushes/deletion.
+Metadata-only PRs run the same checks. No standing bypass or scan exception
+was added. See [CI_POLICY.md](CI_POLICY.md) for exact names, runner draining,
+server-side registration removal and owner recovery.
+
+## Authentication and proxy transport
+
+New passwords use the Go standard library's PBKDF2-HMAC-SHA-256 with 600,000
+iterations, a fresh 16-byte random salt and a 32-byte key. This work factor
+follows the [OWASP password storage guidance](https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html#pbkdf2).
+The version, parameters, salt and key share one `auth_password_hash` value,
+so a failed credential write cannot leave a new salt with an old hash.
+The implementation makes no FIPS certification claim.
+
+Existing salted SHA-256 credentials still work. Only a successful login
+upgrades them; a failed upgrade write leaves the previous credentials
+usable and logs a warning without secrets, then retries on the next login.
+Unknown hash formats fail closed. Login and credential updates serialize
+within the server so a migration cannot overwrite a concurrent password
+change. Backups made before migration retain their old password protection.
+A downgrade to a server predating this format cannot verify upgraded
+credentials; retain an API key for recovery or restore an appropriate backup.
+
+Session cookies are HttpOnly and SameSite=Lax. Both login and logout set
+Secure for direct TLS. Plain LAN HTTP stays supported and therefore does not
+set Secure; use HTTPS when transport confidentiality is required.
+
+Behind an HTTPS proxy, set `MONARR_TRUSTED_PROXIES` to the immediate proxy's
+CIDR addresses, for example `192.0.2.10/32,2001:db8::10/128`. The optional
+JSON config uses `"trustedProxies": ["192.0.2.10/32"]`. Restart after changing
+process configuration. Trust defaults to empty. Choose narrow ranges and
+restrict direct access to the service. The trusted proxy must **overwrite**
+`X-Forwarded-Proto` with exactly `https` or `http`; it must never preserve
+client-supplied values. Curator ignores this header from untrusted peers and
+rejects comma-separated or repeated scheme headers. `Forwarded` and
+`X-Forwarded-For` do not grant trust.
+
+`TestLegacyLoginMigratesOnlyOnSuccess`,
+`TestMigrationWriteFailureRetainsUsableCredentials`,
+`TestPasswordChangeIsOneAtomicHashWrite` and
+`TestSessionCookieTransportBoundary` verify migration, write failure,
+password replacement and the LAN/TLS/proxy boundary. Conditional Secure
+handling and the legacy verifier may still appear in static analysis;
+neither warrants suppressing the scans or breaking supported HTTP installs.
+
+A missing `auth_required` setting preserves the opt-in default. An actual
+settings-read error requires authentication instead of opening the gate;
+`TestAuthSettingsReadFailureCannotOpenGate` covers the failure, absent-row
+default and a still-readable API key. This was a confirmed adjacent defect
+found by fault injection during the password-storage review.
