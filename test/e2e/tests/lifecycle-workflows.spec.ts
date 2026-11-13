@@ -62,7 +62,7 @@ test('storage comparison previews impact, waits for refresh and accepts exact re
     await route.fulfill({ json: { root: root.path, expectedIdentity, observedIdentity, reviewToken: `exact-review-${previews}`, expectedDescription: 'ext4 · original volume', observedDescription: 'ext4 · replacement volume', existingPayloads: 2, existingRequests: 3, inFlightRequests: 1, activeImports: 0 } })
   })
   await page.route('**/api/v1/downloads/inventory/storage-change/accept', async route => { submitted = route.request().postDataJSON(); accepted = true; await route.fulfill({ status: 204 }) })
-  await page.goto('/activity')
+  await page.goto('/system#storage')
   await page.getByRole('button', { name: 'Review changed storage…' }).click()
   const dialog = page.getByRole('dialog', { name: 'Review changed download storage' })
   await expect(dialog.getByText(/2 previously recorded payloads and 3 pre-change requests/)).toBeVisible()
@@ -105,7 +105,7 @@ test('joined timing, actual retry clicks and receipt pagination stay visible', a
   await page.route('**/api/v1/downloads/deliveries?*', route => { const cursor = new URL(route.request().url()).searchParams.get('beforeId') ?? ''; cursors.push(cursor); return route.fulfill({ json: { items: [timedReceipt(cursor ? 801 : 901)], nextBeforeId: cursor ? 0 : 900 } }) })
   const retried: string[] = []
   await page.route('**/api/v1/downloads/deliveries/901/retry-*', async route => { retried.push(new URL(route.request().url()).pathname.split('/').at(-1)!); await route.fulfill({ status: 202 }) })
-  await page.goto('/activity')
+  await page.goto('/system#storage')
   const archive = page.locator('.delivery-lifecycle-archive')
   await archive.locator(':scope > summary').click()
   let trace = archive.locator('.delivery-lifecycle')
@@ -126,7 +126,7 @@ test('joined timing, actual retry clicks and receipt pagination stay visible', a
   await inViewport(copyId)
   expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(1)
   await screenshot(page, 'lifecycle-source-copies')
-  for (const name of ['Retry handoff', 'Retry Runner source cleanup', 'Retry Curator cleanup']) {
+  for (const name of ['Retry handoff', 'Retry Curator cleanup']) {
     const button = trace.getByRole('button', { name, exact: true })
     await button.scrollIntoViewIfNeeded()
     await inViewport(button)
@@ -138,7 +138,7 @@ test('joined timing, actual retry clicks and receipt pagination stay visible', a
     await expect(button).toBeFocused()
   }
   await screenshot(page, 'lifecycle-retry-controls')
-  expect(retried).toEqual(['retry-handoff', 'retry-runner-cleanup', 'retry-curator-cleanup'])
+  expect(retried).toEqual(['retry-handoff', 'retry-curator-cleanup'])
   await archive.getByRole('button', { name: 'Older receipts' }).click()
   trace = archive.locator('.delivery-lifecycle')
   await expect(trace.locator(':scope > summary')).toContainText('Reviewable.801')
@@ -241,7 +241,7 @@ test('native Runner torrent settings keep explicit protocol choice and unsupport
     tested = route.request().postDataJSON()
     await route.fulfill({ status: 400, json: { message: 'Runner native torrent acquisition is unsupported: native-torrent-deliveries-v1 is required.' } })
   })
-  await page.goto('/settings')
+  await page.goto('/settings#downloadclients')
   const settings = page.locator('section').filter({ has: page.getByRole('heading', { name: 'Download clients', exact: true }) }).first()
   const type = settings.getByRole('combobox').first()
   await expect(type.locator('option[value="nzbd"]')).toHaveText('Runner · Usenet')

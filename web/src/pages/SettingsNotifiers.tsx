@@ -10,6 +10,7 @@ import {
   testPassed,
   updateNotifier,
 } from '../api'
+import { CinemaConnectionFeatures } from './CinemaFeatures'
 import { NotifierDeliveries } from './NotifierDeliveries'
 
 const TYPE_FIELDS: Record<NotifierType, { key: string; label: string }[]> = {
@@ -43,10 +44,11 @@ const MEDIA_SERVER: NotifierType[] = ['plex', 'jellyfin', 'plurx']
 // your typing. Download clients and indexers have had a per-row test since the
 // beginning; this closes the gap.
 function RowTest({ id }: { id: number }) {
+  const qc = useQueryClient()
   const [msg, setMsg] = useState('')
   const run = useMutation({
     mutationFn: () => testNotifierByID(id),
-    onSuccess: (r) => setMsg(testPassed(r)),
+    onSuccess: (r) => { setMsg(testPassed(r)); void qc.invalidateQueries({ queryKey: ['notifiers'] }) },
     onError: (e: Error) => setMsg(`✗ ${e.message}`),
   })
   return (
@@ -206,6 +208,7 @@ export function NotifierSettings() {
                   ) : (
                     <>
                       <RowTest id={n.id} />
+                      {n.type === 'plurx' && <CinemaConnectionFeatures notifier={n} />}
                       <button onClick={() => startEdit(n)}>Edit</button>
                       {/* Every notifier's imports are rows now, so every
                           notifier has a log: a Discord that refused an

@@ -53,7 +53,7 @@ describe('previewBlocker', () => {
     expect(previewBlocker({ mount: true, handoff: handoff({ state: 'failed' }), itemId: 0, pending: false })).toBe('That handoff is not ready to import.')
     expect(previewBlocker({ mount: true, handoff: handoff({ files: [] }), itemId: 0, pending: false })).toBe('That handoff has no files.')
     expect(previewBlocker({ mount: true, handoff: ready, itemId: 0, pending: false })).toMatch(/Pick the library title/)
-    expect(previewBlocker({ mount: false, handoff: ready, itemId: 7, pending: false })).toMatch(/recovery mount is not available.*Settings → Dev/)
+    expect(previewBlocker({ mount: false, handoff: ready, itemId: 7, pending: false })).toMatch(/recovery mount is not available.*Settings → Connections → Download clients/)
   })
   it('a malformed episode mapping blocks the preview instead of being dropped from the request', () => {
     expect(previewBlocker({ mount: true, handoff: ready, itemId: 7, pending: false, badEpisode: 'a.mkv' })).toBe('Fix the episode mapping for a.mkv (season:episodes), or clear it.')

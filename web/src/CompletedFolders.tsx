@@ -46,7 +46,7 @@ async function deleteStorageRows(qc: QueryClient, rows: StorageRow[], filesByKey
   void qc.invalidateQueries({ queryKey: ['completed-inventory'] })
 }
 
-export function CompletedFolders({ onImport }: { onImport: (path: string, mode?: 'legacy' | 'delivery', downloadId?: number) => void }) {
+export function CompletedFolders({ onImport }: { onImport: (path: string, mode?: 'legacy' | 'delivery', downloadId?: number, fingerprint?: string) => void }) {
   const qc = useQueryClient()
   const storageHeading = useRef<HTMLHeadingElement>(null)
   const [storageReview, setStorageReview] = useState<CompletedRoot | null>(null)
@@ -273,7 +273,7 @@ export function CompletedFolders({ onImport }: { onImport: (path: string, mode?:
             <div className="storage-entry-size"><strong>{fmtBytes(entry.bytes)}</strong><span className="muted">{entry.files} {entry.files === 1 ? 'file' : 'files'}</span></div>
             <div className="storage-entry-status"><span className={`pill ${entry.status === 'failed' ? 'pill-error' : ''}`}>{statusLabel(entry.status)}</span><p className="muted">{entry.reason}</p></div>
             <div className="storage-entry-actions">
-              <button disabled={!canImport(row) || busy} onClick={(event) => { event.currentTarget.focus({ preventScroll: true }); onImport(entry.path, isLegacyReview(row) ? 'legacy' : isDeliveryManaged(row) ? 'delivery' : undefined, entry.receipts.find((receipt) => receipt.deliveryManaged)?.downloadId) }}>{isLegacyReview(row) ? 'Review legacy batch' : isDeliveryManaged(row) ? 'Resolve handoff' : 'Resolve files'}</button>
+              <button disabled={!canImport(row) || busy} onClick={(event) => { event.currentTarget.focus({ preventScroll: true }); onImport(entry.path, isLegacyReview(row) ? 'legacy' : isDeliveryManaged(row) ? 'delivery' : undefined, entry.receipts.find((receipt) => receipt.deliveryManaged)?.downloadId, entry.fingerprint) }}>{isLegacyReview(row) ? 'Review changed storage' : isDeliveryManaged(row) ? 'Inspect delivery files' : 'Choose files to import'}</button>
               {isDeliveryManaged(row) && !isWholeDeletable(row) ? <button disabled={!!root.error || !entry.reviewFiles?.length || busy} title={root.error ? 'A complete scan is required' : undefined} onClick={(event) => { setDeliveryFileSelection({}); openConfirmation([row], event.currentTarget) }}>Delete selected files…</button>
                 : isLegacyReview(row) && !isDeliveryManaged(row) ? <button disabled={!!root.error || !entry.reviewFiles?.length || busy} title={root.error ? 'A complete scan is required' : undefined} onClick={(event) => { setLegacyFileSelection({}); openConfirmation([row], event.currentTarget) }}>Delete selected files…</button>
                 : <button disabled={!canDelete(row) || busy} title={root.error ? 'A complete scan is required' : undefined} onClick={(event) => openConfirmation([row], event.currentTarget)}>Delete files…</button>}

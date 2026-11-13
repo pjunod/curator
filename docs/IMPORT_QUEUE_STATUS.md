@@ -3,7 +3,10 @@
 **Status:** implementation complete; local verification passed; PR open for CI and review.
 **Updated:** 2026-11-09.
 
-Companion to [usage.md](usage.md#import-queue--follow-every-recorded-import):
+**Superseded:** the approved [UI consolidation](UI_CONSOLIDATION_STATUS.md)
+merges this page into Activity; the retained import API remains compatible.
+
+Companion to [usage.md](usage.md#activity--transfers-imports-and-history-in-one-place):
 this file records delivery evidence for the dedicated Import Queue page.
 
 - [x] Isolated external-drive clone and `codex/import-queue` branch.

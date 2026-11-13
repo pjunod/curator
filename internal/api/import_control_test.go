@@ -66,6 +66,7 @@ func TestDeploymentDrainKeepsStatusAvailableAndFencesMutations(t *testing.T) {
 		t.Fatalf("%+v", status)
 	}
 	e.get(t, "/api/v1/system/deployment-drain").expect(t, 200)
+	e.get(t, "/api/v1/activity").expect(t, 200)
 	e.get(t, "/api/v1/queue").expect(t, 200)
 	// Unknown and provider-backed reads are not allowed to silently persist
 	// discovery budgets or preview state after the barrier closes.

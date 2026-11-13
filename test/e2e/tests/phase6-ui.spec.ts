@@ -111,7 +111,7 @@ test('saved indexers and clients: per-row Test with stored credentials', async (
   expect((await request.post('/api/v1/indexers/99999/test')).status()).toBe(404)
 
   // And the buttons are on the saved rows in Settings.
-  await page.goto('/settings')
+  await page.goto('/settings#indexers')
   await page.locator('#indexers').getByRole('button', { name: 'Test' }).first().click()
   await expect(page.locator('#indexers .ok-text').first()).toBeVisible()
   await expect(

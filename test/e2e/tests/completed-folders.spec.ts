@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test'
+import {mockActivity,openAttempt} from '../activity-fixture'
 import { mkdirSync, mkdtempSync, writeFileSync, rmSync, realpathSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
@@ -12,8 +13,8 @@ test('an empty queue cannot hide unknown completed files', async ({ page, reques
     expect((await request.put('/api/v1/settings', { data: { completedRoots: root } })).ok()).toBeTruthy()
     expect((await request.post('/api/v1/system/tasks/downloads.inventory/run')).ok()).toBeTruthy()
     await expect.poll(async () => (await (await request.get('/api/v1/downloads/inventory')).json()).bytes).toBe(1024)
-    await page.goto('/activity')
-    const panel = page.locator('section').filter({ has: page.getByRole('heading', { name: 'Download storage', exact: true }) })
+    await page.goto('/system#storage')
+    const panel = page.getByRole('region',{name:'Download storage',exact:true})
     await expect(panel).toContainText('Need attention')
     await expect(panel.locator('.storage-items')).not.toHaveAttribute('open')
     await expect(panel.getByRole('list', { name: 'Storage entries' })).toBeHidden()
@@ -22,9 +23,9 @@ test('an empty queue cannot hide unknown completed files', async ({ page, reques
     await expect(panel.getByRole('listitem')).toHaveCount(1)
     await expect(panel).toContainText('forgotten.rar')
     await expect(panel).toContainText('No download record')
-    await panel.getByRole('button', { name: 'Resolve files' }).click()
+    await panel.getByRole('button', { name: 'Choose files to import' }).click()
     await expect(page.getByLabel('Path', { exact: true })).toHaveValue(join(root, 'completed', 'forgotten.rar'))
-    const resolve = page.getByRole('dialog', { name: 'Resolve' })
+    const resolve = page.getByRole('dialog', { name: 'Choose files to import' })
     await resolve.getByRole('button', { name: 'Close', exact: true }).click()
     await panel.getByRole('button', { name: 'Delete files…' }).click()
     await expect(panel.getByText('Delete 1 entry permanently?')).toBeVisible()
@@ -66,7 +67,7 @@ test('storage pagination, responsive rows and bulk outcomes', async ({ page }) =
     entries = entries.filter((entry) => entry.path !== path)
     await route.fulfill({ status: 204 })
   })
-  await page.goto('/activity')
+  await page.goto('/system#storage')
   const panel = page.getByRole('region', { name: 'Download storage', exact: true })
   const disclosure = panel.locator('.storage-items')
   const summary = disclosure.locator(':scope > summary')
@@ -90,12 +91,12 @@ test('storage pagination, responsive rows and bulk outcomes', async ({ page }) =
   await expect(panel).toContainText('24 selected')
   await panel.getByRole('button', { name: 'Select all 77 eligible', exact: true }).click()
   await expect(panel).toContainText('77 selected')
-  await panel.getByRole('button', { name: 'Resolve files', exact: true }).first().click()
+  await panel.getByRole('button', { name: 'Choose files to import', exact: true }).first().click()
   const firstPath = await page.getByLabel('Path', { exact: true }).inputValue()
-  await page.getByRole('dialog', { name: 'Resolve' }).getByRole('button', { name: 'Close', exact: true }).click()
-  await panel.getByRole('button', { name: 'Resolve files', exact: true }).nth(1).click()
+  await page.getByRole('dialog', { name: 'Choose files to import' }).getByRole('button', { name: 'Close', exact: true }).click()
+  await panel.getByRole('button', { name: 'Choose files to import', exact: true }).nth(1).click()
   await expect(page.getByLabel('Path', { exact: true })).not.toHaveValue(firstPath)
-  await page.getByRole('dialog', { name: 'Resolve' }).getByRole('button', { name: 'Close', exact: true }).click()
+  await page.getByRole('dialog', { name: 'Choose files to import' }).getByRole('button', { name: 'Close', exact: true }).click()
 
   for (const width of [1440, 390]) {
     await page.setViewportSize({ width, height: 1000 })
@@ -151,12 +152,12 @@ test('incomplete scans preserve results and disable file actions', async ({ page
   await page.route('**/api/v1/downloads/inventory', (route) => route.fulfill({ json: {
     bytes: 5000, attention: 1, roots: [{ path: '/working/monarr', bytes: 5000, checkedAt: lastRunAt, lastCompleteAt: '2026-09-29T11:00:00Z', error: 'context deadline exceeded', entries: [{ path: '/working/monarr/retained.mkv', fingerprint: 'old', bytes: 5000, files: 1, status: 'untracked', reason: 'No download record', receipts: [] }] }],
   } }))
-  await page.goto('/activity')
+  await page.goto('/system#storage')
   const panel = page.getByRole('region', { name: 'Download storage', exact: true })
   await expect(panel.getByRole('alert')).toContainText('Showing stale or partial results')
   await expect(panel.getByRole('alert')).toBeVisible()
   await panel.locator('.storage-items > summary').click()
-  await expect(panel.getByRole('button', { name: 'Resolve files' })).toBeDisabled()
+  await expect(panel.getByRole('button', { name: 'Choose files to import' })).toBeDisabled()
   await expect(panel.getByRole('button', { name: 'Delete files…' })).toBeDisabled()
   await expect(panel.getByRole('checkbox', { name: 'Select retained.mkv' })).toBeDisabled()
   await panel.getByRole('button', { name: 'Scan download storage', exact: true }).click()
@@ -191,7 +192,7 @@ test('bulk deletion survives responsive and route remounts without duplicate bat
       await route.fulfill({ status: 204 })
     }
   })
-  await page.goto('/activity')
+  await page.goto('/system#storage')
   const panel = page.getByRole('region', { name: 'Download storage', exact: true })
   await panel.locator('.storage-items > summary').click()
   await panel.getByRole('button', { name: 'Select all 3 eligible' }).click()
@@ -206,7 +207,9 @@ test('bulk deletion survives responsive and route remounts without duplicate bat
   await expect(panel.getByRole('button', { name: 'Select all 3 eligible' })).toBeDisabled()
   await expect(panel.getByRole('button', { name: 'Delete files…' }).first()).toBeDisabled()
   await page.locator('.mobile-tab', { hasText: 'Library' }).click()
-  await page.locator('.mobile-tab', { hasText: 'Activity' }).click()
+  await page.getByRole('button',{name:'More',exact:true}).click()
+  await page.getByRole('dialog',{name:'More'}).getByRole('link',{name:/^System/}).click()
+  await page.getByRole('button',{name:'Storage',exact:true}).click()
   await expect(panel.getByRole('status')).toContainText('Deleting 0 of 3 entries')
   await expect(panel.getByRole('status')).toBeVisible()
   await expect(panel.locator('.storage-items')).not.toHaveAttribute('open')
@@ -218,7 +221,9 @@ test('bulk deletion survives responsive and route remounts without duplicate bat
   await expect(panel).toContainText('1 failed; those files were not confirmed deleted.')
   expect(requests).toHaveLength(3)
   await page.locator('.mobile-tab', { hasText: 'Library' }).click()
-  await page.locator('.mobile-tab', { hasText: 'Activity' }).click()
+  await page.getByRole('button',{name:'More',exact:true}).click()
+  await page.getByRole('dialog',{name:'More'}).getByRole('link',{name:/^System/}).click()
+  await page.getByRole('button',{name:'Storage',exact:true}).click()
   await expect(panel).toContainText('2 entries deleted.')
   await expect(panel).toContainText('Files changed since the scan')
   await expect(panel.locator('.storage-items')).not.toHaveAttribute('open')
@@ -229,28 +234,29 @@ test('held transfers survive reload and resume the same job without import or re
   let resumes = 0
   let imports = 0
   const control = { version: 1, revision: '9007199254740993', lifecycle: 'held', cause: 'capacity', stage: 'download_write', retry_policy: 'resume_same_job', message: 'Waiting for storage capacity', instance: 'fixture' }
-  await page.route(/\/api\/v1\/queue(?:\?.*)?$/, route => route.fulfill({ json: [{ id: 991, mediaItemId: 1, releaseTitle: 'Held.Show.S01E01', state: 'downloading', progress: 1, size: 9000, protocol: 'usenet', client: 'Runner', control }] }))
+  await mockActivity(page,()=>[{ id: 991, mediaItemId: 1, title: 'Held.Show.S01E01', state: 'downloading', progress: 1, size: 9000, protocol: 'usenet', client: 'Runner', control }])
   await page.route('**/api/v1/queue/991/resume', route => { resumes++; return route.fulfill({ status: 204 }) })
   await page.route('**/api/v1/queue/991/import', route => { imports++; return route.fulfill({ status: 409 }) })
   await page.goto('/activity')
   await expect(page.getByText('Waiting for storage capacity', { exact: true })).toBeVisible()
   await expect(page.getByText('Transfer 100% · import pending', { exact: true })).toBeVisible()
   await page.reload()
+  await openAttempt(page,'Held.Show.S01E01')
   await expect(page.getByRole('button', { name: 'Resume same job', exact: true })).toBeVisible()
   await page.getByRole('button', { name: 'Resume same job', exact: true }).click()
   await expect.poll(() => resumes).toBe(1)
   expect(imports).toBe(0)
-  await expect(page.getByText('Waiting for storage capacity', { exact: true })).toBeVisible()
+  await expect(page.locator('.activity-attempt')).toContainText('Waiting for storage capacity')
 })
 
-test('publication verification has its own Activity section instead of renaming', async ({ page }) => {
-  await page.route(/\/api\/v1\/queue(?:\?.*)?$/, route => route.fulfill({ json: [{
+test('publication verification names the measured Activity stage', async ({ page }) => {
+  await mockActivity(page,()=>[{
     id: 992, mediaItemId: 1, title: 'Verified.Movie', state: 'downloading',
     progress: 1, total: 9000, protocol: 'usenet', stage: 'publication_verify',
     stagePeer: 'Runner', stageSince: new Date().toISOString(),
-  }] }))
+  }])
   await page.route('**/api/v1/system/transfers', route => route.fulfill({ json: [] }))
   await page.goto('/activity')
-  await expect(page.getByRole('row', { name: /^Verifying publication/ })).toBeVisible()
-  await expect(page.getByRole('row', { name: /^Renaming/ })).toHaveCount(0)
+  await expect(page.locator('.activity-attempt .pill').filter({hasText:'Verifying publication'})).toBeVisible()
+  await expect(page.locator('.activity-attempt .pill').filter({hasText:'Renaming'})).toHaveCount(0)
 })

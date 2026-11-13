@@ -1,4 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
+import { useLocation } from '@tanstack/react-router'
+import { SystemStorage } from './SystemStorage'
+import '../Activity.css'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import type { BusEvent } from '../api'
 import type { Connection } from '../api'
@@ -193,6 +196,9 @@ function useEventStream(): { events: BusEvent[]; connected: boolean } {
 }
 
 export function SystemPage() {
+  const location = useLocation()
+  const [tab, setTab] = useState<'diagnostics' | 'storage'>(location.hash.replace(/^#/, '') === 'storage' ? 'storage' : 'diagnostics')
+  useEffect(() => { setTab(location.hash.replace(/^#/, '') === 'storage' ? 'storage' : 'diagnostics') }, [location.hash])
   const qc = useQueryClient()
   const health = useQuery({ queryKey: ['health'], queryFn: getHealth, refetchInterval: 30_000 })
   const tasks = useQuery({ queryKey: ['tasks'], queryFn: getTasks, refetchInterval: 5_000 })
@@ -213,6 +219,9 @@ export function SystemPage() {
         <h1>System</h1>
       </header>
 
+      <nav className="system-tabs" aria-label="System sections"><button aria-pressed={tab === 'diagnostics'} onClick={() => setTab('diagnostics')}>Diagnostics</button><button aria-pressed={tab === 'storage'} onClick={() => setTab('storage')}>Storage</button></nav>
+      {tab === 'storage' && <SystemStorage />}
+      <div hidden={tab !== 'diagnostics'}>
       <ConnectionsCard />
 
       <section className="panel">
@@ -342,6 +351,7 @@ export function SystemPage() {
           </ul>
         )}
       </section>
+      </div>
     </>
   )
 }

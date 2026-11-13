@@ -1,8 +1,8 @@
 import { CompletedFolderSettings } from '../CompletedFolders'
 import { DiscoverySettings } from '../DiscoverySettings'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Link } from '@tanstack/react-router'
+import { Link, useLocation } from '@tanstack/react-router'
 import type { RootKind } from '../api'
 import {
   addRootFolder,
@@ -28,12 +28,11 @@ import { PathInput } from '../PathInput'
 import { ReviewWindow } from '../ReviewWindow'
 import { MissingFolders } from '../MissingFolders'
 import { DiskScanControl } from '../DiskScan'
-import { RecoveryEnableSettings } from './Recovery'
-import { ResolvePanel } from './Activity'
-import { CinemaFeatures } from './CinemaFeatures'
 
 export function SettingsPage() {
-  const [settingsTab, setSettingsTab] = useState<'general' | 'recovery' | 'dev'>('general')
+  const [settingsTab, setSettingsTab] = useState<'general' | 'connections'>('general')
+  const location = useLocation()
+  useEffect(() => { setSettingsTab(['indexers', 'downloadclients', 'notifications'].includes(location.hash.replace(/^#/, '')) ? 'connections' : 'general') }, [location.hash])
   const qc = useQueryClient()
   const settings = useQuery({ queryKey: ['settings'], queryFn: getSettings })
   const roots = useQuery({ queryKey: ['rootfolders'], queryFn: getRootFolders })
@@ -138,10 +137,7 @@ export function SettingsPage() {
         <h1>Settings</h1>
       </header>
 
-      <nav aria-label="Settings sections">{(['general', 'recovery', 'dev'] as const).map(tab => <button key={tab} aria-pressed={settingsTab === tab} onClick={() => setSettingsTab(tab)}>{tab === 'dev' ? 'Dev' : tab === 'recovery' ? 'Resolve' : 'General'}</button>)}</nav>
-      {settingsTab === 'dev' && <RecoveryEnableSettings />}
-      {settingsTab === 'dev' && <CinemaFeatures />}
-      {settingsTab === 'recovery' && <ResolvePanel initialMode="delivery" />}
+      <nav className="system-tabs" aria-label="Settings sections">{(['general', 'connections'] as const).map(tab => <button key={tab} aria-pressed={settingsTab === tab} onClick={() => setSettingsTab(tab)}>{tab === 'general' ? 'General' : 'Connections'}</button>)}</nav>
       <div hidden={settingsTab !== 'general'}>
       <DiscoverySettings />
       <section className="panel" id="metadata">
@@ -347,7 +343,7 @@ export function SettingsPage() {
         </div>
         {addRoot.isError && <div className="banner warning">{String((addRoot.error as Error).message)}</div>}
 
-        <h3 style={{ marginTop: 18 }}>Disk scan</h3>
+        <h3 id="scan" style={{ marginTop: 18 }}>Disk scan</h3>
         <div className="form-row">
           <DiskScanControl label="Scan now" />
           <button onClick={() => adopt.mutate()} disabled={adopt.isPending}>
@@ -463,13 +459,12 @@ export function SettingsPage() {
 
       <QualityProfileSettings />
 
-      <AcquisitionSettings />
       <CustomFormatSettings />
       <ImportListSettings />
-      <NotifierSettings />
 
       {reviewOpen && <ReviewWindow onClose={() => setReviewOpen(false)} />}
       </div>
+      <div hidden={settingsTab !== 'connections'}><AcquisitionSettings /><NotifierSettings /></div>
     </>
   )
 }

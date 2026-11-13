@@ -1,0 +1,31 @@
+.activity-feed .activity-tabs { display:flex; gap:10px; flex-wrap:wrap; margin-bottom:18px; border-bottom:1px solid var(--border); padding-bottom:10px; }
+.activity-tabs button[aria-pressed='true'] { color:var(--accent); background:var(--accent-soft); border-color:var(--accent); }
+.activity-tabs button span { margin-left:6px; color:var(--text-muted); }
+.activity-feed .activity-toolbar { display:flex; flex-wrap:wrap; gap:12px; align-items:center; margin-bottom:20px; }
+.activity-feed .activity-toolbar input { flex:1; min-width:180px; }
+.activity-attempt { padding:20px 0; border-bottom:1px solid var(--border); }
+.activity-attempt-heading,.activity-attempt-footer { display:flex; gap:16px; align-items:flex-start; justify-content:space-between; }
+.activity-attempt-heading>div { min-width:0; }
+.activity-attempt-heading .activity-title { font-weight:600; overflow-wrap:anywhere; }
+.activity-attempt-heading .pill { flex-shrink:0; max-width:45%; white-space:normal; }
+.activity-attempt .stage-progress { margin:12px 0; }
+.activity-attempt .progress-track { height:5px; }
+.activity-attempt-footer { align-items:center; margin-top:14px; }
+.activity-empty { text-align:center; padding:55px 15px; }
+.activity-detail-dialog { width:min(1100px,calc(100vw - 24px)); }
+.activity-detail-dialog .queue-table { width:100%; table-layout:auto; }
+.system-tabs { display:flex; flex-wrap:wrap; gap:10px; margin-bottom:20px; }
+.system-tabs button[aria-pressed='true'] { background:var(--accent-soft);color:var(--accent); }
+@media(max-width:640px) {
+ .activity-attempt-heading,.activity-attempt-footer { flex-direction:column; gap:8px; }
+ .activity-attempt-heading .pill { max-width:100%; }
+ .activity-feed .activity-toolbar input,.activity-feed .activity-toolbar label { width:100%; }
+ .activity-feed .activity-tabs { gap:6px; }
+ .activity-feed .activity-tabs button { padding:9px 8px; }
+ .activity-detail-dialog .queue-table,.activity-detail-dialog tbody,.activity-detail-dialog tr,.activity-detail-dialog td { display:block; width:100%; }
+ .activity-detail-dialog .queue-table td { overflow-wrap:anywhere; }
+ .activity-detail-dialog .row-actions { flex-wrap:wrap; }
+}
+
+.activity-release { max-width:65ch; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+@media(max-width:640px) { .activity-release { max-width:calc(100vw - 52px); } }

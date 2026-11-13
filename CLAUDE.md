@@ -47,7 +47,8 @@ review. Surface conflicting directives to the owner rather than hiding them.
 ## 4. Ship usable features
 
 Do not gate features in code. If an enable control is absolutely necessary,
-put it in an enable section in the Dev settings tab. Explain what is needed
+put it beside the relevant saved connection or feature settings. The Dev
+settings tab was retired by the owner-approved UI consolidation. Explain what is needed
 to enable it safely and whether those conditions are met. That information is
 advisory; it must not disable the enable control. Do not add unused flags or
 other cruft.

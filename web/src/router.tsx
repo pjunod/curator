@@ -7,6 +7,7 @@ import {
   createRootRoute,
   createRoute,
   createRouter,
+  redirect,
   useRouterState,
 } from '@tanstack/react-router'
 import { useQuery } from '@tanstack/react-query'
@@ -21,7 +22,6 @@ import { DiscoverPage } from './pages/Discover'
 import { MediaDetailPage } from './pages/MediaDetail'
 import { SettingsPage } from './pages/Settings'
 import { AccessPage } from './pages/Access'
-import { ImportQueuePage } from './pages/ImportQueue'
 import { ActivityPage } from './pages/Activity'
 import { CalendarPage } from './pages/Calendar'
 import type { CalendarSearch } from './pages/Calendar'
@@ -124,7 +124,7 @@ function MobileShell(props: { overall: string; version: string; children: React.
       <nav className="mobile-tabs" aria-label="Primary">
         {tab('/', 'Library', true)}
         {tab('/wanted', 'Wanted')}
-        {tab('/calendar', 'Calendar')}
+        {tab('/discover', 'Discover')}
         {tab('/activity', 'Activity')}
         <button
           className={`mobile-tab${sheet ? ' active' : ''}`}
@@ -143,10 +143,7 @@ function MobileShell(props: { overall: string; version: string; children: React.
           <div className="more-sheet" role="dialog" aria-label="More">
             <GlobalSearch />
             <nav className="sheet-nav">
-              <Link to="/imports" activeProps={{ className: 'active' }}>Import queue</Link>
-              <Link to="/discover" activeProps={{ className: 'active' }}>
-                Discover
-              </Link>
+              <Link to="/calendar" activeProps={{ className: 'active' }}>Calendar</Link>
               <Link to="/dashboard" activeProps={{ className: 'active' }}>
                 Dashboard
               </Link>
@@ -214,7 +211,6 @@ function Layout() {
           <Link to="/activity" activeProps={{ className: 'active' }}>
             Activity
           </Link>
-          <Link to="/imports" activeProps={{ className: 'active' }}>Import queue</Link>
           <Link to="/dashboard" activeProps={{ className: 'active' }}>
             Dashboard
           </Link>
@@ -335,7 +331,7 @@ const activityRoute = createRoute({
   component: ActivityPage,
 })
 
-const importsRoute = createRoute({ getParentRoute: () => rootRoute, path: '/imports', component: ImportQueuePage })
+const importsRoute = createRoute({ getParentRoute: () => rootRoute, path: '/imports', beforeLoad: () => { throw redirect({ href: '/activity?scope=imports' }) } })
 
 const systemRoute = createRoute({
   getParentRoute: () => rootRoute,

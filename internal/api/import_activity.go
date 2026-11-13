@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	apigen "github.com/pjunod/monarr/internal/api/gen"
+	"github.com/pjunod/monarr/internal/app/acquisition"
 	"github.com/pjunod/monarr/internal/infra/sqlite"
 )
 
@@ -30,6 +31,39 @@ func (s *Server) ListImportActivity(w http.ResponseWriter, r *http.Request, p ap
 		s.acqErr(w, err)
 		return
 	}
+	s.writeActivityPage(w, r, page)
+}
+
+func (s *Server) ListActivity(w http.ResponseWriter, r *http.Request, p apigen.ListActivityParams) {
+	view, scope, search, limit, offset := "progress", "all", "", 50, 0
+	if p.View != nil {
+		view = string(*p.View)
+	}
+	if p.Scope != nil {
+		scope = string(*p.Scope)
+	}
+	if p.Q != nil {
+		search = *p.Q
+	}
+	if p.Limit != nil {
+		limit = *p.Limit
+	}
+	if p.Offset != nil {
+		offset = *p.Offset
+	}
+	if (view != "progress" && view != "attention" && view != "history") || (scope != "all" && scope != "imports") || limit < 1 || limit > 200 || offset < 0 {
+		writeError(w, 400, "invalid activity view, scope or pagination")
+		return
+	}
+	page, err := s.deps.Acquisition.Activity(r.Context(), view, search, scope == "imports", limit, offset)
+	if err != nil {
+		s.acqErr(w, err)
+		return
+	}
+	s.writeActivityPage(w, r, page)
+}
+
+func (s *Server) writeActivityPage(w http.ResponseWriter, r *http.Request, page acquisition.ImportActivityPage) {
 	rows := make([]sqlite.Download, 0, len(page.Rows))
 	for _, entry := range page.Rows {
 		if entry.ID < 0 {

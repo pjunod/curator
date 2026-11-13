@@ -1,3 +1,4 @@
+import { mockActivity, openAttempt } from '../activity-fixture'
 import { expect, test } from '@playwright/test'
 
 test.use({ serviceWorkers: 'block' })
@@ -6,18 +7,19 @@ for (const width of [390, 1280]) {
   await page.setViewportSize({width,height:844})
   const selection={version:1,trigger:'backlog',target:'WEB-DL 1080p',partial:false,reason:'Compared attainable episode outcomes up to your target; protected existing files are kept.',titles:{pack:'Show.S01.1080p.WEB-DL'},importAllowlists:{pack:[1,2]},plan:{Releases:['pack'],Unserved:[],Cost:{ZeroSeedTorrents:0,UnknownSizes:0,KnownBytes:15*1024**3,UnknownSeedTorrents:1,RedundantEpisodes:0,Transfers:1}},scopes:[]}
   const rows=Array.from({length:40},(_,i)=>({id:i+1,mediaItemId:9876,title:`Show.S01.Pack${i}`,state:'planned',progress:0,protocol:'torrent',quality:'WEB-DL 1080p',addedAt:'2026-10-01T00:00:00Z',planId:1,planState:'admitted',submissionPhase:'pending',selection}))
-  await page.route('**/api/v1/queue?**',r=>r.fulfill({json:rows}))
+  await mockActivity(page,()=>rows)
   await page.route('**/api/v1/queue/summary',r=>r.fulfill({json:{counts:{planned:40},active:40,total:40,retentionDays:30}}))
   await page.goto('/activity')
+  await openAttempt(page,'Show.S01.Pack39')
   const trigger=page.getByRole('button',{name:'Why chosen',exact:true}).last()
   await trigger.scrollIntoViewIfNeeded();await trigger.click()
-  const dialog=page.getByRole('dialog');await expect(dialog).toBeVisible()
+  const dialog=page.getByRole('dialog').last();await expect(dialog).toBeVisible()
   const heading=dialog.getByRole('heading',{name:'Why chosen'})
   await expect(heading).toBeInViewport({ratio:1});await expect(heading).toBeFocused()
   await expect(dialog.getByText('Completed bounded discovery.',{exact:false})).toBeInViewport({ratio:1})
   await expect(dialog.getByRole('button',{name:'Close',exact:true})).toBeInViewport({ratio:1})
   const box=await dialog.boundingBox();expect(box).not.toBeNull();expect(box!.x).toBeGreaterThanOrEqual(0);expect(box!.x+box!.width).toBeLessThanOrEqual(width)
-  await page.keyboard.press('Escape');await expect(dialog).toHaveCount(0);await expect(trigger).toBeFocused()
+  await page.keyboard.press('Escape');await expect(page.getByRole('dialog',{name:'Why chosen',exact:true})).toHaveCount(0);await expect(trigger).toBeFocused()
  })
 }
 
@@ -28,11 +30,11 @@ for (const width of [390, 1280]) {
   await page.route('**/api/v1/indexers',r=>r.fulfill({json:indexers}))
   let saved: Record<string, unknown> | undefined
   await page.route('**/api/v1/indexers/30',r=>{saved=r.request().postDataJSON();return r.fulfill({json:{...indexers[29],dailyRequestCap:0}})})
-  await page.goto('/settings')
+  await page.goto('/settings#indexers')
   const panel = page.locator('#indexers')
   const trigger=panel.getByRole('button',{name:'Request limit',exact:true}).last()
   await trigger.scrollIntoViewIfNeeded();await trigger.click()
-  const dialog=page.getByRole('dialog');await expect(dialog).toBeVisible()
+  const dialog=page.getByRole('dialog').last();await expect(dialog).toBeVisible()
   await expect(dialog.getByRole('heading')).toBeInViewport({ratio:1});await expect(dialog.getByRole('heading')).toBeFocused()
   await expect(dialog.getByText(/applies to RSS, automatic search and manual search for this indexer/)).toBeVisible()
   const limit = dialog.getByLabel('Limit API requests')
@@ -49,17 +51,19 @@ for (const width of [390, 1280]) {
 for (const width of [390, 1280]) {
  test(`reservation review requires acknowledgment and stays visible at ${width}px`, async ({page})=>{
   await page.setViewportSize({width,height:844})
-  const rows=Array.from({length:40},(_,i)=>({id:i+1,mediaItemId:9876,title:`Show.S01.Pending${i}`,state:'grabbed',progress:0,protocol:'torrent',quality:'WEB-DL 1080p',addedAt:'2026-10-01T00:00:00Z',submissionPhase:'uncertain',parkedReason:'Submission uncertain; custody retained'}))
-  await page.route('**/api/v1/queue?**',r=>r.fulfill({json:rows}))
+  const rows=Array.from({length:40},(_,i)=>({id:i+1,mediaItemId:9876,title:`Show.S01.Pending${i}`,state:'grabbed',progress:0,protocol:'torrent',quality:'WEB-DL 1080p',addedAt:'2026-10-01T00:00:00Z',submissionPhase:'uncertain',reservationActionable:true,parkedReason:'Submission uncertain; custody retained'}))
+  await mockActivity(page,()=>rows)
   await page.route('**/api/v1/queue/summary',r=>r.fulfill({json:{counts:{grabbed:40},active:40,total:40,retentionDays:30}}))
   await page.goto('/activity')
+  await page.getByRole('button',{name:/^Needs attention /}).click()
+  await openAttempt(page,'Show.S01.Pending39')
   const trigger=page.getByRole('button',{name:'Review reservation',exact:true}).last()
   await trigger.scrollIntoViewIfNeeded();await trigger.click()
-  const dialog=page.getByRole('dialog');await expect(dialog).toBeVisible()
+  const dialog=page.getByRole('dialog').last();await expect(dialog).toBeVisible()
   await expect(dialog.getByRole('heading')).toBeFocused();await expect(dialog.getByRole('heading')).toBeInViewport({ratio:1})
   const release=dialog.getByRole('button',{name:'Release reservation',exact:true})
   await expect(release).toBeDisabled();await expect(release).toBeInViewport({ratio:1})
   const acknowledgment=dialog.getByRole('checkbox');await expect(acknowledgment).toBeInViewport({ratio:1});await acknowledgment.check();await expect(release).toBeEnabled()
-  await page.keyboard.press('Escape');await expect(dialog).toHaveCount(0);await expect(trigger).toBeFocused()
+  await page.keyboard.press('Escape');await expect(page.getByRole('dialog',{name:'Review episode reservation',exact:true})).toHaveCount(0);await expect(trigger).toBeFocused()
  })
 }
