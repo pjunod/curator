@@ -279,6 +279,8 @@ the cost is one `coverage: NN.N%` commit from CI whenever the number actually ch
   related-series suggestions, local-model integration, and build acceptance checks;
   [adversarial review](docs/plan-smart-media-discovery-review.md) records the challenges.
 
+- **[Product and architecture improvement proposal](docs/IMPROVEMENT_PROPOSAL.md)** — prioritized follow-ups to the HolyArrs comparison; proposed scope, contracts and acceptance checks.
+
 ## Configuration
 
 Environment first, optional JSON file second (`MONARR_CONFIG=/path/to/config.json`),
