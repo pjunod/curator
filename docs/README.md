@@ -20,6 +20,7 @@ when one is missing or a relative link in any document does not resolve. Start w
 | [SECURITY_CHECKS.md](SECURITY_CHECKS.md) | Security workflows, badge interpretation and remaining repository controls. |
 | [SECURITY_TRIAGE.md](SECURITY_TRIAGE.md) | 2026-11-13 security finding triage, boundary evidence, dependency remediation and owner decisions. |
 | [SECURITY_DEPENDENCY_PATCHES.md](SECURITY_DEPENDENCY_PATCHES.md) | Provenance, validation and removal of local upstream dependency fixes. |
+| [CI_POLICY.md](CI_POLICY.md) | Required merge checks, metadata CI and ephemeral runner policy. |
 
 ## Decisions
 
