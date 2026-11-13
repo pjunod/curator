@@ -26,7 +26,7 @@ func (s *Service) ImportActivity(ctx context.Context, filter, search string, lim
 	if err != nil {
 		return ImportActivityPage{}, err
 	}
-	page := ImportActivityPage{Rows: []ImportActivityRow{}, Counts: map[string]int{"all": 0, "active": 0, "queued": 0, "attention": 0, "imported": 0}}
+	page := ImportActivityPage{Rows: []ImportActivityRow{}, Counts: map[string]int{"all": 0, "active": 0, "queued": 0, "attention": 0, "imported": 0, "history": 0}}
 	s.importMu.Lock()
 	for _, e := range entries {
 		status := ""
@@ -46,7 +46,7 @@ func (s *Service) ImportActivity(ctx context.Context, filter, search string, lim
 	s.importMu.Unlock()
 	// Preserve update order within each category; active and waiting work always
 	// precede history, even when a newer completed download arrives.
-	rank := map[string]int{"active": 0, "queued": 1, "attention": 2, "imported": 3}
+	rank := map[string]int{"active": 0, "queued": 1, "attention": 2, "imported": 3, "history": 4}
 	sort.SliceStable(page.Rows, func(i, j int) bool { return rank[page.Rows[i].Category] < rank[page.Rows[j].Category] })
 	page.Total = len(page.Rows)
 	if offset > len(page.Rows) {
@@ -65,7 +65,13 @@ func importActivityCategory(e sqlite.ImportActivityEntry, worker string) string 
 	if worker == "queued" {
 		return "queued"
 	}
-	if e.Review || e.Cancelled || e.Unresolved || e.FailedPublication || e.State == "awaiting_import" {
+	if e.Review || e.Unresolved || e.FailedPublication || e.ReservationActionable || e.ActionableFiles || e.State == "awaiting_import" {
+		return "attention"
+	}
+	if cancelledImportIsHistory(e) {
+		return "history"
+	}
+	if e.Cancelled {
 		return "attention"
 	}
 	if e.PendingPublication || e.State == "downloaded" {
@@ -123,7 +129,10 @@ func activityCategory(e sqlite.ImportActivityEntry, worker string) string {
 		return "progress"
 	}
 	if e.CancelOutcome == "cancelled" {
-		return "history"
+		if cancelledImportIsHistory(e) {
+			return "history"
+		}
+		return "attention"
 	}
 	if e.Superseded {
 		return "history"
@@ -145,4 +154,13 @@ func activityCategory(e sqlite.ImportActivityEntry, worker string) string {
 		return "history"
 	}
 	return "progress"
+}
+
+// Cancellation is historical only after every indexed custody obligation has
+// cleared. Old failure text and removed publication receipts remain audit, not
+// evidence of a successful import. Worker ownership is checked by both callers.
+func cancelledImportIsHistory(e sqlite.ImportActivityEntry) bool {
+	return e.CancelOutcome == "cancelled" && !e.Review && !e.Unresolved &&
+		!e.PendingPublication && !e.FailedPublication && !e.ReservationActionable &&
+		!e.ActionableFiles && e.State != "awaiting_import"
 }

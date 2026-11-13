@@ -1282,7 +1282,14 @@ failure re-runs that season's comparison straight away, even when the season
 was waiting for its next scheduled search, and the failed release (that exact
 post from that indexer) is never chosen again.
 
-Use **History** for completed attempts and terminal transfer failures. Local
+Use **History** for completed attempts, terminal transfer failures, and cancelled
+imports whose custody is fully resolved. Cancellation alone does not clear
+**Needs attention**: held stages, prepared or retained placements, publication
+custody, unresolved files and actionable reservations still require review.
+The compatibility `/api/v1/imports` endpoint also exposes these resolved
+cancellations as `history` (including `filter=history`), never as successful
+`imported` rows. Original failure messages and publication outcomes remain
+unchanged. Local
 placement failures that require a decision appear under **Needs attention**;
 environmental retries remain **In progress**. Search and pagination cover the
 complete selected view. **Details → Remove** removes an eligible download
