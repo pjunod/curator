@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"crypto/tls"
+	"database/sql"
 	"encoding/hex"
 	"errors"
 	"io"
@@ -200,5 +201,46 @@ func TestSessionCookieTransportBoundary(t *testing.T) {
 	r.Header.Set("X-Forwarded-Proto", "https")
 	if s.secureSessionRequest(r) {
 		t.Fatal("proxy trusted by default")
+	}
+}
+
+type unavailableAuthRead struct {
+	SettingsStore
+	readErr error
+}
+
+func (s unavailableAuthRead) GetMeta(ctx context.Context, key string) (string, error) {
+	if key == AuthRequiredSetting {
+		return "", s.readErr
+	}
+	return s.SettingsStore.GetMeta(ctx, key)
+}
+func TestAuthSettingsReadFailureCannotOpenGate(t *testing.T) {
+	store := legacyAuthSettings()
+	store.values[AuthRequiredSetting] = "true"
+	store.values[APIKeySetting] = "recovery-key"
+	for _, tc := range []struct {
+		name    string
+		readErr error
+		apiKey  string
+		want    int
+	}{
+		{"unavailable", errors.New("database unavailable"), "", http.StatusUnauthorized},
+		{"key recovery", errors.New("database unavailable"), "recovery-key", http.StatusNoContent},
+		{"unset default", sql.ErrNoRows, "", http.StatusNoContent},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := authTestServer(unavailableAuthRead{store, tc.readErr})
+			h := s.authGuard(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNoContent) }))
+			r := httptest.NewRequest("GET", "/api/v1/system/status", nil)
+			if tc.apiKey != "" {
+				r.Header.Set("X-Api-Key", tc.apiKey)
+			}
+			w := httptest.NewRecorder()
+			h.ServeHTTP(w, r)
+			if w.Code != tc.want {
+				t.Fatalf("auth setting read error opened gate: got %d want %d", w.Code, tc.want)
+			}
+		})
 	}
 }

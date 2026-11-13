@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -158,7 +159,16 @@ func (s *Server) readSettingOr(ctx context.Context, key, fallback string) string
 
 // authRequired reports whether native-API auth is on.
 func (s *Server) authRequired(ctx context.Context) bool {
-	return s.readSettingOr(ctx, AuthRequiredSetting, "false") == "true"
+	if s.deps.Settings == nil {
+		return false
+	}
+	value, err := s.deps.Settings.GetMeta(ctx, AuthRequiredSetting)
+	// An absent opt-in setting preserves the open default. A storage failure
+	// must never turn an enabled guard off; valid credentials still work.
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return true
+	}
+	return value == "true"
 }
 
 // authenticated reports whether this request carries valid credentials.

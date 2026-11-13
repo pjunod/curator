@@ -125,3 +125,9 @@ rejects comma-separated or repeated scheme headers. `Forwarded` and
 password replacement and the LAN/TLS/proxy boundary. Conditional Secure
 handling and the legacy verifier may still appear in static analysis;
 neither warrants suppressing the scans or breaking supported HTTP installs.
+
+A missing `auth_required` setting preserves the opt-in default. An actual
+settings-read error requires authentication instead of opening the gate;
+`TestAuthSettingsReadFailureCannotOpenGate` covers the failure, absent-row
+default and a still-readable API key. This was a confirmed adjacent defect
+found by fault injection during the password-storage review.

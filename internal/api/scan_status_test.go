@@ -92,10 +92,18 @@ func (f scanQueueFunc) EnqueueUnique(ctx context.Context, job domain.Job) (bool,
 // completed state that could make a broken scan look successful.
 func TestScanStatusStorageFailureIsVisible(t *testing.T) {
 	e := newAPIEnv(t)
+	token := liveSessions.create()
+	t.Cleanup(func() { liveSessions.drop(token) })
 	if err := e.db.Close(); err != nil {
 		t.Fatal(err)
 	}
-	rr := do(t, e.h, http.MethodGet, "/api/v1/library/scan", "")
+	// With no readable auth configuration, an unauthenticated request must
+	// not reach the handler. An already authenticated operator can still see
+	// the original actionable storage failure rather than a synthetic status.
+	if rr := do(t, e.h, http.MethodGet, "/api/v1/library/scan", ""); rr.Code != http.StatusUnauthorized {
+		t.Fatalf("unavailable auth configuration opened gate: %d", rr.Code)
+	}
+	rr := doWithHeader(t, e.h, http.MethodGet, "/api/v1/library/scan", "", "Cookie", sessionCookie+"="+token)
 	if rr.Code != http.StatusInternalServerError {
 		t.Fatalf("unavailable status: %d %s", rr.Code, rr.Body.String())
 	}
