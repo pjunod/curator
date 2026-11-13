@@ -292,6 +292,7 @@ database and be managed in the UI, per the *arr operational model.
 | `MONARR_DATA_DIR` | `./data` | SQLite database, backups, runtime state |
 | `MONARR_LOG_LEVEL` | `info` | `debug` \| `info` \| `warn` \| `error` |
 | `MONARR_LOG_FORMAT` | `text` | `text` \| `json` |
+| `MONARR_TRUSTED_PROXIES` | unset | Comma-separated proxy CIDRs allowed to assert HTTPS for session cookies; see [security checks](docs/SECURITY_CHECKS.md#authentication-and-proxy-transport). |
 | `MONARR_CONFIG` | *(unset)* | Optional JSON config file with the same keys |
 
 ## API
