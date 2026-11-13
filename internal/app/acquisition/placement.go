@@ -1270,6 +1270,10 @@ func (s *Service) reconcilePlacement(ctx context.Context, p sqlite.Placement) {
 		}
 		return
 	}
+	if superseded, e := s.db.IsSupersededStage(ctx, p.ID); e == nil && superseded {
+		s.sweepSupersededStage(ctx, p, true)
+		return
+	}
 	var recovery RecoveryImport
 	var recoveryObservation string
 	if p.RecoveryImport != "" {
@@ -1494,4 +1498,155 @@ func (s *Service) verifyRecoveryPublications(ctx context.Context, r RecoveryImpo
 		return fmt.Errorf("not every staged file has a surviving publication")
 	}
 	return nil
+}
+
+// sweepSupersededStage ends a stage no import will ever use again (see
+// sqlite.SupersededStages): it removes the stage's temporary file and marks
+// the placement rolled back. It is not rollbackPlacement, which removes a
+// target whose digest matches: a later epoch may have published the same
+// bytes there. A stage whose prior-file backup is on disk is settled first
+// (settleSupersededBackup), only when withBackup says the caller holds the
+// stage's title (reconciliation and the hourly pass); an import retry leaves
+// those to them. Anything that cannot be proven is left for the next pass.
+func (s *Service) sweepSupersededStage(ctx context.Context, p sqlite.Placement, withBackup bool) bool {
+	if p.Temporary == "" || p.Temporary == p.Target || !strings.HasPrefix(filepath.Base(p.Temporary), ".monarr-stage-") {
+		return false
+	}
+	if p.Backup != "" {
+		_, err := os.Lstat(p.Backup)
+		switch {
+		case err == nil:
+			if !withBackup || !s.settleSupersededBackup(ctx, p) {
+				return false
+			}
+		case !errors.Is(err, os.ErrNotExist):
+			return false // cannot be proven absent: the next pass decides
+		}
+	}
+	if err := os.Remove(p.Temporary); err != nil && !errors.Is(err, os.ErrNotExist) {
+		s.log.Warn("superseded import stage not removed; retried next pass", "placement", p.ID, "err", err)
+		return false
+	}
+	ok, err := s.db.RollBackSupersededStage(context.WithoutCancel(ctx), p.ID)
+	if err != nil || !ok {
+		return false
+	}
+	s.log.Info("superseded import stage removed", "placement", p.ID, "download", p.DownloadID)
+	return true
+}
+
+// settleSupersededBackup decides a superseded stage's prior-file backup, a
+// file Curator created, under the title's import lock (decisions 2026-11-12,
+// recorded in STATUS.md for review). An existing target is never
+// overwritten:
+//
+//   - the target exists (it verifies as the committed import, holds the prior
+//     file, or holds bytes someone else put there, which are kept): the backup
+//     is superseded and removed;
+//   - the target is missing: a backup whose bytes are the recorded prior file
+//     is renamed back onto it; any other backup is removed;
+//   - nothing can be proven (an I/O error, a target directory that is not the
+//     one recorded): false, and the next pass decides.
+func (s *Service) settleSupersededBackup(ctx context.Context, p sqlite.Placement) bool {
+	if p.Backup == p.Target || !strings.HasPrefix(filepath.Base(p.Backup), ".monarr-prior-") || filepath.Dir(p.Backup) != filepath.Dir(p.Target) {
+		return false
+	}
+	if p.TargetParentIdentity != "" {
+		if _, parent, err := placementParentIdentity(p.Target); err != nil || parent != p.TargetParentIdentity {
+			s.log.Warn("superseded import stage kept for the next pass: its target directory is not the recorded one", "placement", p.ID, "err", err)
+			return false
+		}
+	}
+	removeBackup := func(why string) bool {
+		if e := os.Remove(p.Backup); e != nil && !errors.Is(e, os.ErrNotExist) {
+			return false
+		}
+		if e := syncPath(filepath.Dir(p.Target)); e != nil {
+			return false
+		}
+		s.log.Warn("superseded import stage: its prior-file backup removed", "placement", p.ID, "target", p.Target, "why", why)
+		return true
+	}
+	got, _, err := fileDigest(ctx, p.Target)
+	if err == nil {
+		rec, recorded, e := s.db.CommittedPlacementForTarget(ctx, p.Target, "")
+		switch {
+		case e != nil:
+			return false
+		case recorded && got == rec.SHA256:
+			return removeBackup("the target verifies against its committed placement")
+		case p.PreviousSHA256 != "" && got == p.PreviousSHA256:
+			return removeBackup("the target holds the prior file")
+		default:
+			return removeBackup("the target holds a file Curator did not record; it is kept")
+		}
+	}
+	if !errors.Is(err, os.ErrNotExist) {
+		return false
+	}
+	b, _, err := fileDigest(ctx, p.Backup)
+	if err != nil {
+		return false
+	}
+	if p.PreviousSHA256 == "" || b != p.PreviousSHA256 {
+		return removeBackup("the target is missing and the backup is not the recorded prior file")
+	}
+	if e := os.Rename(p.Backup, p.Target); e != nil {
+		return false
+	}
+	if e := syncPublication(p.Target); e != nil {
+		return false
+	}
+	s.log.Warn("superseded import stage: prior library file restored from its backup", "placement", p.ID, "target", p.Target)
+	return true
+}
+
+// sweepSupersededStages ends one download's superseded stages that need no
+// title lock (the caller does not hold one).
+func (s *Service) sweepSupersededStages(ctx context.Context, downloadID int64) {
+	stages, err := s.db.SupersededStages(ctx, downloadID)
+	if err != nil {
+		return
+	}
+	for _, p := range stages {
+		s.sweepSupersededStage(ctx, p, false)
+	}
+}
+
+// sweepAllSupersededStages is the hourly pass over every superseded stage,
+// each under its own title's import lock, so a stage whose backup could not
+// be decided is retried on that cadence (reconciliation runs at start only).
+func (s *Service) sweepAllSupersededStages(ctx context.Context) {
+	stages, err := s.db.SupersededStages(ctx, 0)
+	if err != nil {
+		s.log.Warn("superseded import stages unreadable", "err", err)
+		return
+	}
+	for _, row := range stages {
+		if ctx.Err() != nil {
+			return
+		}
+		targetCtx, release := s.lockImportTarget(ctx, row.ItemID)
+		if p, e := s.db.GetPlacement(targetCtx, row.ID); e == nil && p.State == "prepared" {
+			if superseded, e := s.db.IsSupersededStage(targetCtx, p.ID); e == nil && superseded {
+				s.sweepSupersededStage(targetCtx, p, true)
+			}
+		}
+		release()
+	}
+}
+
+// beginImportRetry opens a fresh attempt epoch for dl and ends the stages the
+// epochs before it left behind. kind is the publication about to be imported
+// ("" for none): a salvage records only its step (it never decides the row).
+func (s *Service) beginImportRetry(ctx context.Context, dl sqlite.Download, kind string) (sqlite.ImportAttempt, error) {
+	begin := s.db.BeginImportRetry
+	if kind == "salvage" {
+		begin = s.db.BeginSalvageImportRetry
+	}
+	a, err := begin(ctx, dl.ID, dl.GenerationKey)
+	if err == nil {
+		s.sweepSupersededStages(ctx, dl.ID)
+	}
+	return a, err
 }

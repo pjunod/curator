@@ -6,7 +6,8 @@ Read before touching anything. These rules reflect the owner's September 30,
 ## 1. Work in your own clone
 
 Never work in the owner's repositories under `~/code`. Create an independent
-clone outside that directory and use a `codex/` branch. Do not leave source,
+clone outside that directory and use a branch named for your agent (`claude/` for Claude,
+`codex/` for Codex). Do not leave source,
 build output, test artifacts, or agent scratch files in the owner's checkout.
 Clean up your clone, temporary files, processes, and remote branch after merge.
 Preserve other people's work; remove only artifacts you created.

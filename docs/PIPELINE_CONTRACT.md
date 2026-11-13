@@ -733,7 +733,7 @@ Rollout: **every cinema node is upgraded before curator sends
 `removed_paths`.** A cinema without `probe_only` would walk `path` on a chunk
 that carries only expected files; curator gates on the `removed_paths`
 feature, which the upgraded cinema advertises only together with `probe_only`.
-Curator 0.47.0 after it.
+Curator 0.48.0 after it.
 Compat test exercises the real old handler, as 4.3 does.
 
 ---
@@ -848,7 +848,7 @@ accepted, partially placed publication.
 |---|---|---|
 | new | old | `wait_ms`, `request_key` and `probe_paths` are ignored by old cinema; 202 is handled; the status poll gets 403 and the sub-delivery shows `queued (cinema does not report results)`; the Test falls back to the legacy probe (§4.3); old cinema's single 422 is treated as permanent as today |
 | old | new | nothing changes for old curator |
-| new (0.47.0+) | without `removed_paths` | a move sends the new folder only and says the old entry stays until cinema's next scan (§4.4) |
+| new (0.48.0+) | without `removed_paths` | a move sends the new folder only and says the old entry stays until cinema's next scan (§4.4) |
 
 Order: runner M1 → curator M2 (same day) → runner M3 → curator M4 → curator
 M5 + cinema M5 → M6 deletions (see the plan). Nothing is feature-gated in

@@ -178,6 +178,9 @@ func TestQueueManualImportRejectsFileGenerationChangedWhileWaitingForAdmission(t
 	}
 }
 
+// waitForQueueManualImportAdmissionLockWait reports that QueueManualImport is
+// blocked on the import-target lock the test holds (the serialized admission
+// section), after it recorded the selected files' generations.
 func waitForQueueManualImportAdmissionLockWait() bool {
 	deadline := time.Now().Add(3 * time.Second)
 	ticker := time.NewTicker(time.Millisecond)
@@ -186,7 +189,12 @@ func waitForQueueManualImportAdmissionLockWait() bool {
 	for time.Now().Before(deadline) {
 		n := runtime.Stack(stack, true)
 		for _, goroutine := range strings.Split(string(stack[:n]), "\n\n") {
-			if strings.Contains(goroutine, "QueueManualImport") && (strings.Contains(goroutine, "sync.(*Mutex).Lock") || strings.Contains(goroutine, "sync.(*RWMutex).RLock")) {
+			// Only the admission lock counts: the request snapshots its file
+			// generations before it, and a goroutine merely passing a
+			// database/sql or other mutex earlier in QueueManualImport has not
+			// taken that snapshot yet (matching any Lock let the test change
+			// the file first, so the "changed" file became the original).
+			if strings.Contains(goroutine, "QueueManualImport") && strings.Contains(goroutine, "lockImportTarget") && strings.Contains(goroutine, "sync.(*RWMutex).RLock") {
 				return true
 			}
 		}

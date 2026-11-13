@@ -3340,7 +3340,7 @@ type QueuePublication struct {
 	// Kind completed | salvage
 	Kind string `json:"kind"`
 
-	// ManifestSource file | v1_record | none
+	// ManifestSource file | none (v1_record on a removed publication until migration 0079 normalises it)
 	ManifestSource *string `json:"manifestSource,omitempty"`
 	Path           string  `json:"path"`
 

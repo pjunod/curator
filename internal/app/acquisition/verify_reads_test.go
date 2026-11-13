@@ -62,7 +62,9 @@ func TestForegroundVerificationIsNotStarvedByBackgroundReads(t *testing.T) {
 	if _, err := io.Copy(io.Discard, fg); err != nil {
 		t.Fatal(err)
 	}
-	if elapsed := time.Since(start); elapsed > 50*time.Millisecond {
+	// Paced, it would take about 0.8 s; the bound leaves room for the race
+	// detector's slower copy (50 ms flaked under -race: 50-110 ms observed).
+	if elapsed := time.Since(start); elapsed > 300*time.Millisecond {
 		t.Fatalf("a foreground read waited %v on a read budget", elapsed)
 	}
 	// With a foreground read just seen, background reads also pay the yield

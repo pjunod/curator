@@ -35,6 +35,10 @@ import (
 //     says completed and no publication arrived within overdueCompletedGrace:
 //     failed (an empty queue decides nothing);
 //
+// When the job is still listed in Runner's queue (stalled or blocked), the
+// failure is followed by one best-effort cancel in Runner; its outcome never
+// changes the failure or the regrab.
+//
 // "Failed" is blameless (no blocklist) with the want grabbed again
 // (FailOverdueDownload). An unreachable Runner decides nothing. A row whose
 // client is gone or disabled is ended by exitOrphanedOverdue.
@@ -137,6 +141,10 @@ func (s *Service) exitOverdue(ctx context.Context, cfg ports.ClientConfig, feeds
 		s.log.Info("overdue exit skipped: Runner's queue came back empty", "client", cfg.Name, "overdue", len(rows))
 		return
 	}
+	var cancels []overdueCancel
+	// Best-effort Runner cancels of the jobs failed below run after the loop,
+	// in the background, so they can never stall the poll.
+	defer func() { s.cancelOverdueInRunner(cfg, cancels) }()
 	for _, dl := range rows {
 		if ctx.Err() != nil {
 			return
@@ -178,8 +186,10 @@ func (s *Service) exitOverdue(ctx context.Context, cfg ports.ClientConfig, feeds
 		case inQueue && st.Control != nil && st.Control.Cause != "" && st.Control.DeadlineUnix != nil && now.Unix() > *st.Control.DeadlineUnix:
 			// Runner's own retry deadline for what blocks it has passed and it
 			// still lists the job blocked: it is not going to finish it.
-			s.failOverdue(ctx, dl, fmt.Sprintf("Runner has held it on %s past Runner's own deadline (%s)", st.Control.Cause,
-				time.Unix(*st.Control.DeadlineUnix, 0).UTC().Format(time.RFC3339)), true)
+			if s.failOverdue(ctx, dl, fmt.Sprintf("Runner has held it on %s past Runner's own deadline (%s)", st.Control.Cause,
+				time.Unix(*st.Control.DeadlineUnix, 0).UTC().Format(time.RFC3339)), true) {
+				cancels = append(cancels, overdueCancel{dl.ID, overdueHandle(dl, st)})
+			}
 		case inQueue && heldStatus(st):
 			// Runner holds it: its hold is self-clearing and has its own
 			// deadline (hold_expired), and the row stays held (stale)
@@ -189,7 +199,9 @@ func (s *Service) exitOverdue(ctx context.Context, cfg ports.ClientConfig, feeds
 				continue
 			}
 			if _, still := s.progressing(cfg.ID, dl.ID, st, now); still >= overdueStallLimit {
-				s.failOverdue(ctx, dl, fmt.Sprintf("Runner has held it without progress for %s past its deadline", overdueStallLimit), true)
+				if s.failOverdue(ctx, dl, fmt.Sprintf("Runner has held it without progress for %s past its deadline", overdueStallLimit), true) {
+					cancels = append(cancels, overdueCancel{dl.ID, overdueHandle(dl, st)})
+				}
 			}
 		case inQueue:
 			moved, still := s.progressing(cfg.ID, dl.ID, st, now)
@@ -203,7 +215,9 @@ func (s *Service) exitOverdue(ctx context.Context, cfg ports.ClientConfig, feeds
 			if still < overdueStallLimit {
 				continue
 			}
-			s.failOverdue(ctx, dl, fmt.Sprintf("Runner has made no progress on it for %s past its deadline", overdueStallLimit), true)
+			if s.failOverdue(ctx, dl, fmt.Sprintf("Runner has made no progress on it for %s past its deadline", overdueStallLimit), true) {
+				cancels = append(cancels, overdueCancel{dl.ID, overdueHandle(dl, st)})
+			}
 		case known && adm.Outcome == "completed":
 			// Its publication may still be on its way by the deliveries feed.
 			if heldFor(&s.overdueCompleted, cfg.ID, dl.ID, now) < overdueCompletedGrace {
@@ -223,6 +237,57 @@ func (s *Service) exitOverdue(ctx context.Context, cfg ports.ClientConfig, feeds
 			}
 		}
 	}
+}
+
+// overdueCancelTimeout bounds the best-effort Runner cancel.
+const overdueCancelTimeout = 3 * time.Second
+
+// overdueCancel is a job Curator failed while Runner still listed it.
+type overdueCancel struct {
+	id     int64
+	handle string
+}
+
+func overdueHandle(dl sqlite.Download, st ports.DownloadStatus) string {
+	if dl.Handle != "" {
+		return dl.Handle
+	}
+	return string(st.Handle)
+}
+
+// cancelOverdueInRunner asks Runner, once and in the background, to cancel
+// jobs Curator has already failed (the fail is committed before this runs).
+// It uses the queue-only cancel: a job that finished since the poll answers
+// 404, which is not an error, and its history record is never deleted. A
+// client without that capability is not cancelled at all (no Remove
+// fallback). A handle a live row (such as the replacement) now owns is
+// skipped. Failures are logged and dropped, never retried.
+func (s *Service) cancelOverdueInRunner(cfg ports.ClientConfig, cancels []overdueCancel) {
+	if len(cancels) == 0 {
+		return
+	}
+	go func() {
+		client, ok := s.newClient(cfg).(ports.QueueCanceller)
+		if !ok {
+			return
+		}
+		for _, c := range cancels {
+			if c.handle == "" {
+				continue
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), overdueCancelTimeout)
+			if live, found, err := s.db.DownloadByHandle(ctx, cfg.ID, c.handle); err != nil || (found && live.ID != c.id) {
+				cancel()
+				continue
+			}
+			if err := client.CancelQueued(ctx, ports.Handle(c.handle)); err != nil {
+				s.log.Warn("overdue download failed in Curator; Runner cancel not accepted (not retried)", "download", c.id, "client", cfg.Name, "err", err)
+			} else {
+				s.log.Info("overdue download failed in Curator; cancelled in Runner", "download", c.id, "client", cfg.Name)
+			}
+			cancel()
+		}
+	}()
 }
 
 // exitOrphanedOverdue ends overdue rows whose client is gone or disabled:
@@ -250,9 +315,9 @@ func (s *Service) exitOrphanedOverdue(ctx context.Context) (int, error) {
 
 // publicationOwnsExit reports a row whose import owns its exit: a
 // publication waiting for or in its import (the publication's own deadline
-// and attempt cap end it), or import custody still open — a held stage or a
-// pending or retained authorization, which the import's reconciliation
-// settles.
+// and attempt cap end it), or import custody still open on an unfinished
+// attempt — a held stage or a pending or retained authorization, which the
+// import's reconciliation settles.
 func (s *Service) publicationOwnsExit(ctx context.Context, dl sqlite.Download) bool {
 	pubs, err := s.db.ListPublicationsForDownload(ctx, dl.ID)
 	if err != nil {
@@ -264,8 +329,14 @@ func (s *Service) publicationOwnsExit(ctx context.Context, dl sqlite.Download) b
 		}
 	}
 	if dl.GenerationKey != "" {
+		// A finished attempt (outcome completed) owns nothing: no import will
+		// move the row again. A stage an earlier epoch left prepared is the
+		// placement journal's to end (sweepSupersededStage removes its
+		// temporary), never a reason to pin the row's state (download 1196:
+		// salvage imported in epoch 1, epoch 0's stage left prepared, the row
+		// held in downloaded past its deadline for ever).
 		a, err := s.db.GetImportAttempt(ctx, dl.ID, dl.GenerationKey)
-		if err == nil && (a.HeldStages > 0 || a.PendingPublications > 0 || a.RetainedPublications > 0) {
+		if err == nil && a.Outcome != "completed" && (a.HeldStages > 0 || a.PendingPublications > 0 || a.RetainedPublications > 0) {
 			return true
 		}
 	}

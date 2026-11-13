@@ -35,7 +35,6 @@ func migratedReceipt(t *testing.T, accept bool) *v1Receipt {
 	pub := f.publish("Test.Show.S01.job-55.runner-v1r", "v1r", map[string]string{"Test.Show.S01E01.mkv": "e1", "Test.Show.S01E02.mkv": "e2"})
 	m := mustReadManifest(t, pub.Path)
 	raw, _ := os.ReadFile(filepath.Join(pub.Path, ports.ManifestFileName))
-	_ = os.Remove(filepath.Join(pub.Path, ports.ManifestFileName))
 	v := ports.RunnerDelivery{Sequence: 1, DeliveryID: "d-v1r", PublicationGeneration: "v1r", ArtifactID: "a", JobID: dl.Handle,
 		RequestToken: dl.Transfer, RunnerInstanceID: "runner", PublicationPath: "/runner/completed/" + filepath.Base(pub.Path),
 		ManifestDigest: m.Digest, ReadyAt: time.Now()}

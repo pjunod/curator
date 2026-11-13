@@ -16,14 +16,14 @@ import (
 // Pipeline contract v2 (docs/PIPELINE_CONTRACT.md sections 2.1-2.5): the
 // adapter reads Runner's terminal, status and publication facts from the
 // event stream, the ordered history and the deliveries feed, and hands them
-// to the reducer as ports.RunnerFact. A Runner older than M1a sends none of
-// the typed fields; its legacy history string is mapped by the rule in
-// contract section 6.
+// to the reducer as ports.RunnerFact. A row without the typed terminal
+// (outcome) is not a terminal: Curator no longer reads the v1 `pp_status` and
+// `final_dir` strings.
 
 var _ ports.RunnerFeeds = (*Client)(nil)
 
 // terminalWire is the typed terminal on job_pp_finished and on a history
-// row. Every field is absent on an older Runner.
+// row.
 type terminalWire struct {
 	Transfer      string           `json:"transfer"`
 	Outcome       string           `json:"outcome"`
@@ -54,45 +54,27 @@ func (p *publicationWire) port(kind string) *ports.RunnerPublication {
 		Files: p.Files, CrossVolume: p.CrossVolume, Kind: kind}
 }
 
-// terminalOf builds the terminal from the typed fields when Runner sent
-// them, else from the legacy history string. ok=false for a row that is not
-// actionable yet (a SUCCESS without its final path).
-func terminalOf(w terminalWire, ppStatus, finalDir string, params [][2]string, record *historyRecord) (ports.RunnerTerminal, bool) {
-	var t ports.RunnerTerminal
-	if w.Outcome != "" {
-		t = ports.RunnerTerminal{Outcome: w.Outcome, Reason: w.Reason, FetchCause: w.FetchCause, Stage: w.Stage,
-			Message: w.Message, Salvage: w.Salvage, KeepOnFailure: w.KeepOnFailure, LegacyPPStatus: ppStatus, LegacyFinalDir: finalDir}
-		if w.BlamesRelease != nil {
-			t.BlamesRelease = *w.BlamesRelease
-		} else if w.Outcome == ports.OutcomeFailed {
-			// A typed failure without blame: the reason decides (contract 2.2).
-			t.BlamesRelease = reasonBlames(w.Reason, w.FetchCause)
-		}
-		if w.Fetched != nil {
-			t.Fetched = *w.Fetched
-		}
-		if w.Outcome == ports.OutcomeCompleted {
-			t.Publication = w.Publication.port("completed")
-			if t.Publication == nil && finalDir != "" {
-				t.Publication = &ports.RunnerPublication{Path: finalDir, Kind: "completed"}
-			}
-		}
-	} else {
-		if ppStatus == "" {
+// terminalOf builds the terminal from the typed fields. ok=false for a row
+// without them, and for a completed row without its publication.
+func terminalOf(w terminalWire, params [][2]string, record *historyRecord) (ports.RunnerTerminal, bool) {
+	if w.Outcome == "" {
+		return ports.RunnerTerminal{}, false
+	}
+	t := ports.RunnerTerminal{Outcome: w.Outcome, Reason: w.Reason, FetchCause: w.FetchCause, Stage: w.Stage,
+		Message: w.Message, Salvage: w.Salvage, KeepOnFailure: w.KeepOnFailure}
+	if w.BlamesRelease != nil {
+		t.BlamesRelease = *w.BlamesRelease
+	} else if w.Outcome == ports.OutcomeFailed {
+		// A typed failure without blame: the reason decides (contract 2.2).
+		t.BlamesRelease = reasonBlames(w.Reason, w.FetchCause)
+	}
+	if w.Fetched != nil {
+		t.Fetched = *w.Fetched
+	}
+	if w.Outcome == ports.OutcomeCompleted {
+		t.Publication = w.Publication.port("completed")
+		if t.Publication == nil {
 			return t, false
-		}
-		t = ports.LegacyTerminal(ppStatus, false)
-		t.LegacyFinalDir = finalDir
-		if t.Outcome == ports.OutcomeCompleted {
-			if strings.TrimSpace(finalDir) == "" {
-				return t, false
-			}
-			t.Publication = &ports.RunnerPublication{Path: finalDir, Kind: "completed"}
-		}
-		if t.Outcome == ports.OutcomeFailed {
-			if files := paramValue(params, "Failure:Files"); strings.TrimSpace(files) != "" {
-				t.Message += "; files: " + files
-			}
 		}
 	}
 	if t.Publication != nil {
@@ -134,7 +116,7 @@ func transferOf(explicit string, params [][2]string) string {
 
 // historyFact turns one history row into a terminal fact.
 func historyFact(h historyEntry, incarnation string) (ports.RunnerFact, bool) {
-	t, ok := terminalOf(h.terminalWire, h.Status, h.FinalDir, h.Params, h.Record)
+	t, ok := terminalOf(h.terminalWire, h.Params, h.Record)
 	if !ok {
 		return ports.RunnerFact{}, false
 	}
@@ -222,15 +204,10 @@ func (c *Client) DeliveriesSince(ctx context.Context, after uint64, limit int) (
 func deliveryFact(d ports.RunnerDelivery) ports.RunnerFact {
 	kind := d.Kind
 	if kind == "" {
-		// A pre-M1a row: a non-success terminal outcome is a salvage.
 		kind = "completed"
-		if d.TerminalOutcome != "" && !strings.HasPrefix(d.TerminalOutcome, "SUCCESS") {
-			kind = "salvage"
-		}
 	}
-	m := ports.ManifestFromRunnerFiles(d.PublicationGeneration, d.ManifestDigest, d.DeliveryID, d.Files)
 	pub := &ports.RunnerPublication{Path: d.PublicationPath, Generation: d.PublicationGeneration, ManifestDigest: d.ManifestDigest,
-		Files: len(d.Files), Kind: kind, Manifest: &m}
+		Files: len(d.Files), Kind: kind}
 	f := ports.RunnerFact{Transfer: d.RequestToken, Handle: ports.Handle(d.JobID), Publication: pub,
 		Source: fmt.Sprintf("deliveries %d", d.Sequence)}
 	if kind == "salvage" {
@@ -238,7 +215,7 @@ func deliveryFact(d ports.RunnerDelivery) ports.RunnerFact {
 		return f
 	}
 	f.Kind = ports.FactTerminal
-	f.Terminal = &ports.RunnerTerminal{Outcome: ports.OutcomeCompleted, Salvage: "none", Publication: pub, LegacyPPStatus: d.TerminalOutcome}
+	f.Terminal = &ports.RunnerTerminal{Outcome: ports.OutcomeCompleted, Salvage: "none", Publication: pub}
 	return f
 }
 
@@ -247,8 +224,6 @@ func ppFinishedFact(data []byte, seq uint64) (ports.RunnerFact, bool) {
 	var f struct {
 		terminalWire
 		Job                int64       `json:"job"`
-		PpStatus           string      `json:"pp_status"`
-		FinalDir           string      `json:"final_dir"`
 		Params             [][2]string `json:"params"`
 		HistorySeq         int64       `json:"history_seq"`
 		HistoryIncarnation string      `json:"history_incarnation"`
@@ -256,7 +231,7 @@ func ppFinishedFact(data []byte, seq uint64) (ports.RunnerFact, bool) {
 	if json.Unmarshal(data, &f) != nil {
 		return ports.RunnerFact{}, false
 	}
-	t, ok := terminalOf(f.terminalWire, f.PpStatus, f.FinalDir, f.Params, nil)
+	t, ok := terminalOf(f.terminalWire, f.Params, nil)
 	if !ok {
 		return ports.RunnerFact{}, false
 	}

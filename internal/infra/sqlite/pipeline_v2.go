@@ -162,7 +162,7 @@ type PublicationWrite struct {
 	Path         string // Curator's view (mapped)
 	RemotePath   string // Runner's view
 	ManifestJSON string // '' when no manifest body is known yet
-	Source       string // file | v1_record | none
+	Source       string // file | none
 	CrossVolume  bool
 	Cohort       string
 }
@@ -709,15 +709,16 @@ func (d *DB) CountOverduePublications(ctx context.Context, now time.Time) (int, 
 	return n, err
 }
 
-// AttachPublicationManifest fills in a manifest a publication did not have
-// yet (the v1 record arriving on the deliveries feed after the event).
-func (d *DB) AttachPublicationManifest(ctx context.Context, id int64, manifestJSON, source string, crossVolume bool) error {
+// RecordPublicationFileManifest stores the manifest read from the
+// directory's .runner-manifest.json on a publication that had none: the
+// cleanup then requires the file to stay until every file is removed.
+func (d *DB) RecordPublicationFileManifest(ctx context.Context, id int64, manifestJSON string, crossVolume bool) error {
 	cross := 0
 	if crossVolume {
 		cross = 1
 	}
-	_, err := d.W.ExecContext(ctx, `UPDATE publications SET manifest_json=?, manifest_source=?, cross_volume=?, updated_at=? WHERE id=? AND manifest_source='none' AND state IN ('discovered','importing')`,
-		manifestJSON, source, cross, time.Now().UnixMilli(), id)
+	_, err := d.W.ExecContext(ctx, `UPDATE publications SET manifest_json=?, manifest_source='file', cross_volume=MAX(cross_volume,?), updated_at=? WHERE id=? AND manifest_source='none'`,
+		manifestJSON, cross, time.Now().UnixMilli(), id)
 	return err
 }
 

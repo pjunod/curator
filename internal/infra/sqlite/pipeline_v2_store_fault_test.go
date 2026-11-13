@@ -242,9 +242,6 @@ func TestPipelineV2StoreWriteFailuresAreReportedAndAtomic(t *testing.T) {
 			_, err := f.db.UpdateRunnerStatus(ctx, RunnerStatusWrite{DownloadID: f.dl.ID, Transfer: f.dl.Transfer, State: "downloading", Progress: 0.5, Stage: "unpack", Handoff: &HandoffEntry{Step: "downloading"}})
 			return err
 		}},
-		"attach-manifest": {run: func(f pipelineFixture) error {
-			return f.db.AttachPublicationManifest(ctx, f.publication, `{"files":[]}`, "file", true)
-		}},
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {

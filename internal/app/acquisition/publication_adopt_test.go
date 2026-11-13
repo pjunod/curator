@@ -210,7 +210,7 @@ func (f *v2Fixture) pendingMediaFixture(dl sqlite.Download, state string) int64 
 	if err != nil {
 		f.t.Fatal(err)
 	}
-	m, _, err := f.svc.publicationManifest(f.ctx, f.cfg, sqlite.Publication{Path: info.Path, Generation: "ccc"})
+	m, _, err := f.svc.publicationManifest(sqlite.Publication{Path: info.Path, Generation: "ccc"})
 	if err != nil {
 		f.t.Fatal(err)
 	}

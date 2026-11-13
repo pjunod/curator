@@ -2,15 +2,19 @@ package sqlite
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/pressly/goose/v3"
 )
 
-// Migration 0079 rebuilds replacement_operations for the rematch intent. A
-// database with replacement operations and their files and steps keeps every
-// row, every child still points at its operation, and the new intent fits.
-func TestMigration0079KeepsReplacementOperationsAndChildren(t *testing.T) {
+// Migration 0079 (pipeline contract v2, M6b): nothing writes the v1_record
+// source any more, and nothing is refused. A database at goose 77 — what
+// v0.45.x leaves, with v1_record stamped on live publications — migrates; a
+// live (imported) v1_record row keeps its stored manifest so it drains
+// through its cleanup, and only a removed one is normalised.
+func TestMigration0079MigratesLiveV1RecordRowsAndNormalisesOnlyRemoved(t *testing.T) {
 	ctx := context.Background()
 	db, err := Open(t.TempDir())
 	if err != nil {
@@ -22,53 +26,70 @@ func TestMigration0079KeepsReplacementOperationsAndChildren(t *testing.T) {
 	if err := goose.SetDialect("sqlite3"); err != nil {
 		t.Fatal(err)
 	}
-	if err := goose.UpToContext(ctx, db.W, "migrations", 78); err != nil {
+	if err := goose.UpToContext(ctx, db.W, "migrations", 77); err != nil {
 		t.Fatal(err)
 	}
-	for _, q := range []string{
-		`INSERT INTO media_items (id, kind, title, sort_title, added_at, updated_at) VALUES (7, 'movie', 'Dune', 'dune', 0, 0)`,
-		`INSERT INTO replacement_operations(operation_id,request_id,fingerprint,state,intent,scope,media_item_id,source_generation,blacklist_source_release,reason_code,reason,created_at,updated_at,retry_attempts)
-		 VALUES('op-1','req-1','fp','waiting_for_release','replace_bad','download',7,'g',1,'bad','bad file',1,2,3)`,
-		`INSERT INTO replacement_operation_files(operation_id,media_file_id,file_generation,source_generation,path) VALUES('op-1',11,'fg','g','/m/Dune.mkv')`,
-		`INSERT INTO replacement_operation_steps(operation_id,step,state,started_at) VALUES('op-1','accepted','complete',1)`,
-	} {
-		if _, err := db.W.ExecContext(ctx, q); err != nil {
-			t.Fatal(err)
+	exec := func(q string, args ...any) {
+		t.Helper()
+		if _, err := db.W.ExecContext(ctx, q, args...); err != nil {
+			t.Fatalf("%s: %v", q, err)
 		}
 	}
-	if err := goose.UpToContext(ctx, db.W, "migrations", 79); err != nil {
+	manifest := `{"generation":"g","files":[{"path":"a.mkv","bytes":1,"sha256":"d"}],"digest":"x"}`
+	// The live row's directory is on disk with its .runner-manifest.json.
+	live := filepath.Join(t.TempDir(), "live-v1")
+	if err := os.MkdirAll(live, 0o755); err != nil {
 		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(live, ".runner-manifest.json"), []byte(manifest), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for path, row := range map[string][2]string{
+		live:                    {"v1_record", "imported"},
+		"/completed/removed-v1": {"v1_record", "removed"},
+		"/completed/file":       {"file", "imported"},
+		"/completed/frozen":     {"none", "import_failed"},
+	} {
+		id, err := db.InsertPublication(ctx, PublicationWrite{Generation: "g", Kind: "completed", Path: path, ManifestJSON: manifest, Source: row[0], Cohort: "live"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		exec(`UPDATE publications SET state=? WHERE id=?`, row[1], id)
+	}
+	if err := db.Migrate(ctx); err != nil {
+		t.Fatalf("Migrate at goose 77 with a live v1_record publication = %v, want it to run", err)
+	}
+	source := func(path string) (string, string) {
+		t.Helper()
+		var src, body string
+		if err := db.R.QueryRowContext(ctx, `SELECT manifest_source, manifest_json FROM publications WHERE path=?`, path).Scan(&src, &body); err != nil {
+			t.Fatal(err)
+		}
+		return src, body
+	}
+	for path, want := range map[string]string{
+		live: "v1_record", "/completed/file": "file", "/completed/frozen": "none", "/completed/removed-v1": "none",
+	} {
+		src, body := source(path)
+		if src != want {
+			t.Errorf("%s source = %s, want %s", path, src, want)
+		}
+		if path == "/completed/removed-v1" && body != "{}" {
+			t.Errorf("removed row kept its manifest body %q", body)
+		}
+		if path == live && body != manifest {
+			t.Errorf("live v1_record row lost its stored manifest: %q", body)
+		}
+	}
+	if raw, err := os.ReadFile(filepath.Join(live, ".runner-manifest.json")); err != nil || string(raw) != manifest {
+		t.Fatalf("the live publication's manifest file changed: %q (%v)", raw, err)
 	}
 	var state string
-	var retries, files, steps, violations int
-	if err := db.R.QueryRowContext(ctx, `SELECT state,retry_attempts FROM replacement_operations WHERE operation_id='op-1'`).Scan(&state, &retries); err != nil || state != "waiting_for_release" || retries != 3 {
-		t.Fatalf("operation = %s/%d %v, want it kept as it was", state, retries, err)
+	if err := db.R.QueryRowContext(ctx, `SELECT state FROM publications WHERE path=?`, live).Scan(&state); err != nil || state != "imported" {
+		t.Fatalf("live row state = %q (%v), want untouched", state, err)
 	}
-	_ = db.R.QueryRowContext(ctx, `SELECT COUNT(*) FROM replacement_operation_files WHERE operation_id='op-1'`).Scan(&files)
-	_ = db.R.QueryRowContext(ctx, `SELECT COUNT(*) FROM replacement_operation_steps WHERE operation_id='op-1'`).Scan(&steps)
-	_ = db.R.QueryRowContext(ctx, `SELECT COUNT(*) FROM pragma_foreign_key_check`).Scan(&violations)
-	if files != 1 || steps != 1 || violations != 0 {
-		t.Fatalf("files %d steps %d violations %d, want the children kept and valid", files, steps, violations)
-	}
-	var origin string
-	_ = db.R.QueryRowContext(ctx, `SELECT origin FROM media_items WHERE id=7`).Scan(&origin)
-	if origin != "user" {
-		t.Fatalf("origin = %q, want existing items backfilled user", origin)
-	}
-	if _, err := db.W.ExecContext(ctx, `INSERT INTO replacement_operations(operation_id,request_id,fingerprint,state,intent,scope,media_item_id,source_generation,blacklist_source_release,reason_code,reason,created_at,updated_at)
-		VALUES('op-2','req-2','fp','complete','rematch','download',7,'',1,'rematch','re-matched',1,1)`); err != nil {
-		t.Fatalf("the rematch intent is refused: %v", err)
-	}
-	// Down and up again: the rematch rows go, the rest stay.
-	if err := goose.DownToContext(ctx, db.W, "migrations", 78); err != nil {
-		t.Fatal(err)
-	}
-	var n int
-	_ = db.R.QueryRowContext(ctx, `SELECT COUNT(*) FROM replacement_operations`).Scan(&n)
-	if n != 1 {
-		t.Fatalf("operations after down = %d, want only the replacement", n)
-	}
-	if err := goose.UpToContext(ctx, db.W, "migrations", 79); err != nil {
-		t.Fatal(err)
+	var version int64
+	if err := db.R.QueryRowContext(ctx, `SELECT MAX(version_id) FROM goose_db_version`).Scan(&version); err != nil || version < retireV1RecordVersion {
+		t.Fatalf("goose version = %d (%v), want 0079 applied", version, err)
 	}
 }
