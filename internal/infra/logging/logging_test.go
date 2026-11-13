@@ -91,7 +91,7 @@ func TestUntrustedFieldsCannotForgeLogRecords(t *testing.T) {
 		t.Run(format, func(t *testing.T) {
 			var buf bytes.Buffer
 			log := logging.New(&buf, config.Config{LogLevel: "debug", LogFormat: format})
-			log.Warn("import failed", "title", payload, "path", payload, "err", fmt.Errorf("untrusted: %s", payload))
+			log.Warn(payload, "title", payload, "path", payload, "err", fmt.Errorf("untrusted: %s", payload))
 			if bytes.Count(buf.Bytes(), []byte("\n")) != 1 || bytes.ContainsAny(buf.Bytes(), "\r\x1b") {
 				t.Fatalf("record delimiters escaped output boundary: %q", buf.String())
 			}
@@ -100,7 +100,7 @@ func TestUntrustedFieldsCannotForgeLogRecords(t *testing.T) {
 				if err := json.Unmarshal(bytes.TrimSpace(buf.Bytes()), &record); err != nil {
 					t.Fatal(err)
 				}
-				if record["title"] != payload || record["path"] != payload || record["err"] != "untrusted: "+payload {
+				if record["msg"] != payload || record["title"] != payload || record["path"] != payload || record["err"] != "untrusted: "+payload {
 					t.Fatalf("metadata changed: %v", record)
 				}
 			} else if !strings.Contains(buf.String(), `\r\nlevel=ERROR`) {
