@@ -1016,6 +1016,105 @@ func (e RecommendationStatusModelState) Valid() bool {
 	}
 }
 
+// Defines values for RematchBlockedReason.
+const (
+	RematchBlockedReasonDownload    RematchBlockedReason = "download"
+	RematchBlockedReasonImport      RematchBlockedReason = "import"
+	RematchBlockedReasonRematch     RematchBlockedReason = "rematch"
+	RematchBlockedReasonReplacement RematchBlockedReason = "replacement"
+)
+
+// Valid indicates whether the value is a known member of the RematchBlockedReason enum.
+func (e RematchBlockedReason) Valid() bool {
+	switch e {
+	case RematchBlockedReasonDownload:
+		return true
+	case RematchBlockedReasonImport:
+		return true
+	case RematchBlockedReasonRematch:
+		return true
+	case RematchBlockedReasonReplacement:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for RematchMoveMode.
+const (
+	Copy   RematchMoveMode = "copy"
+	Relink RematchMoveMode = "relink"
+	Rename RematchMoveMode = "rename"
+)
+
+// Valid indicates whether the value is a known member of the RematchMoveMode enum.
+func (e RematchMoveMode) Valid() bool {
+	switch e {
+	case Copy:
+		return true
+	case Relink:
+		return true
+	case Rename:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for RematchOperationState.
+const (
+	RematchOperationStateCancelPending RematchOperationState = "cancel_pending"
+	RematchOperationStateCancelled     RematchOperationState = "cancelled"
+	RematchOperationStateCommitted     RematchOperationState = "committed"
+	RematchOperationStateComplete      RematchOperationState = "complete"
+	RematchOperationStateFailed        RematchOperationState = "failed"
+	RematchOperationStateMoved         RematchOperationState = "moved"
+	RematchOperationStateMoving        RematchOperationState = "moving"
+	RematchOperationStatePlanned       RematchOperationState = "planned"
+)
+
+// Valid indicates whether the value is a known member of the RematchOperationState enum.
+func (e RematchOperationState) Valid() bool {
+	switch e {
+	case RematchOperationStateCancelPending:
+		return true
+	case RematchOperationStateCancelled:
+		return true
+	case RematchOperationStateCommitted:
+		return true
+	case RematchOperationStateComplete:
+		return true
+	case RematchOperationStateFailed:
+		return true
+	case RematchOperationStateMoved:
+		return true
+	case RematchOperationStateMoving:
+		return true
+	case RematchOperationStatePlanned:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for RematchPreviewSourceOutcome.
+const (
+	Removed RematchPreviewSourceOutcome = "removed"
+	Stays   RematchPreviewSourceOutcome = "stays"
+)
+
+// Valid indicates whether the value is a known member of the RematchPreviewSourceOutcome enum.
+func (e RematchPreviewSourceOutcome) Valid() bool {
+	switch e {
+	case Removed:
+		return true
+	case Stays:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ReplacementRequestIntent.
 const (
 	ReplaceBad     ReplacementRequestIntent = "replace_bad"
@@ -1036,16 +1135,16 @@ func (e ReplacementRequestIntent) Valid() bool {
 
 // Defines values for ReplacementRequestScope.
 const (
-	Download ReplacementRequestScope = "download"
-	Episodes ReplacementRequestScope = "episodes"
+	ReplacementRequestScopeDownload ReplacementRequestScope = "download"
+	ReplacementRequestScopeEpisodes ReplacementRequestScope = "episodes"
 )
 
 // Valid indicates whether the value is a known member of the ReplacementRequestScope enum.
 func (e ReplacementRequestScope) Valid() bool {
 	switch e {
-	case Download:
+	case ReplacementRequestScopeDownload:
 		return true
-	case Episodes:
+	case ReplacementRequestScopeEpisodes:
 		return true
 	default:
 		return false
@@ -1151,6 +1250,60 @@ func (e StatusHeadlineState) Valid() bool {
 	case StatusHeadlineStateTodo:
 		return true
 	case StatusHeadlineStateWaiting:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for StatusRematchRole.
+const (
+	StatusRematchRoleSource StatusRematchRole = "source"
+	StatusRematchRoleTarget StatusRematchRole = "target"
+)
+
+// Valid indicates whether the value is a known member of the StatusRematchRole enum.
+func (e StatusRematchRole) Valid() bool {
+	switch e {
+	case StatusRematchRoleSource:
+		return true
+	case StatusRematchRoleTarget:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for StatusRematchState.
+const (
+	StatusRematchStateCancelPending StatusRematchState = "cancel_pending"
+	StatusRematchStateCancelled     StatusRematchState = "cancelled"
+	StatusRematchStateCommitted     StatusRematchState = "committed"
+	StatusRematchStateComplete      StatusRematchState = "complete"
+	StatusRematchStateFailed        StatusRematchState = "failed"
+	StatusRematchStateMoved         StatusRematchState = "moved"
+	StatusRematchStateMoving        StatusRematchState = "moving"
+	StatusRematchStatePlanned       StatusRematchState = "planned"
+)
+
+// Valid indicates whether the value is a known member of the StatusRematchState enum.
+func (e StatusRematchState) Valid() bool {
+	switch e {
+	case StatusRematchStateCancelPending:
+		return true
+	case StatusRematchStateCancelled:
+		return true
+	case StatusRematchStateCommitted:
+		return true
+	case StatusRematchStateComplete:
+		return true
+	case StatusRematchStateFailed:
+		return true
+	case StatusRematchStateMoved:
+		return true
+	case StatusRematchStateMoving:
+		return true
+	case StatusRematchStatePlanned:
 		return true
 	default:
 		return false
@@ -2479,12 +2632,15 @@ type ItemStatus struct {
 	Episodes *[]StatusEpisode `json:"episodes,omitempty"`
 
 	// GeneratedAt Unix ms.
-	GeneratedAt int64           `json:"generatedAt"`
-	Headline    StatusHeadline  `json:"headline"`
-	Kind        string          `json:"kind"`
-	MediaItemId int64           `json:"mediaItemId"`
-	Seasons     *[]StatusSeason `json:"seasons,omitempty"`
-	Stages      *[]StatusStage  `json:"stages,omitempty"`
+	GeneratedAt int64          `json:"generatedAt"`
+	Headline    StatusHeadline `json:"headline"`
+	Kind        string         `json:"kind"`
+	MediaItemId int64          `json:"mediaItemId"`
+
+	// Rematch The open Re-match moving files out of or into this item (the panel's "Moving files" block). Stop is POST /rematch/{operationId}/cancel.
+	Rematch *StatusRematch  `json:"rematch,omitempty"`
+	Seasons *[]StatusSeason `json:"seasons,omitempty"`
+	Stages  *[]StatusStage  `json:"stages,omitempty"`
 }
 
 // LanguageOption defines model for LanguageOption.
@@ -2857,13 +3013,19 @@ type MonitorRequest struct {
 
 // Notifier defines model for Notifier.
 type Notifier struct {
-	Enabled  *bool  `json:"enabled,omitempty"`
-	Id       int64  `json:"id"`
-	Name     string `json:"name"`
-	OnFailed *bool  `json:"onFailed,omitempty"`
-	OnGrab   *bool  `json:"onGrab,omitempty"`
-	OnHealth *bool  `json:"onHealth,omitempty"`
-	OnImport *bool  `json:"onImport,omitempty"`
+	Enabled *bool `json:"enabled,omitempty"`
+
+	// Features What the far side's connection test said it supports (Cinema: removed_paths, contract 4.4). Advisory; nothing is gated on it.
+	Features *[]string `json:"features,omitempty"`
+
+	// FeaturesReadAt When features were last read (Unix ms); absent = never.
+	FeaturesReadAt *int64 `json:"featuresReadAt,omitempty"`
+	Id             int64  `json:"id"`
+	Name           string `json:"name"`
+	OnFailed       *bool  `json:"onFailed,omitempty"`
+	OnGrab         *bool  `json:"onGrab,omitempty"`
+	OnHealth       *bool  `json:"onHealth,omitempty"`
+	OnImport       *bool  `json:"onImport,omitempty"`
 
 	// Settings Type-specific: webhook/discord {url}; plex {url, token}; jellyfin and plurx {url, apiKey} — for plurx a scoped plx_ key with scan:trigger, never an admin token.
 	Settings *map[string]string `json:"settings,omitempty"`
@@ -3418,6 +3580,172 @@ type ReleaseCandidate struct {
 	Warning *string `json:"warning,omitempty"`
 }
 
+// RematchBlocked defines model for RematchBlocked.
+type RematchBlocked struct {
+	ItemId  int64                `json:"itemId"`
+	Message string               `json:"message"`
+	Reason  RematchBlockedReason `json:"reason"`
+	Ref     string               `json:"ref"`
+	Retry   bool                 `json:"retry"`
+}
+
+// RematchBlockedReason defines model for RematchBlocked.Reason.
+type RematchBlockedReason string
+
+// RematchConflict defines model for RematchConflict.
+type RematchConflict struct {
+	Blocked *RematchBlocked `json:"blocked,omitempty"`
+	Code    *string         `json:"code,omitempty"`
+	Message string          `json:"message"`
+}
+
+// RematchItemRef defines model for RematchItemRef.
+type RematchItemRef struct {
+	Folder       *string `json:"folder,omitempty"`
+	FolderChosen *bool   `json:"folderChosen,omitempty"`
+	Id           int64   `json:"id"`
+	InLibrary    bool    `json:"inLibrary"`
+	Kind         string  `json:"kind"`
+	Title        string  `json:"title"`
+	Year         *int    `json:"year,omitempty"`
+}
+
+// RematchMove defines model for RematchMove.
+type RematchMove struct {
+	Bytes     int64            `json:"bytes"`
+	Episodes  []int            `json:"episodes"`
+	FileId    int64            `json:"fileId"`
+	From      string           `json:"from"`
+	Label     *string          `json:"label,omitempty"`
+	Mode      *RematchMoveMode `json:"mode,omitempty"`
+	NeedsPick *bool            `json:"needsPick,omitempty"`
+	Note      *string          `json:"note,omitempty"`
+
+	// Problem Why it is left out (stays on disk, leaves the library).
+	Problem  *string `json:"problem,omitempty"`
+	Quality  *string `json:"quality,omitempty"`
+	Season   int     `json:"season"`
+	Sidecars *[]struct {
+		From *string `json:"from,omitempty"`
+		To   *string `json:"to,omitempty"`
+	} `json:"sidecars,omitempty"`
+	To *string `json:"to,omitempty"`
+}
+
+// RematchMoveMode defines model for RematchMove.Mode.
+type RematchMoveMode string
+
+// RematchOperation defines model for RematchOperation.
+type RematchOperation struct {
+	BytesDone  int64 `json:"bytesDone"`
+	BytesTotal int64 `json:"bytesTotal"`
+	Cinema     *[]struct {
+		Directory *string `json:"directory,omitempty"`
+		LastError *string `json:"lastError,omitempty"`
+		Result    *string `json:"result,omitempty"`
+		Status    *string `json:"status,omitempty"`
+		VisibleAt *int64  `json:"visibleAt,omitempty"`
+	} `json:"cinema,omitempty"`
+	CreatedAt   int64   `json:"createdAt"`
+	LastError   *string `json:"lastError,omitempty"`
+	OperationId string  `json:"operationId"`
+
+	// Plan The stored request and preview.
+	Plan      *map[string]interface{} `json:"plan,omitempty"`
+	RequestId string                  `json:"requestId"`
+
+	// Result moved [{from,to,episodes,mode}], leftOut, failed, blocklisted, sourceRemoved, leftBehind, cinemaNote.
+	Result       *map[string]interface{} `json:"result,omitempty"`
+	SourceItemId int64                   `json:"sourceItemId"`
+	State        RematchOperationState   `json:"state"`
+	TargetItemId int64                   `json:"targetItemId"`
+	UpdatedAt    int64                   `json:"updatedAt"`
+}
+
+// RematchOperationState defines model for RematchOperation.State.
+type RematchOperationState string
+
+// RematchPreview defines model for RematchPreview.
+type RematchPreview struct {
+	Blocked   *RematchBlocked `json:"blocked,omitempty"`
+	Blocklist []struct {
+		FileId  *int64  `json:"fileId,omitempty"`
+		Indexer *string `json:"indexer,omitempty"`
+		Release *string `json:"release,omitempty"`
+	} `json:"blocklist"`
+	BlocklistNote *string `json:"blocklistNote,omitempty"`
+	BlocklistOn   bool    `json:"blocklistOn"`
+	Cinema        *string `json:"cinema,omitempty"`
+	Copies        *[]struct {
+		BookType *string `json:"bookType,omitempty"`
+		Id       *int64  `json:"id,omitempty"`
+		Name     *string `json:"name,omitempty"`
+	} `json:"copies,omitempty"`
+	Episodes *[]struct {
+		Episode *int    `json:"episode,omitempty"`
+		HasFile *bool   `json:"hasFile,omitempty"`
+		Season  *int    `json:"season,omitempty"`
+		Title   *string `json:"title,omitempty"`
+	} `json:"episodes,omitempty"`
+	Fingerprint    string                      `json:"fingerprint"`
+	LeftOut        []RematchMove               `json:"leftOut"`
+	Moves          []RematchMove               `json:"moves"`
+	Source         RematchItemRef              `json:"source"`
+	SourceOutcome  RematchPreviewSourceOutcome `json:"sourceOutcome"`
+	SourceReason   string                      `json:"sourceReason"`
+	SourceRevision int64                       `json:"sourceRevision"`
+	Summary        string                      `json:"summary"`
+	Target         RematchItemRef              `json:"target"`
+	TargetCopyId   *int64                      `json:"targetCopyId,omitempty"`
+	TargetRevision int64                       `json:"targetRevision"`
+}
+
+// RematchPreviewSourceOutcome defines model for RematchPreview.SourceOutcome.
+type RematchPreviewSourceOutcome string
+
+// RematchRequest defines model for RematchRequest.
+type RematchRequest struct {
+	// Blocklist Blocklist the moved files' releases for this item (default true).
+	Blocklist *bool `json:"blocklist,omitempty"`
+	Choices   *[]struct {
+		Episodes *[]int `json:"episodes,omitempty"`
+		FileId   int64  `json:"fileId"`
+
+		// Leave Leave it out: it stays on disk and leaves the library.
+		Leave  *bool `json:"leave,omitempty"`
+		Season *int  `json:"season,omitempty"`
+	} `json:"choices,omitempty"`
+
+	// CopyId Target copy or edition; 0 = primary.
+	CopyId *int64 `json:"copyId,omitempty"`
+
+	// FileIds Move to… these files; absent = every file of the item (Re-match…).
+	FileIds *[]int64 `json:"fileIds,omitempty"`
+
+	// Fingerprint Execute only: the preview's.
+	Fingerprint *string `json:"fingerprint,omitempty"`
+
+	// RequestId Execute only.
+	RequestId *string `json:"requestId,omitempty"`
+
+	// SourceRevision Execute only: the preview's.
+	SourceRevision *int64 `json:"sourceRevision,omitempty"`
+
+	// Target A library item (itemId), or a title by provider id.
+	Target *struct {
+		HydrationSource *string    `json:"hydrationSource,omitempty"`
+		ImdbId          *string    `json:"imdbId,omitempty"`
+		ItemId          *int64     `json:"itemId,omitempty"`
+		Kind            *MediaKind `json:"kind,omitempty"`
+		Olid            *string    `json:"olid,omitempty"`
+		TmdbId          *int64     `json:"tmdbId,omitempty"`
+		TvdbId          *int64     `json:"tvdbId,omitempty"`
+	} `json:"target,omitempty"`
+
+	// TargetRevision Execute only: the preview's (0 for a new title).
+	TargetRevision *int64 `json:"targetRevision,omitempty"`
+}
+
 // RemoveFileResult defines model for RemoveFileResult.
 type RemoveFileResult struct {
 	// Blocklisted The release title that was blocklisted; empty if none was.
@@ -3742,6 +4070,9 @@ type StatusCinema struct {
 	Status     string   `json:"status"`
 	VisibleAt  *int64   `json:"visibleAt,omitempty"`
 	WaitingOn  *string  `json:"waitingOn,omitempty"`
+
+	// Warnings Cinema's lasting answers about files that left (a Re-match).
+	Warnings *[]string `json:"warnings,omitempty"`
 }
 
 // StatusDownload defines model for StatusDownload.
@@ -3799,6 +4130,60 @@ type StatusHeadline struct {
 
 // StatusHeadlineState defines model for StatusHeadline.State.
 type StatusHeadlineState string
+
+// StatusRematch The open Re-match moving files out of or into this item (the panel's "Moving files" block). Stop is POST /rematch/{operationId}/cancel.
+type StatusRematch struct {
+	BytesDone  int64 `json:"bytesDone"`
+	BytesTotal int64 `json:"bytesTotal"`
+	Cinema     *[]struct {
+		Directory string  `json:"directory"`
+		LastError *string `json:"lastError,omitempty"`
+		Result    *string `json:"result,omitempty"`
+		Status    string  `json:"status"`
+		VisibleAt *int64  `json:"visibleAt,omitempty"`
+	} `json:"cinema,omitempty"`
+	CinemaLine *string `json:"cinemaLine,omitempty"`
+
+	// Ended The operation is over (failed
+	Ended       bool    `json:"ended"`
+	Error       *string `json:"error,omitempty"`
+	FailedMoves *[]struct {
+		From   string `json:"from"`
+		Reason string `json:"reason"`
+	} `json:"failedMoves,omitempty"`
+	FilesDone  int `json:"filesDone"`
+	FilesTotal int `json:"filesTotal"`
+
+	// Headline For this item's side, e.g. Files moving here from Dune (1984).
+	Headline string `json:"headline"`
+	Moves    *[]struct {
+		Bytes int64  `json:"bytes"`
+		From  string `json:"from"`
+		State string `json:"state"`
+		To    string `json:"to"`
+	} `json:"moves,omitempty"`
+	OperationId string `json:"operationId"`
+
+	// Role Which side of the move this item is.
+	Role         StatusRematchRole  `json:"role"`
+	SourceItemId int64              `json:"sourceItemId"`
+	SourceTitle  string             `json:"sourceTitle"`
+	State        StatusRematchState `json:"state"`
+
+	// Stoppable False once the files are committed.
+	Stoppable    bool   `json:"stoppable"`
+	TargetItemId int64  `json:"targetItemId"`
+	TargetTitle  string `json:"targetTitle"`
+
+	// Warnings Cinema's retained and present lines.
+	Warnings *[]string `json:"warnings,omitempty"`
+}
+
+// StatusRematchRole Which side of the move this item is.
+type StatusRematchRole string
+
+// StatusRematchState defines model for StatusRematch.State.
+type StatusRematchState string
 
 // StatusSeason defines model for StatusSeason.
 type StatusSeason struct {
@@ -4499,6 +4884,12 @@ type StartReplacementFileObservationJSONRequestBody = ReplacementObservationRequ
 // ReportLibraryFileJSONRequestBody defines body for ReportLibraryFile for application/json ContentType.
 type ReportLibraryFileJSONRequestBody = LibraryFileReportRequest
 
+// StartRematchJSONRequestBody defines body for StartRematch for application/json ContentType.
+type StartRematchJSONRequestBody = RematchRequest
+
+// PreviewRematchJSONRequestBody defines body for PreviewRematch for application/json ContentType.
+type PreviewRematchJSONRequestBody = RematchRequest
+
 // RepairLibraryFolderJSONRequestBody defines body for RepairLibraryFolder for application/json ContentType.
 type RepairLibraryFolderJSONRequestBody RepairLibraryFolderJSONBody
 
@@ -4834,6 +5225,15 @@ type ServerInterface interface {
 	// SearchReleases Interactive search for one item target or book edition
 	// (GET /library/{id}/releases)
 	SearchReleases(w http.ResponseWriter, r *http.Request, id int64, params SearchReleasesParams)
+	// GetLibraryRematch The open Re-match moving files out of or into this item
+	// (GET /library/{id}/rematch)
+	GetLibraryRematch(w http.ResponseWriter, r *http.Request, id int64)
+	// StartRematch Execute a previewed Re-match (idempotent by requestId)
+	// (POST /library/{id}/rematch)
+	StartRematch(w http.ResponseWriter, r *http.Request, id int64)
+	// PreviewRematch What a Re-match would do (ADR 0027); no side effects
+	// (POST /library/{id}/rematch/preview)
+	PreviewRematch(w http.ResponseWriter, r *http.Request, id int64)
 	// RepairLibraryFolder Reconnect an item to an existing media folder and scan it
 	// (POST /library/{id}/repair-folder)
 	RepairLibraryFolder(w http.ResponseWriter, r *http.Request, id int64)
@@ -4960,6 +5360,15 @@ type ServerInterface interface {
 	// ResumeQueueItem Resume the retained Runner job after resource admission
 	// (POST /queue/{id}/resume)
 	ResumeQueueItem(w http.ResponseWriter, r *http.Request, id int64)
+	// GetRematch A Re-match's state, bytes copied, result and Cinema confirmation
+	// (GET /rematch/{operationId})
+	GetRematch(w http.ResponseWriter, r *http.Request, operationId string)
+	// CancelRematch Stop a Re-match that has not committed (a copy's temp file is removed, sources untouched)
+	// (POST /rematch/{operationId}/cancel)
+	CancelRematch(w http.ResponseWriter, r *http.Request, operationId string)
+	// DismissRematch Hide a finished Re-match from the item pages' status panels
+	// (POST /rematch/{operationId}/dismiss)
+	DismissRematch(w http.ResponseWriter, r *http.Request, operationId string)
 	// GetReplacementFileObservation Read a prepared file observation
 	// (GET /replacement-observations/{observationId})
 	GetReplacementFileObservation(w http.ResponseWriter, r *http.Request, observationId string)
@@ -7248,6 +7657,84 @@ func (siw *ServerInterfaceWrapper) SearchReleases(w http.ResponseWriter, r *http
 	handler.ServeHTTP(w, r)
 }
 
+// GetLibraryRematch operation middleware
+func (siw *ServerInterfaceWrapper) GetLibraryRematch(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetLibraryRematch(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// StartRematch operation middleware
+func (siw *ServerInterfaceWrapper) StartRematch(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.StartRematch(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PreviewRematch operation middleware
+func (siw *ServerInterfaceWrapper) PreviewRematch(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PreviewRematch(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // RepairLibraryFolder operation middleware
 func (siw *ServerInterfaceWrapper) RepairLibraryFolder(w http.ResponseWriter, r *http.Request) {
 
@@ -8414,6 +8901,84 @@ func (siw *ServerInterfaceWrapper) ResumeQueueItem(w http.ResponseWriter, r *htt
 	handler.ServeHTTP(w, r)
 }
 
+// GetRematch operation middleware
+func (siw *ServerInterfaceWrapper) GetRematch(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "operationId" -------------
+	var operationId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "operationId", r.PathValue("operationId"), &operationId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "operationId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetRematch(w, r, operationId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CancelRematch operation middleware
+func (siw *ServerInterfaceWrapper) CancelRematch(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "operationId" -------------
+	var operationId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "operationId", r.PathValue("operationId"), &operationId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "operationId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CancelRematch(w, r, operationId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DismissRematch operation middleware
+func (siw *ServerInterfaceWrapper) DismissRematch(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "operationId" -------------
+	var operationId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "operationId", r.PathValue("operationId"), &operationId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "operationId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DismissRematch(w, r, operationId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // GetReplacementFileObservation operation middleware
 func (siw *ServerInterfaceWrapper) GetReplacementFileObservation(w http.ResponseWriter, r *http.Request) {
 
@@ -9122,6 +9687,12 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/library/{id}/replacement-operations", wrapper.GetLibraryLifecycleReview)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/library/{id}/replacement-operations", wrapper.CreateReplacementOperation)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/replacement-operations/{operationId}", wrapper.GetReplacementOperation)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/library/{id}/rematch/preview", wrapper.PreviewRematch)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/library/{id}/rematch", wrapper.GetLibraryRematch)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/library/{id}/rematch", wrapper.StartRematch)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/rematch/{operationId}", wrapper.GetRematch)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/rematch/{operationId}/cancel", wrapper.CancelRematch)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/rematch/{operationId}/dismiss", wrapper.DismissRematch)
 	m.HandleFunc(http.MethodPatch+" "+options.BaseURL+"/library/{id}/seasons/{season}", wrapper.SetSeasonMonitored)
 	m.HandleFunc(http.MethodPatch+" "+options.BaseURL+"/library/{id}/episodes/{episodeId}", wrapper.SetEpisodeMonitored)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/library/{id}/refresh", wrapper.RefreshLibraryItem)

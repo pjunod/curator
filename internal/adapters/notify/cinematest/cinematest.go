@@ -35,6 +35,9 @@ type Request struct {
 	Key           string // request_key, "" from an old client
 	Path          string
 	Expected      []ports.ExpectedFile
+	Removed       []string // removed_paths (contract amendment), "" event when absent
+	Event         string
+	ProbeOnly     bool   // probe_only
 	State         string // queued | running | done | failed
 	Error         string // a failed request's error
 	Files         []ports.PlacedReport
@@ -52,6 +55,20 @@ type Cinema struct {
 	Roots []string
 	// Old answers as a pre-v2 Cinema.
 	Old bool
+	// RemovedPaths is the removed-paths amendment: the probe answers
+	// features ["removed_paths"] and a request's removed paths are answered
+	// gone (absent), present (still there) or unknown (listed in Unknown).
+	// Without it the fake is a v2 Cinema that ignores removed_paths.
+	RemovedPaths bool
+	Unknown      map[string]bool
+	// Retained answers a removed path retained with the given code; PresentReason
+	// is the reason a still-present path carries.
+	Retained      map[string]string
+	PresentReason string
+	// RetainedReason and RetainedRetryable are the reason text and the
+	// retryable flag a retained path carries.
+	RetainedReason    map[string]string
+	RetainedRetryable map[string]bool
 	// Down drops every connection without an answer (a stopped Cinema).
 	Down bool
 	// Unreadable answers 503 path_unreadable (an unmounted share).
@@ -177,6 +194,9 @@ type body struct {
 	ExpectedFiles []ports.ExpectedFile `json:"expected_files"`
 	WaitMs        int                  `json:"wait_ms"`
 	ProbePaths    []string             `json:"probe_paths"`
+	RemovedPaths  []string             `json:"removed_paths"`
+	Event         string               `json:"event"`
+	ProbeOnly     bool                 `json:"probe_only"`
 }
 
 func (c *Cinema) serve(w http.ResponseWriter, r *http.Request) {
@@ -283,7 +303,7 @@ func (c *Cinema) scan(w http.ResponseWriter, r *http.Request) {
 	}
 	c.nextID++
 	req := &Request{ID: fmt.Sprintf("sr-%d", c.nextID), Key: key, Path: path, Expected: b.ExpectedFiles, State: "queued",
-		done: make(chan struct{})}
+		Removed: b.RemovedPaths, Event: b.Event, ProbeOnly: b.ProbeOnly, done: make(chan struct{})}
 	c.requests = append(c.requests, req)
 	if key != "" {
 		c.byKey[key] = req
@@ -403,6 +423,22 @@ func (c *Cinema) finish(req *Request) {
 		req.Files = append(req.Files, ports.PlacedReport{Path: e.Path, State: "placed", ItemID: c.itemID(e.Path),
 			Bytes: fi.Size(), MtimeNs: fi.ModTime().UnixNano()})
 	}
+	if !c.RemovedPaths {
+		return
+	}
+	for _, p := range req.Removed {
+		switch _, err := os.Stat(p); {
+		case c.Retained[p] != "":
+			req.Files = append(req.Files, ports.PlacedReport{Path: p, State: "retained", Code: c.Retained[p],
+				Reason: c.RetainedReason[p], Retryable: c.RetainedRetryable[p], ItemID: c.itemID(p)})
+		case err == nil:
+			req.Files = append(req.Files, ports.PlacedReport{Path: p, State: "present", Reason: c.PresentReason})
+		case c.Unknown[p]:
+			req.Files = append(req.Files, ports.PlacedReport{Path: p, State: "unknown"})
+		default:
+			req.Files = append(req.Files, ports.PlacedReport{Path: p, State: "gone", ItemID: c.itemID(p)})
+		}
+	}
 }
 
 func (c *Cinema) items(req *Request) []map[string]any {
@@ -489,7 +525,11 @@ func (c *Cinema) probe(paths []string) map[string]any {
 			}
 		}
 	}
-	return map[string]any{"roots": c.Roots, "visible": visible, "missing": missing, "outside_roots": outside}
+	out := map[string]any{"roots": c.Roots, "visible": visible, "missing": missing, "outside_roots": outside}
+	if c.RemovedPaths {
+		out["features"] = []string{"removed_paths"}
+	}
+	return out
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

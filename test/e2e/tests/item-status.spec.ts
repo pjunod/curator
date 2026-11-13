@@ -54,6 +54,13 @@ async function movie(page: Page, body: () => unknown) {
   return calls
 }
 
+async function inViewport(page: Page, locator: ReturnType<Page['locator']>) {
+  await expect(locator).toBeInViewport({ ratio: 1 })
+  const box = await locator.boundingBox()
+  const size = page.viewportSize()!
+  expect(box && box.x >= 0 && box.x + box.width <= size.width + 1).toBe(true)
+}
+
 async function noSideScroll(page: Page) {
   expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(1)
 }
@@ -240,6 +247,67 @@ for (const width of [390, 1280]) {
       await panel.getByRole('button', { name: 'Retry import' }).click()
       await expect(panel.getByRole('status').filter({ hasText: 'Import started again.' })).toBeInViewport({ ratio: 1 })
       expect(calls).toContain('import 702')
+      await noSideScroll(page)
+    })
+
+    test('an open Re-match shows Moving files, polls without moving scroll, and Stop reports in the viewport', async ({ page }) => {
+      let cancelled = 0
+      let polls = 0
+      const moving = () => ({
+        ...unconfirmed(), active: true,
+        rematch: {
+          operationId: 'rm-9', state: 'moving', role: 'target', sourceItemId: 41, targetItemId: ITEM, sourceTitle: 'Dune (1984)', targetTitle: 'Past Lives (2023)',
+          headline: 'Files moving here from Dune (1984)', bytesDone: 12e9 + polls * 1e9, bytesTotal: 60e9, filesDone: 0, filesTotal: 1, stoppable: true,
+          moves: [{ from: '/20t/movies/Dune (1984)/Dune.mkv', to: '/20t/movies/Past Lives (2023)/Past Lives.mkv', state: 'planned', bytes: 60e9 }],
+          cinemaLine: 'Cinema is being told.', warnings: ['cinema still has /20t/movies/Dune (1984)/Dune.mkv: it is still listed'],
+        },
+      })
+      await page.route('**/api/v1/rematch/rm-9/cancel', route => { cancelled++; return route.fulfill({ status: 202 }) })
+      await movie(page, () => { polls++; return cancelled ? unconfirmed() : moving() })
+      const block = page.getByTestId('item-moving')
+      await expect(block.getByText('Files moving here from Dune (1984)')).toBeVisible()
+      await expect(block).toContainText('0 of 1 file')
+      await expect(block).toContainText('/20t/movies/Dune (1984)/Dune.mkv')
+      await expect(block).toContainText('Cinema is being told.')
+      await expect(block).toContainText('cinema still has')
+      await noSideScroll(page)
+      await block.getByRole('button', { name: 'Stop' }).scrollIntoViewIfNeeded()
+      await inViewport(page, block.getByRole('button', { name: 'Stop' }))
+
+      // Polling leaves scroll and focus alone.
+      const y = await page.evaluate(() => scrollY)
+      const before = polls
+      await expect.poll(() => polls, { timeout: 7_000 }).toBeGreaterThanOrEqual(before + 2)
+      expect(await page.evaluate(() => scrollY)).toBe(y)
+      await expect(block).toContainText('GB of 60.0 GB')
+
+      await block.getByRole('button', { name: 'Stop' }).click()
+      const notice = page.getByTestId('item-moving').getByRole('status').filter({ hasText: 'Stopping the move' })
+      await inViewport(page, notice)
+      expect(cancelled).toBe(1)
+      await noSideScroll(page)
+    })
+
+    test('a Re-match that failed stays on the panel with its reason until dismissed', async ({ page }) => {
+      let dismissed = 0
+      const failed = () => ({
+        ...unconfirmed(),
+        rematch: {
+          operationId: 'rm-f', state: 'failed', ended: true, role: 'target', sourceItemId: 41, targetItemId: ITEM, sourceTitle: 'Dune (1984)', targetTitle: 'Past Lives (2023)',
+          headline: 'Moving files from Dune (1984) to Past Lives (2023) failed; every file is back where it was', bytesDone: 0, bytesTotal: 0, filesDone: 0, filesTotal: 0,
+          error: 'the target disk is full', failedMoves: [{ from: '/20t/movies/Dune (1984)/Dune.mkv', reason: 'no space left' }], stoppable: false,
+        },
+      })
+      await page.route('**/api/v1/rematch/rm-f/dismiss', route => { dismissed++; return route.fulfill({ status: 204 }) })
+      await movie(page, () => (dismissed ? unconfirmed() : failed()))
+      const block = page.getByTestId('item-moving')
+      await expect(block).toContainText('the target disk is full')
+      await expect(block).toContainText('no space left')
+      await expect(block.getByRole('button', { name: 'Stop' })).toHaveCount(0)
+      await block.getByRole('button', { name: 'Dismiss' }).scrollIntoViewIfNeeded()
+      await block.getByRole('button', { name: 'Dismiss' }).click()
+      await inViewport(page, page.getByTestId('item-moving').getByRole('status').filter({ hasText: 'Dismissed.' }))
+      expect(dismissed).toBe(1)
       await noSideScroll(page)
     })
   })

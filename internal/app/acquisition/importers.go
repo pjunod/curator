@@ -179,6 +179,7 @@ func (s *Service) StartImporters(ctx context.Context) {
 			defer s.importWG.Done()
 			s.reconcilePlacements(ctx)
 		}()
+		s.startRematchWorker(ctx)
 		s.startRecoveryWorker(ctx)
 		s.recoverManualImports(ctx)
 		s.startManualAdmissionWorker(ctx)

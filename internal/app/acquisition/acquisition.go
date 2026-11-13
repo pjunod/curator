@@ -150,6 +150,9 @@ type Service struct {
 	recoveryMu        sync.Mutex
 	recoveryReceiptMu sync.Mutex
 	recoveryCancels   map[string]context.CancelFunc
+	rematchMu         sync.Mutex
+	rematchCancels    map[string]context.CancelFunc // operations this process is driving
+	rematchCtx        context.Context               // the importers' lifetime, once started
 	db                *sqlite.DB
 	bus               *bus.Bus
 	log               *slog.Logger

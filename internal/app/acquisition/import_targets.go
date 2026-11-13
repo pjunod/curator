@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -38,8 +39,9 @@ import (
 //
 // Neither lock is reentrant. A holder passes the scope it holds down through
 // targetHeldKey; nested work on a covered scope does not lock again, and
-// asking for the global authority while holding a title is refused. No path
-// takes two item locks. The storage-decision lock is still the single
+// asking for the global authority while holding a title is refused. A path
+// takes two item locks only through lockImportTargets (Re-match, ADR 0027):
+// sorted by id, each within a bounded wait, all or none. The storage-decision lock is still the single
 // serializer for the short final publish-and-commit window.
 type importTargets struct {
 	all   sync.RWMutex
@@ -55,14 +57,24 @@ type importTargetLock struct {
 // heldImportTarget is the scope a context's caller holds. all means the
 // exclusive global authority, which covers every item.
 type heldImportTarget struct {
-	all  bool
-	item int64
+	all   bool
+	items []int64
 	// active ends at release, so a context that outlives its lock can never
 	// be mistaken for a holder (and skip locking).
 	active *atomic.Bool
 }
 
-func (h heldImportTarget) covers(item int64) bool { return h.all || h.item == item }
+func (h heldImportTarget) covers(item int64) bool {
+	if h.all {
+		return true
+	}
+	for _, id := range h.items {
+		if id == item {
+			return true
+		}
+	}
+	return false
+}
 
 func heldTarget(ctx context.Context) (heldImportTarget, bool) {
 	h, ok := ctx.Value(targetHeldKey{}).(heldImportTarget)
@@ -99,7 +111,7 @@ func (s *Service) lockImportTarget(ctx context.Context, item int64) (context.Con
 	var once sync.Once
 	active := &atomic.Bool{}
 	active.Store(true)
-	return context.WithValue(ctx, targetHeldKey{}, heldImportTarget{item: item, active: active}), func() {
+	return context.WithValue(ctx, targetHeldKey{}, heldImportTarget{items: []int64{item}, active: active}), func() {
 		once.Do(func() {
 			active.Store(false)
 			l.mu.Unlock()
@@ -122,7 +134,7 @@ func (s *Service) lockAllImportTargets(ctx context.Context, wait time.Duration) 
 		if h.all {
 			return ctx, func() {}, nil
 		}
-		return ctx, func() {}, fmt.Errorf("whole-library authority requested while holding title %d", h.item)
+		return ctx, func() {}, fmt.Errorf("whole-library authority requested while holding title %v", h.items)
 	}
 	waitCtx := ctx
 	if wait > 0 {
@@ -164,7 +176,7 @@ var ErrImportTargetBusy = errors.New("this title is being imported; try again sh
 // global authority as a waiting reader: it polls, and reports busy.
 func (s *Service) waitImportTarget(ctx context.Context, item int64, wait time.Duration) (context.Context, func(), error) {
 	if h, ok := heldTarget(ctx); ok && !h.covers(item) {
-		return ctx, func() {}, fmt.Errorf("title %d authority requested while holding title %d", item, h.item)
+		return ctx, func() {}, fmt.Errorf("title %d authority requested while holding title %v", item, h.items)
 	}
 	waitCtx, cancel := context.WithTimeout(ctx, wait)
 	defer cancel()
@@ -230,7 +242,43 @@ func (s *Service) tryLockImportTarget(ctx context.Context, item int64) (context.
 	var once sync.Once
 	active := &atomic.Bool{}
 	active.Store(true)
-	return context.WithValue(ctx, targetHeldKey{}, heldImportTarget{item: item, active: active}), func() {
+	return context.WithValue(ctx, targetHeldKey{}, heldImportTarget{items: []int64{item}, active: active}), func() {
 		once.Do(func() { active.Store(false); l.mu.Unlock(); releaseRef() })
 	}, true
+}
+
+// lockImportTargets takes the authority for several titles at once: in
+// ascending id order, each within wait, and all or none. It is the only way
+// to hold two titles (Re-match moves files between them), and the sorted
+// order is what keeps two such holders from deadlocking each other.
+func (s *Service) lockImportTargets(ctx context.Context, wait time.Duration, ids ...int64) (context.Context, func(), error) {
+	if _, ok := heldTarget(ctx); ok {
+		return ctx, func() {}, fmt.Errorf("several titles' authority requested while holding one")
+	}
+	sorted := append([]int64(nil), ids...)
+	sort.Slice(sorted, func(i, j int) bool { return sorted[i] < sorted[j] })
+	var held []int64
+	var releases []func()
+	releaseAll := func() {
+		for i := len(releases) - 1; i >= 0; i-- {
+			releases[i]()
+		}
+	}
+	for i, id := range sorted {
+		if i > 0 && id == sorted[i-1] {
+			continue
+		}
+		_, release, err := s.waitImportTarget(ctx, id, wait)
+		if err != nil {
+			releaseAll()
+			return ctx, func() {}, err
+		}
+		held, releases = append(held, id), append(releases, release)
+	}
+	active := &atomic.Bool{}
+	active.Store(true)
+	var once sync.Once
+	return context.WithValue(ctx, targetHeldKey{}, heldImportTarget{items: held, active: active}), func() {
+		once.Do(func() { active.Store(false); releaseAll() })
+	}, nil
 }

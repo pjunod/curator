@@ -1441,6 +1441,10 @@ export interface NotifierInput {
 
 export interface Notifier extends NotifierInput {
   id: number
+  /** What the far side's Test said it supports (Cinema: removed_paths). Advisory. */
+  features?: string[]
+  /** When features were last read, Unix ms; absent = never. */
+  featuresReadAt?: number
 }
 
 export interface BackupInfo {
@@ -2003,6 +2007,107 @@ export interface ImportActivityPage {
 export const getImportActivity = (filter: 'all' | ImportCategory, q: string, limit: number, offset: number) =>
   get<ImportActivityPage>(`/imports?${new URLSearchParams({ filter, q, limit: String(limit), offset: String(offset) })}`)
 
+// Re-match (ADR 0027): move files to the right item or episode.
+export interface RematchTarget {
+  itemId?: number
+  kind?: MediaKind
+  tmdbId?: number
+  tvdbId?: number
+  imdbId?: string
+  olid?: string
+  hydrationSource?: string
+}
+export interface RematchChoice { fileId: number; season?: number; episodes?: number[]; leave?: boolean }
+export interface RematchRequest {
+  target: RematchTarget
+  copyId?: number
+  /** Move to… these files; absent = every file (Re-match…). */
+  fileIds?: number[]
+  choices?: RematchChoice[]
+  blocklist?: boolean
+  requestId?: string
+  sourceRevision?: number
+  targetRevision?: number
+  fingerprint?: string
+}
+export interface RematchMove {
+  fileId: number
+  from: string
+  to?: string
+  season: number
+  episodes: number[]
+  label?: string
+  mode?: 'rename' | 'copy' | 'relink'
+  bytes: number
+  quality?: string
+  sidecars?: { from: string; to: string }[]
+  note?: string
+  /** What happens to a file the target already has (import's rule). */
+  action?: 'new' | 'replace' | 'beside'
+  existing?: string
+  reason?: string
+  replaces?: { fileId: number; path: string; quality?: string }[]
+  /** Why it is left out: it stays on disk and leaves the library. */
+  problem?: string
+  needsPick?: boolean
+  /** Left out by the person: it leaves the library (stays on disk). */
+  leave?: boolean
+}
+export interface RematchBlocked { reason: string; ref: string; itemId: number; message: string; retry: boolean }
+export interface RematchItemRef { id: number; kind: string; title: string; year?: number; inLibrary: boolean; folder?: string; folderChosen?: boolean }
+export interface RematchPreview {
+  source: RematchItemRef
+  target: RematchItemRef
+  targetCopyId?: number
+  moves: RematchMove[]
+  leftOut: RematchMove[]
+  sourceOutcome: 'stays' | 'removed'
+  sourceReason: string
+  blocklist: { fileId: number; release: string; indexer?: string }[]
+  blocklistOn: boolean
+  blocklistNote?: string
+  cinema?: string
+  episodes?: { season: number; episode: number; title?: string; hasFile: boolean }[]
+  copies?: { id: number; name: string; bookType?: string }[]
+  blocked?: RematchBlocked
+  sourceRevision: number
+  targetRevision: number
+  fingerprint: string
+  /** leftOut lines that need a choice; Move refuses while it is not 0. */
+  unresolved: number
+  summary: string
+}
+export type RematchState = 'planned' | 'moving' | 'moved' | 'committed' | 'complete' | 'cancel_pending' | 'cancelled' | 'failed'
+export interface RematchResult {
+  moved?: { from: string; to: string; episodes?: number[]; mode: string }[]
+  leftOut?: string[]
+  failed?: { from: string; to: string }[]
+  blocklisted?: { release: string }[]
+  sourceRemoved?: boolean
+  leftBehind?: string[]
+  cinemaNote?: string
+}
+export interface RematchOperation {
+  operationId: string
+  requestId: string
+  state: RematchState
+  sourceItemId: number
+  targetItemId: number
+  result?: RematchResult
+  bytesDone: number
+  bytesTotal: number
+  lastError?: string
+  cinema?: { directory: string; status: string; result?: string; lastError?: string; visibleAt?: number }[]
+}
+export const previewRematch = (itemId: number, req: RematchRequest) =>
+  send<RematchPreview>('POST', `/library/${itemId}/rematch/preview`, req)
+export const startRematch = (itemId: number, req: RematchRequest) =>
+  send<RematchOperation>('POST', `/library/${itemId}/rematch`, req)
+/** The open Re-match for an item; undefined when there is none (204). */
+export const getLibraryRematch = (itemId: number) => send<RematchOperation | undefined>('GET', `/library/${itemId}/rematch`).then((op) => op ?? null)
+export const getRematch = (operationId: string) => get<RematchOperation>(`/rematch/${encodeURIComponent(operationId)}`)
+export const dismissRematch = (operationId: string) => send<void>('POST', `/rematch/${encodeURIComponent(operationId)}/dismiss`)
+export const cancelRematch = (operationId: string) => send<void>('POST', `/rematch/${encodeURIComponent(operationId)}/cancel`)
 // ---- item status panel (0.46.0) ----
 
 export type StatusState = 'done' | 'active' | 'waiting' | 'failed' | 'todo'
@@ -2040,6 +2145,8 @@ export interface StatusDownload {
 }
 
 export interface StatusCinema {
+  /** Cinema's lasting answers about files that left (a Re-match). */
+  warnings?: string[]
   deliveryId: number
   notifierId: number
   status: string
@@ -2095,6 +2202,30 @@ export interface ItemStatus {
   attempts?: StatusAttempt[]
   seasons?: StatusSeason[]
   episodes?: StatusEpisode[]
+  rematch?: StatusRematch
+}
+export interface StatusRematch {
+  operationId: string
+  state: 'planned' | 'moving' | 'moved' | 'committed' | 'cancel_pending' | 'complete' | 'cancelled' | 'failed'
+  /** Over, but ended badly: shown for 24 h or until dismissed. */
+  ended: boolean
+  failedMoves?: { from: string; reason: string }[]
+  role: 'source' | 'target'
+  sourceItemId: number
+  targetItemId: number
+  sourceTitle: string
+  targetTitle: string
+  headline: string
+  bytesDone: number
+  bytesTotal: number
+  filesDone: number
+  filesTotal: number
+  moves?: { from: string; to: string; state: string; bytes: number }[]
+  cinema?: { directory: string; status: string; result?: string; lastError?: string; visibleAt?: number }[]
+  cinemaLine?: string
+  warnings?: string[]
+  error?: string
+  stoppable: boolean
 }
 
 export const getItemStatus = (id: number, season?: number) =>

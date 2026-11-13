@@ -125,3 +125,7 @@ UPDATE notifier_deliveries
 
 -- name: DeleteDeliveriesForNotifier :exec
 DELETE FROM notifier_deliveries WHERE notifier_id = ?;
+
+-- name: ListOperationDeliveries :many
+-- Every delivery a Re-match wrote (ADR 0027), oldest first.
+SELECT * FROM notifier_deliveries WHERE operation_id = ? ORDER BY id;

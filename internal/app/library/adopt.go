@@ -662,6 +662,11 @@ func (s *Service) adoptOne(ctx context.Context, p Proposal) error {
 		}
 		return fmt.Errorf("point %d at %s: %w", item.ID, p.Path, err)
 	}
+	// Adoption created this item to hold a folder; a Re-match that empties
+	// it removes it (ADR 0027), unlike an item a person added.
+	if err := s.db.SetMediaItemOrigin(ctx, item.ID, "adopted"); err != nil {
+		s.log.Warn("adopt: could not record the item's origin", "id", item.ID, "err", err)
+	}
 	return nil
 }
 

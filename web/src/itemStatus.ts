@@ -1,4 +1,4 @@
-import type { ItemStatus, StatusAction, StatusDownload, StatusStage, StatusStageKey, StatusState } from './api'
+import type { ItemStatus, StatusAction, StatusDownload, StatusRematch, StatusStage, StatusStageKey, StatusState } from './api'
 
 // Display helpers for the item page's status panel. The server decides every
 // state; these only turn its numbers into words.
@@ -84,3 +84,24 @@ export function updatedAgo(at: number, now: number = Date.now()): string {
   const s = Math.max(0, Math.round((now - at) / 1000))
   return s < 60 ? `updated ${s} s ago` : `updated ${Math.round(s / 60)} min ago`
 }
+
+export const REMATCH_STATE: Record<StatusRematch['state'], string> = {
+  planned: 'Starting',
+  moving: 'Moving',
+  moved: 'Files moved; committing',
+  committed: 'Files in place; finishing',
+  cancel_pending: 'Stopping; putting the moved files back',
+  complete: 'Complete',
+  cancelled: 'Stopped',
+  failed: 'Failed',
+}
+
+/** "1 of 2 files" and, when bytes are known, "5 MB of 10 MB". */
+export function rematchCounts(r: Pick<StatusRematch, 'filesDone' | 'filesTotal' | 'bytesDone' | 'bytesTotal'>): string[] {
+  const out = [`${r.filesDone} of ${r.filesTotal} file${r.filesTotal === 1 ? '' : 's'}`]
+  if (r.bytesTotal > 0) out.push(`${fmtBytes(r.bytesDone)} of ${fmtBytes(r.bytesTotal)}`)
+  return out
+}
+
+/** A Stop/Dismiss answer belongs to the operation it was given for: once a different one opens, it goes. */
+export const noticeBelongsTo = (noticeOp: string, currentOp: string | undefined) => !currentOp || !noticeOp || currentOp === noticeOp

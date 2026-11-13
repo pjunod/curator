@@ -3989,7 +3989,7 @@ a.pill-info:hover {
 .recovery-enable .recovery-fields { display: grid; gap: 10px; margin: 12px 0; max-width: 720px; }
 .recovery-enable .recovery-fields label { display: grid; gap: 4px; color: var(--text-muted); font-size: 13px; }
 .recovery-enable .recovery-fields input { min-width: 0; width: 100%; }
-.recovery-advisory { list-style: none; margin: 14px 0 6px; padding: 0; display: grid; gap: 6px; font-size: 13px; }
+.recovery-advisory, .cinema-features { list-style: none; margin: 14px 0 6px; padding: 0; display: grid; gap: 6px; font-size: 13px; }
 .recovery-readiness { display: flex; flex-wrap: wrap; gap: 8px 22px; margin: 14px 0; padding: 10px 14px;
   background: var(--bg); border: 1px solid var(--border); border-radius: 10px; }
 .recovery-ready { display: inline-flex; align-items: baseline; gap: 8px; font-size: 13px; min-width: 0; }
@@ -4168,3 +4168,8 @@ a.pill-info:hover {
   .item-ep { grid-template-columns: 44px minmax(0, 1fr); }
   .item-ep .say { grid-column: 2; text-align: left; }
 }
+
+.item-moving { display: grid; gap: 8px; border: 1px solid var(--accent); border-radius: 8px; padding: 10px 12px; margin-bottom: 10px; min-width: 0; }
+.item-moving h3 { margin: 0; font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--text-muted); }
+.item-moving progress { width: 100%; }
+.item-moves { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; font-size: 12px; overflow-wrap: anywhere; }

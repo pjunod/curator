@@ -30,6 +30,7 @@ import { MissingFolders } from '../MissingFolders'
 import { DiskScanControl } from '../DiskScan'
 import { RecoveryEnableSettings } from './Recovery'
 import { ResolvePanel } from './Activity'
+import { CinemaFeatures } from './CinemaFeatures'
 
 export function SettingsPage() {
   const [settingsTab, setSettingsTab] = useState<'general' | 'recovery' | 'dev'>('general')
@@ -139,6 +140,7 @@ export function SettingsPage() {
 
       <nav aria-label="Settings sections">{(['general', 'recovery', 'dev'] as const).map(tab => <button key={tab} aria-pressed={settingsTab === tab} onClick={() => setSettingsTab(tab)}>{tab === 'dev' ? 'Dev' : tab === 'recovery' ? 'Resolve' : 'General'}</button>)}</nav>
       {settingsTab === 'dev' && <RecoveryEnableSettings />}
+      {settingsTab === 'dev' && <CinemaFeatures />}
       {settingsTab === 'recovery' && <ResolvePanel initialMode="delivery" />}
       <div hidden={settingsTab !== 'general'}>
       <DiscoverySettings />

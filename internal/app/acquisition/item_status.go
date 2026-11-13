@@ -111,6 +111,8 @@ type StatusCinema struct {
 	VisibleAt  int64   `json:"visibleAt,omitempty"`
 	ItemIDs    []int64 `json:"itemIds,omitempty"`
 	Error      string  `json:"error,omitempty"`
+	// Warnings are cinema's lasting answers about files that left (a Re-match).
+	Warnings []string `json:"warnings,omitempty"`
 }
 
 // StatusHeadline is the one line at the top of the panel; At is the time
@@ -163,6 +165,8 @@ type ItemStatus struct {
 	Attempts    []StatusAttempt `json:"attempts,omitempty"`
 	Seasons     []StatusSeason  `json:"seasons,omitempty"`
 	Episodes    []StatusEpisode `json:"episodes,omitempty"`
+	// Rematch is the open Re-match moving files out of or into this item.
+	Rematch *StatusRematch `json:"rematch,omitempty"`
 }
 
 // statusFacts is everything one item's projection reads, once, and the
@@ -182,6 +186,7 @@ type statusFacts struct {
 	dlEps      map[int64]int    // download id → episodes it covers
 	epFiles    map[int64][]domain.MediaFile
 	files      []domain.MediaFile // primary-copy files
+	rematch    *rematchFacts      // the open Re-match touching this item, if any
 }
 
 // ItemStatus projects where an item stands. For a series, season < 0 returns
@@ -244,6 +249,9 @@ func (s *Service) statusFacts(ctx context.Context, itemID int64, season int) (st
 		return f, err
 	}
 	if f.imported, err = s.db.LastHistoryAt(ctx, itemID, "imported"); err != nil {
+		return f, err
+	}
+	if f.rematch, err = s.rematchFacts(ctx, itemID, f.item); err != nil {
 		return f, err
 	}
 	return f, nil
@@ -324,6 +332,7 @@ func downloadEpisodes(dl sqlite.Download, byNumber map[[2]int]int64) []int64 {
 func (f statusFacts) project(season int) ItemStatus {
 	f.index()
 	out := ItemStatus{MediaItemID: f.item.ID, Kind: string(f.item.Kind), GeneratedAt: f.now.UnixMilli()}
+	out.Rematch = f.rematchBlock()
 	if f.item.Kind != domain.KindSeries {
 		cands := make([]*sqlite.Download, 0, len(f.downloads))
 		for i := range f.downloads {
@@ -345,6 +354,7 @@ func (f statusFacts) project(season int) ItemStatus {
 			}
 			out.Attempts = append(out.Attempts, attemptOf(*a))
 		}
+		out.Active, out.Done = out.Active || out.Rematch.running(), out.Done && !out.Rematch.running()
 		return out
 	}
 	for _, sn := range f.item.Seasons {
@@ -363,6 +373,7 @@ func (f statusFacts) project(season int) ItemStatus {
 		out.Headline = seriesHeadline(out.Seasons)
 	}
 	out.Done = out.Headline.State == StatusDone
+	out.Active, out.Done = out.Active || out.Rematch.running(), out.Done && !out.Rematch.running()
 	return out
 }
 
@@ -713,14 +724,17 @@ func cinemaStages(st []StatusStage, dels []sqlite.Delivery, files []domain.Media
 	var lastVisible int64
 	var refusal string
 	var itemID int64
+	var warnings []string
 	pick := dels[0]
 	for _, d := range dels {
 		if d.Status == "failed" && pick.Status != "failed" {
 			pick = d
 		}
 		if len(d.FileResults) > 0 {
+			warnings = append(warnings, deliveryWarnings(d)...)
 			for _, r := range d.FileResults {
-				if !mine(r.Path) {
+				// A removed path's entry is a warning, not a file of this item.
+				if (r.State == "present" || r.State == "retained") || !mine(r.Path) {
 					continue
 				}
 				switch {
@@ -763,7 +777,7 @@ func cinemaStages(st []StatusStage, dels []sqlite.Delivery, files []domain.Media
 		}
 	}
 	c := &StatusCinema{DeliveryID: pick.ID, NotifierID: pick.NotifierID, Status: pick.Status, WaitingOn: pick.WaitingOn,
-		VisibleAt: pick.VisibleAt, ItemIDs: pick.ItemIDs, Error: pick.LastError}
+		VisibleAt: pick.VisibleAt, ItemIDs: pick.ItemIDs, Error: pick.LastError, Warnings: warnings}
 
 	// Cinema notified.
 	switch {
@@ -789,6 +803,12 @@ func cinemaStages(st []StatusStage, dels []sqlite.Delivery, files []domain.Media
 		d := "confirmed"
 		if itemID != 0 {
 			d += " · cinema item " + strconv.FormatInt(itemID, 10)
+		}
+		if len(warnings) > 0 {
+			d += "; warning: " + warnings[0]
+			if len(warnings) > 1 {
+				d += " (and " + strconv.Itoa(len(warnings)-1) + " more)"
+			}
 		}
 		st[5] = StatusStage{Key: StageInCinema, State: StatusDone, At: lastVisible, Detail: d}
 	case pick.Status == "failed":

@@ -29,6 +29,7 @@ import { useTheme } from '../theme'
 import type { BookType, MediaCopy, QualityProfile, ReleaseSearchScope, UpdateMediaItemRequest } from '../types'
 import { useResource } from '../useResource'
 import { ImportFileSheet } from './ImportFileSheet'
+import { RematchSheet } from './RematchSheet'
 
 export function MediaDetailScreen({ client, id, onBack, onInteractiveSearch, onOpenActivity }: { client: MonarrClient; id: number; onBack: () => void; onInteractiveSearch: (scope: ReleaseSearchScope) => void; onOpenActivity?: () => void }) {
   const theme = useTheme()
@@ -40,6 +41,7 @@ export function MediaDetailScreen({ client, id, onBack, onInteractiveSearch, onO
   const [saving, setSaving] = useState(false)
   const [searching, setSearching] = useState(false)
   const [importing, setImporting] = useState(false)
+  const [rematching, setRematching] = useState(false)
   const [seasonSaving, setSeasonSaving] = useState<number | null>(null)
   const [draftMonitored, setDraftMonitored] = useState(false)
   const [draftProfileId, setDraftProfileId] = useState(0)
@@ -242,6 +244,8 @@ export function MediaDetailScreen({ client, id, onBack, onInteractiveSearch, onO
           ) : null}
           <Button secondary label="Import file…" onPress={() => setImporting(true)} />
           {importing ? <ImportFileSheet client={client} item={item} onClose={() => { setImporting(false); void resource.refresh() }} /> : null}
+          {item.files.length > 0 ? <Button secondary label="Re-match… / Move to…" onPress={() => setRematching(true)} /> : null}
+          {rematching ? <RematchSheet client={client} item={item} onClose={() => { setRematching(false); void resource.refresh() }} /> : null}
           <Text style={[styles.actionHint, { color: theme.muted }]}>
             Search now grabs the best accepted release in the background. Interactive search lists every release the indexers return so you pick.
             {item.kind === 'series' && item.seasons.length === 0 ? ' Interactive search appears once this series has seasons.' : ''}

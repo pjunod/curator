@@ -92,6 +92,17 @@ func (s *Service) Scan(ctx context.Context) (Report, error) {
 		return report, err
 	}
 	claimed := map[string]bool{}
+	// A Re-match moving files holds both titles' leases, which a scan does
+	// not take; it leaves those titles, and the folder the move chose, alone
+	// until the move is over (ADR 0027), so a file mid-move is neither pruned
+	// nor adopted twice. The next scan picks them up.
+	moving, movingFolders, err := s.db.OpenRematchScope(ctx)
+	if err != nil {
+		return report, err
+	}
+	for _, f := range movingFolders {
+		claimed[filepath.Clean(f)] = true
+	}
 	for _, item := range items {
 		// Copies with their own folders are claimed and scanned too.
 		copies, err := s.db.ListMediaCopies(ctx, item.ID)
@@ -107,6 +118,13 @@ func (s *Service) Scan(ctx context.Context) (Report, error) {
 			continue
 		}
 		claimed[item.Path] = true
+		// First, and re-read now: a move that started after the snapshot
+		// above still owns the title, and a folder that looks missing
+		// mid-move is not missing.
+		if s.rematchOpen(ctx, moving, item.ID) {
+			s.log.Info("scan: skipping a title a re-match is moving files for", "title", item.Title)
+			continue
+		}
 		if reason := folderProblem(item.Path); reason != "" {
 			missing, err := s.missingItem(ctx, item, reason)
 			if err != nil {
@@ -119,6 +137,10 @@ func (s *Service) Scan(ctx context.Context) (Report, error) {
 			continue
 		}
 		linked, removed, err := s.scanItem(ctx, item, copies)
+		if errors.Is(err, errRematchStarted) {
+			s.log.Info("scan: a re-match started on a title mid-scan; left alone", "title", item.Title)
+			continue
+		}
 		if err != nil {
 			s.log.Warn("scan: item failed", "title", item.Title, "err", err)
 			continue
@@ -131,6 +153,14 @@ func (s *Service) Scan(ctx context.Context) (Report, error) {
 	roots, err := s.db.ListRootFolders(ctx)
 	if err != nil {
 		return report, err
+	}
+	// A move that started during the item pass chose a folder the first
+	// read did not know: re-read before the unmatched-folders pass so it is
+	// not offered for adoption.
+	if _, folders, err := s.db.OpenRematchScope(ctx); err == nil {
+		for _, f := range folders {
+			claimed[filepath.Clean(f)] = true
+		}
 	}
 	// Two exclusion mechanisms, and they answer different questions
 	// (ADR 0009 §4): patterns say "never look at things shaped like this",
@@ -198,6 +228,19 @@ func (s *Service) Scan(ctx context.Context) (Report, error) {
 	return report, nil
 }
 
+// errRematchStarted: a Re-match opened on the title while its scan ran.
+var errRematchStarted = errors.New("a re-match started on this title")
+
+// rematchOpen says a Re-match owns the title: by the scan's snapshot, or by
+// the operations open right now.
+func (s *Service) rematchOpen(ctx context.Context, snapshot map[int64]bool, itemID int64) bool {
+	if snapshot[itemID] {
+		return true
+	}
+	id, err := s.db.OpenRematchForItem(ctx, itemID)
+	return err == nil && id != ""
+}
+
 // scanItem syncs one item's folders (the item's own plus each copy's own
 // folder): every video file on disk gets a row (episode-linked for series
 // via the filename extractor), and rows whose files vanished are pruned.
@@ -262,6 +305,12 @@ func (s *Service) scanItem(ctx context.Context, item domain.MediaItem, copies []
 		}
 	}
 
+	// The walk is the slow part: a move may have started during it. The
+	// check is repeated before the rows are written and before they are
+	// pruned, because what the walk saw is a snapshot of files in motion.
+	if s.rematchOpen(ctx, nil, item.ID) {
+		return 0, 0, errRematchStarted
+	}
 	existing, err := s.db.ListFilesForItem(ctx, item.ID)
 	if err != nil {
 		return 0, 0, err
@@ -347,6 +396,9 @@ func (s *Service) scanItem(ctx context.Context, item domain.MediaItem, copies []
 		}
 	}
 
+	if s.rematchOpen(ctx, nil, item.ID) {
+		return linked, removed, errRematchStarted
+	}
 	for path, f := range existingByPath {
 		if _, still := onDisk[path]; !still {
 			if err := s.db.DeleteFile(ctx, f.ID); err != nil {

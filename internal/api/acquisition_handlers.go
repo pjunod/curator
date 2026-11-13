@@ -1522,12 +1522,17 @@ func notifierDTO(cfg ports.NotifierConfig) apigen.Notifier {
 	if settings == nil {
 		settings = map[string]string{}
 	}
-	return apigen.Notifier{
+	out := apigen.Notifier{
 		Id: cfg.ID, Type: apigen.NotifierType(cfg.Type), Name: cfg.Name,
 		Settings: &settings,
 		OnGrab:   &cfg.OnGrab, OnImport: &cfg.OnImport,
 		OnFailed: &cfg.OnFailed, OnHealth: &cfg.OnHealth, Enabled: &cfg.Enabled,
 	}
+	if cfg.FeaturesAt != 0 {
+		features, at := append([]string{}, cfg.Features...), cfg.FeaturesAt
+		out.Features, out.FeaturesReadAt = &features, &at
+	}
+	return out
 }
 
 // ListNotifiers implements GET /notifiers.
@@ -1576,14 +1581,14 @@ func (s *Server) TestNotifier(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "unknown notifier type")
 		return
 	}
-	s.runNotifierTest(w, r, s.deps.NotifierFactory(notifierFromInput(body)))
+	s.runNotifierTest(w, r, 0, s.deps.NotifierFactory(notifierFromInput(body)))
 }
 
 // runNotifierTest runs a notifier's Test and writes the answer. A notifier
 // that can check paths (Cinema, contract section 4.3) is handed the library
 // roots Curator places files under, so a root it cannot see fails the Test
 // here instead of one import at a time.
-func (s *Server) runNotifierTest(w http.ResponseWriter, r *http.Request, n ports.Notifier) {
+func (s *Server) runNotifierTest(w http.ResponseWriter, r *http.Request, id int64, n ports.Notifier) {
 	var note string
 	var err error
 	if pt, ok := n.(ports.PathTester); ok {
@@ -1613,6 +1618,13 @@ func (s *Server) runNotifierTest(w http.ResponseWriter, r *http.Request, n ports
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	// A saved notifier keeps what its far side said it supports (Cinema's
+	// removed_paths, contract amendment 5.3).
+	if fr, ok := n.(ports.FeatureReporter); ok && id != 0 && s.deps.Store != nil && fr.LearnedFeatures() != nil {
+		if ferr := s.deps.Store.SetNotifierFeatures(r.Context(), id, fr.LearnedFeatures()); ferr != nil {
+			s.deps.Log.Warn("notifier test: could not store features", "notifier", id, "err", ferr)
+		}
+	}
 	writeJSON(w, http.StatusOK, apigen.NotifierTestResult{Message: ptrIfText(note)})
 }
 
@@ -1629,7 +1641,7 @@ func (s *Server) TestNotifierByID(w http.ResponseWriter, r *http.Request, id int
 		s.acqErr(w, err)
 		return
 	}
-	s.runNotifierTest(w, r, s.deps.NotifierFactory(cfg))
+	s.runNotifierTest(w, r, id, s.deps.NotifierFactory(cfg))
 }
 
 // UpdateNotifier implements PUT /notifiers/{id}.

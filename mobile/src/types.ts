@@ -501,6 +501,71 @@ export interface ManualImportRequest {
 
 export interface PlaceRequest { mediaItemId: number; copyId?: number; files: { path: string; season?: number; episodes?: number[] }[] }
 
+// Re-match (ADR 0027): the same shapes the web uses.
+export interface RematchTarget { itemId?: number; kind?: MediaKind; tmdbId?: number; tvdbId?: number; imdbId?: string; olid?: string; hydrationSource?: string }
+export interface RematchChoice { fileId: number; season?: number; episodes?: number[]; leave?: boolean }
+export interface RematchRequest {
+  target: RematchTarget
+  copyId?: number
+  fileIds?: number[]
+  choices?: RematchChoice[]
+  blocklist?: boolean
+  requestId?: string
+  sourceRevision?: number
+  targetRevision?: number
+  fingerprint?: string
+}
+export interface RematchMove {
+  fileId: number
+  from: string
+  to?: string
+  season: number
+  episodes: number[]
+  label?: string
+  mode?: 'rename' | 'copy' | 'relink'
+  bytes: number
+  sidecars?: { from: string; to: string }[]
+  note?: string
+  /** What happens to a file the target already has (import's rule). */
+  action?: 'new' | 'replace' | 'beside'
+  existing?: string
+  reason?: string
+  replaces?: { fileId: number; path: string; quality?: string }[]
+  problem?: string
+  needsPick?: boolean
+  leave?: boolean
+}
+export interface RematchItemRef { id: number; kind: string; title: string; year?: number; inLibrary: boolean; folder?: string; folderChosen?: boolean }
+export interface RematchPreview {
+  source: RematchItemRef
+  target: RematchItemRef
+  moves: RematchMove[]
+  leftOut: RematchMove[]
+  sourceOutcome: 'stays' | 'removed'
+  sourceReason: string
+  blocklist: { fileId: number; release: string }[]
+  blocklistOn: boolean
+  blocklistNote?: string
+  cinema?: string
+  episodes?: { season: number; episode: number; title?: string; hasFile: boolean }[]
+  copies?: { id: number; name: string; bookType?: string }[]
+  blocked?: { reason: string; ref: string; itemId: number; message: string; retry: boolean }
+  sourceRevision: number
+  targetRevision: number
+  fingerprint: string
+  unresolved: number
+  summary: string
+}
+export interface RematchOperation {
+  operationId: string
+  state: 'planned' | 'moving' | 'moved' | 'committed' | 'complete' | 'cancel_pending' | 'cancelled' | 'failed'
+  bytesDone: number
+  bytesTotal: number
+  lastError?: string
+  result?: { moved?: { from: string; to: string }[]; leftOut?: string[]; failed?: { from: string; to: string }[]; blocklisted?: { release: string }[] }
+  cinema?: { directory: string; status: string; result?: string; visibleAt?: number }[]
+}
+
 // ---- item status panel (GET /library/{id}/status, 0.46.0) ----
 export type StatusState = 'done' | 'active' | 'waiting' | 'failed' | 'todo'
 export type StatusStageKey = 'searched' | 'downloading' | 'processed' | 'moved' | 'cinema_notified' | 'in_cinema'
@@ -510,7 +575,7 @@ export interface StatusDownload {
   id: number; release: string; indexer?: string; state: string; bytes: number; total: number; progress: number
   rateBps?: number; etaSeconds?: number; stage?: string; stageSince?: number; episodes?: number
 }
-export interface StatusCinema { deliveryId: number; notifierId: number; status: string; waitingOn?: string; visibleAt?: number; itemIds?: number[]; error?: string }
+export interface StatusCinema { deliveryId: number; notifierId: number; status: string; waitingOn?: string; visibleAt?: number; itemIds?: number[]; error?: string; warnings?: string[] }
 export interface StatusSeason { season: number; episodes: number; inCinema: number; onDisk: number; active: boolean; summary: string; download?: StatusDownload }
 export interface StatusEpisode {
   episodeId: number; season: number; episode: number; title?: string; wantableId: string; summary: string; at?: number
@@ -522,4 +587,28 @@ export interface ItemStatus {
   stages?: StatusStage[]; download?: StatusDownload; cinema?: StatusCinema
   attempts?: { downloadId: number; release: string; indexer?: string; at: number; outcome: string; reason?: string }[]
   seasons?: StatusSeason[]; episodes?: StatusEpisode[]
+  rematch?: StatusRematch
 }
+export interface StatusRematch {
+  operationId: string
+  state: 'planned' | 'moving' | 'moved' | 'committed' | 'cancel_pending' | 'complete' | 'cancelled' | 'failed'
+  ended: boolean
+  failedMoves?: { from: string; reason: string }[]
+  role: 'source' | 'target'
+  sourceItemId: number
+  targetItemId: number
+  sourceTitle: string
+  targetTitle: string
+  headline: string
+  bytesDone: number
+  bytesTotal: number
+  filesDone: number
+  filesTotal: number
+  moves?: { from: string; to: string; state: string; bytes: number }[]
+  cinema?: { directory: string; status: string; result?: string; lastError?: string; visibleAt?: number }[]
+  cinemaLine?: string
+  warnings?: string[]
+  error?: string
+  stoppable: boolean
+}
+

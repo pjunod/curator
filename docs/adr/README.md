@@ -30,6 +30,7 @@ accepted; a change of course gets a new ADR that supersedes the old one.
 | [0024](0024-season-acquisition.md) | Saturated episode outcomes and season acquisition | Proposed |
 | [0025](0025-import-cancellation-and-deployment-drain.md) | Durable import cancellation and deployment drain | Design reviewed; implementation in progress |
 | [0026](0026-pipeline-contract-v2.md) | Pipeline contract v2: Runner facts, provisional terminals, publications | Accepted |
+| [0027](0027-rematch-file-moves.md) | Re-match: move files to the right item or episode | Accepted |
 
 Context for all of these lives in [../architecture.md](../architecture.md).
 

@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -37,6 +38,12 @@ type Plurx struct {
 	// Wait is how long Cinema may hold a sub-delivery for its result
 	// (wait_ms); 0 means the default, 10 s.
 	Wait time.Duration
+	// Features is what Cinema's connection test said it supports, as stored
+	// on the notifier ("removed_paths", contract amendment 5.3).
+	Features []string
+
+	// learned is what this Test's answer said, for the caller to store.
+	learned []string
 
 	// delivery accumulates what plurx said about the last Send. A notifier
 	// is built fresh per dispatch (see notify.New), so this is per-event
@@ -71,7 +78,7 @@ func (p *Plurx) Send(ctx context.Context, n ports.Notification) error {
 	var failures []string
 	permanent := true
 	for _, dir := range n.Import.Dirs {
-		res, err := p.scan(ctx, dir, n.Import, "")
+		res, err := p.scan(ctx, dir, n.Import, "", false)
 		if err != nil {
 			failures = append(failures, fmt.Sprintf("%s: %v", dir, err))
 			permanent = permanent && errors.Is(err, ports.ErrNotifyPermanent)
@@ -106,7 +113,7 @@ func (p *Plurx) SendScan(ctx context.Context, n ports.Notification) (ports.Notif
 		return ports.NotifyResult{}, &ports.NotifyError{Retry: ports.RetryNever, Msg: "plurx: a sub-delivery names exactly one directory"}
 	}
 	dir := n.Import.Dirs[0]
-	return p.scan(ctx, dir, n.Import, n.IdempotencyKey)
+	return p.scan(ctx, dir, n.Import, n.IdempotencyKey, n.Event == "moved")
 }
 
 // waitMs is how long Cinema may hold a request for its targeted result. It
@@ -127,6 +134,76 @@ type plurxScanRequest struct {
 	ExpectedFiles []ports.ExpectedFile `json:"expected_files,omitempty"`
 	WaitMs        int                  `json:"wait_ms,omitempty"`
 	ProbePaths    []string             `json:"probe_paths,omitempty"`
+	// Contract amendment (removed paths): a Re-match's request names the
+	// event and the files that left `path`.
+	Event        string   `json:"event,omitempty"`
+	RemovedPaths []string `json:"removed_paths,omitempty"`
+	// ProbeOnly is sent on every chunk of a moved request, including one that
+	// carries only expected files: cinema probes the named paths and never
+	// walks the rest of `path` (contract 4.4).
+	ProbeOnly bool `json:"probe_only,omitempty"`
+}
+
+func (p *Plurx) hasFeature(f string) bool {
+	for _, x := range p.Features {
+		if x == f {
+			return true
+		}
+	}
+	return false
+}
+
+// LearnedFeatures implements ports.FeatureReporter: what the last Test learned.
+func (p *Plurx) LearnedFeatures() []string { return p.learned }
+
+// ProbeFeatures implements ports.FeatureProber: the connection test's answer
+// with no paths to check, read for its features. An older Cinema refuses the
+// body with a 422 and supports none of them.
+func (p *Plurx) ProbeFeatures(ctx context.Context) ([]string, error) {
+	if p.URL == "" || p.APIKey == "" {
+		return nil, fmt.Errorf("plurx: url and apiKey required")
+	}
+	body, err := json.Marshal(map[string]any{"probe_paths": []string{}, "source": "monarr"})
+	if err != nil {
+		return nil, err
+	}
+	status, raw, _, err := p.do(ctx, http.MethodPost, "/api/v1/scan", body)
+	if err != nil {
+		return nil, err
+	}
+	switch status {
+	case http.StatusOK:
+		return answerFeatures(raw), nil
+	case http.StatusUnprocessableEntity:
+		return []string{}, nil
+	}
+	return nil, fmt.Errorf("plurx returned %d to the feature probe: %s", status, summarize(raw))
+}
+
+func answerFeatures(raw []byte) []string {
+	var body struct {
+		Features []string `json:"features"`
+	}
+	_ = json.Unmarshal(raw, &body)
+	if body.Features == nil {
+		return []string{}
+	}
+	return body.Features
+}
+
+// commonDir is the deepest folder holding every expected file: the new
+// folder of a move, which an older Cinema is sent as a plain scan.
+func commonDir(files []ports.ExpectedFile) string {
+	if len(files) == 0 {
+		return ""
+	}
+	dir := filepath.Dir(files[0].Path)
+	for _, f := range files[1:] {
+		for dir != "/" && dir != "." && !strings.HasPrefix(f.Path, strings.TrimSuffix(dir, "/")+"/") {
+			dir = filepath.Dir(dir)
+		}
+	}
+	return dir
 }
 
 type plurxIDs struct {
@@ -174,14 +251,28 @@ func scanBody(path string, info *ports.ImportInfo) plurxScanRequest {
 // owns is the CLASSIFICATION — whether trying again could possibly help, and
 // whether the next try needs a fresh attempt — because that knowledge lives
 // with the status codes.
-func (p *Plurx) scan(ctx context.Context, dir string, info *ports.ImportInfo, key string) (ports.NotifyResult, error) {
+func (p *Plurx) scan(ctx context.Context, dir string, info *ports.ImportInfo, key string, moved bool) (ports.NotifyResult, error) {
 	req := scanBody(dir, info)
+	sentRemoved := false
 	if key != "" {
 		req.RequestKey = key
 		req.ExpectedFiles = info.ExpectedFiles[dir]
 		req.WaitMs = waitMs
 		if p.Wait > 0 {
 			req.WaitMs = int(p.Wait / time.Millisecond)
+		}
+		if moved || len(info.RemovedPaths) > 0 {
+			if p.hasFeature(ports.FeatureRemovedPaths) {
+				req.Event, req.RemovedPaths, req.ProbeOnly, sentRemoved = "moved", info.RemovedPaths, true, true
+			} else {
+				// An older Cinema would full-scan the common parent and
+				// cannot drop the old entry: send the new folder as a plain
+				// import-shaped scan (contract amendment 6).
+				if len(req.ExpectedFiles) == 0 {
+					return ports.NotifyResult{State: "done", FilesReported: true}, nil
+				}
+				req.Path = commonDir(req.ExpectedFiles)
+			}
 		}
 	}
 	body, err := json.Marshal(req)
@@ -192,7 +283,9 @@ func (p *Plurx) scan(ctx context.Context, dir string, info *ports.ImportInfo, ke
 	if err != nil {
 		return ports.NotifyResult{}, err
 	}
-	return classifyScan(dir, status, raw, header, key != "")
+	res, err := classifyScan(req.Path, status, raw, header, key != "")
+	res.RemovedPathsSent = sentRemoved
+	return res, err
 }
 
 // ReadResult implements ports.ResultReader: GET /api/v1/scan/requests/{id},
@@ -479,6 +572,12 @@ func (p *Plurx) TestPaths(ctx context.Context, roots []string) (string, error) {
 		OutsideRoots []string  `json:"outside_roots"`
 	}
 	_ = json.Unmarshal(raw, &probe)
+	switch status {
+	case http.StatusOK:
+		p.learned = answerFeatures(raw)
+	case http.StatusUnprocessableEntity:
+		p.learned = []string{}
+	}
 	switch {
 	case status == http.StatusOK && probe.Visible != nil:
 		return "", probeFailure(roots, probe.Roots, probe.Missing, probe.OutsideRoots)

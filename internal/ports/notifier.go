@@ -26,12 +26,31 @@ type NotifierConfig struct {
 	OnFailed bool
 	OnHealth bool
 	Enabled  bool
+	// Features is what the far side's connection test said it supports
+	// (Cinema: "removed_paths", contract amendment 5.3). Stored at Test.
+	Features []string
+	// FeaturesAt is when Features were last read (Unix ms; 0 = never).
+	FeaturesAt int64
+}
+
+// FeatureRemovedPaths is Cinema's support for a scan request naming the
+// paths that left a folder (contract amendment 4.2).
+const FeatureRemovedPaths = "removed_paths"
+
+// HasFeature reports whether the notifier said it supports f.
+func (c NotifierConfig) HasFeature(f string) bool {
+	for _, x := range c.Features {
+		if x == f {
+			return true
+		}
+	}
+	return false
 }
 
 // Notification is one event rendered for the outside world. The JSON shape
 // is the webhook wire format — lowercase, stable.
 type Notification struct {
-	Event string `json:"event"` // grab | import | failed | health | test
+	Event string `json:"event"` // grab | import | moved | failed | health | test
 	Title string `json:"title"`
 	Body  string `json:"body"`
 	// Fields carries structured extras (release, quality, item title…).
@@ -85,6 +104,12 @@ type ImportInfo struct {
 	// sub-delivery is visible only when every one comes back placed with
 	// matching bytes and mtime_ns (contract section 4.2).
 	ExpectedFiles map[string][]ExpectedFile `json:"expectedFiles,omitempty"`
+	// RemovedPaths are the files a Re-match moved out of this directory
+	// (event `moved`, ADR 0027). Cinema answers each gone, unknown or
+	// present; FromItemID is the item they left. The rest of the struct
+	// describes the target.
+	RemovedPaths []string `json:"removedPaths,omitempty"`
+	FromItemID   int64    `json:"fromItemId,omitempty"`
 }
 
 // Cinema's limits on a request's expected files (plurx
@@ -184,16 +209,54 @@ type NotifyResult struct {
 	ItemIDs       []int64
 	Err           string
 	ErrCode       string
+	// RemovedPathsSent says the request carried removed_paths; false for a
+	// moved event sent to a Cinema without the feature (its new folder only).
+	RemovedPathsSent bool
 }
 
 // PlacedReport is Cinema's word on one expected file.
 type PlacedReport struct {
-	Path    string `json:"path"`
-	State   string `json:"state"` // placed | skipped | missing
+	Path  string `json:"path"`
+	State string `json:"state"` // placed | skipped | missing; gone | unknown | present | retained for a removed path
+	// Code is a retained removed path's machine reason (Retained*); Reason is
+	// a present one's (Reason*) or a skipped file's text.
+	Code    string `json:"code,omitempty"`
 	Bytes   int64  `json:"bytes,omitempty"`
 	MtimeNs int64  `json:"mtime_ns,omitempty"`
 	ItemID  int64  `json:"item_id,omitempty"`
 	Reason  string `json:"reason,omitempty"`
+	// Retryable is a retained path's own word on whether waiting helps.
+	Retryable bool `json:"retryable,omitempty"`
+}
+
+// Why Cinema retained a removed path (PlacedReport.Code, contract 4.4).
+const (
+	RetainedRootIdentityUnset    = "root_identity_unset"
+	RetainedRootIdentityMismatch = "root_identity_mismatch"
+	RetainedPruneBound           = "prune_bound"
+	RetainedConversionHold       = "conversion_hold"
+	RetainedExpectedNotPlaced    = "expected_not_placed"
+	RetainedRecordKept           = "record_kept"
+)
+
+// Why Cinema says a removed path is still present (PlacedReport.Reason).
+const (
+	ReasonExists        = "exists"
+	ReasonSymlinkInPath = "symlink_in_chain"
+	ReasonCaseVariant   = "case_variant"
+	ReasonReappeared    = "reappeared_before_removal"
+)
+
+// FeatureProber re-reads what the far side supports (Cinema's connection
+// test answer, contract amendment 5.3) without starting any work.
+type FeatureProber interface {
+	ProbeFeatures(ctx context.Context) ([]string, error)
+}
+
+// FeatureReporter is a notifier that learned its far side's features during
+// its last Test.
+type FeatureReporter interface {
+	LearnedFeatures() []string
 }
 
 // NotifyRetry says what a failed request means for the next one.

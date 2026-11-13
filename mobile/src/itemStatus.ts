@@ -1,4 +1,5 @@
-import type { ItemStatus, StatusAction, StatusDownload, StatusStage, StatusStageKey, StatusState } from './types'
+import { formatBytes } from './format'
+import type { ItemStatus, StatusAction, StatusDownload, StatusRematch, StatusStage, StatusStageKey, StatusState } from './types'
 
 // Display helpers for the item status panel; the server decides every state.
 
@@ -55,3 +56,24 @@ export function downloadLine(dl: StatusDownload): string {
   if (dl.stage && dl.stage !== 'downloading') parts.push(`runner: ${dl.stage.replaceAll('_', ' ')}`)
   return parts.filter(Boolean).join(' · ')
 }
+
+export const REMATCH_STATE: Record<StatusRematch['state'], string> = {
+  planned: 'Starting',
+  moving: 'Moving',
+  moved: 'Files moved; committing',
+  committed: 'Files in place; finishing',
+  cancel_pending: 'Stopping; putting the moved files back',
+  complete: 'Complete',
+  cancelled: 'Stopped',
+  failed: 'Failed',
+}
+
+/** "1 of 2 files · 5 MB of 10 MB" (bytes only when known). */
+export function rematchCounts(r: Pick<StatusRematch, 'filesDone' | 'filesTotal' | 'bytesDone' | 'bytesTotal'>): string {
+  const parts = [`${r.filesDone} of ${r.filesTotal} file${r.filesTotal === 1 ? '' : 's'}`]
+  if (r.bytesTotal > 0) parts.push(`${formatBytes(r.bytesDone)} of ${formatBytes(r.bytesTotal)}`)
+  return parts.join(' · ')
+}
+
+/** A Stop/Dismiss answer belongs to the operation it was given for: once a different one opens, it goes. */
+export const noticeBelongsTo = (noticeOp: string, currentOp: string | undefined) => !currentOp || !noticeOp || currentOp === noticeOp

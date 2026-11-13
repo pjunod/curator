@@ -2896,6 +2896,150 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
 
+  /library/{id}/rematch/preview:
+    post:
+      operationId: previewRematch
+      summary: What a Re-match would do (ADR 0027); no side effects
+      description: >
+        Re-match… (every file of the item) or Move to… (fileIds) to another
+        library item, another copy or edition, other episodes, or a title not
+        yet in the library (target by provider id; it is added only when the
+        Re-match is executed). Lists every rename, the files that do not fit
+        (with the target's episodes for a picker), what happens to this item,
+        the releases blocklisted for it, what Cinema will do, and anything
+        in flight that blocks the move (`blocked`, retry to wait for it).
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer, format: int64 } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RematchRequest" }
+      responses:
+        "200":
+          description: The preview.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RematchPreview" }
+        "400":
+          description: A target of another kind, a file that is not this item's, or no target.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "404":
+          description: No such item.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /library/{id}/rematch:
+    get:
+      operationId: getLibraryRematch
+      summary: The open Re-match moving files out of or into this item
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer, format: int64 } }
+      responses:
+        "200":
+          description: The operation (progress, Stop, cinema confirmation).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RematchOperation" }
+        "204":
+          description: No open operation for this item.
+    post:
+      operationId: startRematch
+      summary: Execute a previewed Re-match (idempotent by requestId)
+      description: >
+        Adds the target first when it is not in the library (default profile,
+        a root of its kind), then takes both titles' leases, refuses a stale
+        preview (409 `stale`) or work in flight (409 `rematch_blocked`), and
+        starts the moves. Follow it with GET /rematch/{operationId}.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer, format: int64 } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RematchRequest" }
+      responses:
+        "202":
+          description: The operation, started (or the one this requestId already started).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RematchOperation" }
+        "400":
+          description: Invalid request (no requestId or fingerprint, nothing to move, no room).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "409":
+          description: >
+            `stale` (preview again), `rematch_blocked` (work in flight; the
+            body carries `blocked`), `request_conflict` (requestId reused), or
+            `busy` (a title is being imported). 503 `maintenance` while a
+            deployment drain pauses new work.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RematchConflict" }
+
+  /rematch/{operationId}:
+    get:
+      operationId: getRematch
+      summary: A Re-match's state, bytes copied, result and Cinema confirmation
+      parameters:
+        - { name: operationId, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: The operation.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RematchOperation" }
+        "404":
+          description: No such operation.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /rematch/{operationId}/cancel:
+    post:
+      operationId: cancelRematch
+      summary: Stop a Re-match that has not committed (a copy's temp file is removed, sources untouched)
+      parameters:
+        - { name: operationId, in: path, required: true, schema: { type: string } }
+      responses:
+        "202":
+          description: Stopping; files already moved are put back.
+        "404":
+          description: No such operation.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "409":
+          description: The files are already committed; it can no longer be stopped.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /rematch/{operationId}/dismiss:
+    post:
+      operationId: dismissRematch
+      summary: Hide a finished Re-match from the item pages' status panels
+      parameters:
+        - { name: operationId, in: path, required: true, schema: { type: string } }
+      responses:
+        "204":
+          description: Dismissed.
+        "404":
+          description: No such operation.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "409":
+          description: It is still running; Stop it instead.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
   /library/{id}/seasons/{season}:
     patch:
       operationId: setSeasonMonitored
@@ -5358,6 +5502,61 @@ components:
         episodes:
           type: array
           items: { $ref: "#/components/schemas/StatusEpisode" }
+        rematch: { $ref: "#/components/schemas/StatusRematch" }
+
+    StatusRematch:
+      type: object
+      description: >
+        The open Re-match moving files out of or into this item (the panel's
+        "Moving files" block). Stop is POST /rematch/{operationId}/cancel.
+      required: [operationId, state, ended, role, sourceItemId, targetItemId, sourceTitle, targetTitle, headline, bytesDone, bytesTotal, filesDone, filesTotal, stoppable]
+      properties:
+        operationId: { type: string }
+        state: { type: string, enum: [planned, moving, moved, committed, cancel_pending, complete, cancelled, failed] }
+        ended: { type: boolean, description: The operation is over (failed, or complete with files that could not move); shown 24 h or until dismissed. }
+        failedMoves:
+          type: array
+          items:
+            type: object
+            required: [from, reason]
+            properties:
+              from: { type: string }
+              reason: { type: string }
+        role: { type: string, enum: [source, target], description: Which side of the move this item is. }
+        sourceItemId: { type: integer, format: int64 }
+        targetItemId: { type: integer, format: int64 }
+        sourceTitle: { type: string }
+        targetTitle: { type: string }
+        headline: { type: string, description: "For this item's side, e.g. Files moving here from Dune (1984)." }
+        bytesDone: { type: integer, format: int64 }
+        bytesTotal: { type: integer, format: int64 }
+        filesDone: { type: integer }
+        filesTotal: { type: integer }
+        moves:
+          type: array
+          items:
+            type: object
+            required: [from, to, state, bytes]
+            properties:
+              from: { type: string }
+              to: { type: string }
+              state: { type: string }
+              bytes: { type: integer, format: int64 }
+        cinema:
+          type: array
+          items:
+            type: object
+            required: [directory, status]
+            properties:
+              directory: { type: string }
+              status: { type: string }
+              result: { type: string }
+              lastError: { type: string }
+              visibleAt: { type: integer, format: int64 }
+        cinemaLine: { type: string }
+        warnings: { type: array, items: { type: string }, description: Cinema's retained and present lines. }
+        error: { type: string }
+        stoppable: { type: boolean, description: False once the files are committed. }
 
     StatusHeadline:
       type: object
@@ -5413,6 +5612,7 @@ components:
           type: array
           items: { type: integer, format: int64 }
         error: { type: string }
+        warnings: { type: array, items: { type: string }, description: Cinema's lasting answers about files that left (a Re-match). }
 
     StatusAttempt:
       type: object
@@ -5699,6 +5899,16 @@ components:
             id:
               type: integer
               format: int64
+            features:
+              type: array
+              items: { type: string }
+              description: >
+                What the far side's connection test said it supports (Cinema:
+                removed_paths, contract 4.4). Advisory; nothing is gated on it.
+            featuresReadAt:
+              type: integer
+              format: int64
+              description: When features were last read (Unix ms); absent = never.
 
     PlurxWatchedEvent:
       type: object
@@ -6739,6 +6949,171 @@ components:
           description: Stored salted-hashed; never returned.
         defaultProfiles:
           $ref: '#/components/schemas/DefaultProfilesUpdate'
+
+    RematchRequest:
+      type: object
+      properties:
+        target:
+          type: object
+          description: A library item (itemId), or a title by provider id.
+          properties:
+            itemId: { type: integer, format: int64 }
+            kind: { $ref: "#/components/schemas/MediaKind" }
+            tmdbId: { type: integer, format: int64 }
+            tvdbId: { type: integer, format: int64 }
+            imdbId: { type: string }
+            olid: { type: string }
+            hydrationSource: { type: string }
+        copyId: { type: integer, format: int64, description: "Target copy or edition; 0 = primary." }
+        fileIds:
+          type: array
+          description: Move to… these files; absent = every file of the item (Re-match…).
+          items: { type: integer, format: int64 }
+        choices:
+          type: array
+          items:
+            type: object
+            required: [fileId]
+            properties:
+              fileId: { type: integer, format: int64 }
+              season: { type: integer }
+              episodes: { type: array, items: { type: integer } }
+              leave: { type: boolean, description: "Leave it out: it stays on disk and leaves the library." }
+        blocklist: { type: boolean, description: "Blocklist the moved files' releases for this item (default true)." }
+        requestId: { type: string, description: "Execute only." }
+        sourceRevision: { type: integer, format: int64, description: "Execute only: the preview's." }
+        targetRevision: { type: integer, format: int64, description: "Execute only: the preview's (0 for a new title)." }
+        fingerprint: { type: string, description: "Execute only: the preview's." }
+
+    RematchMove:
+      type: object
+      required: [fileId, from, season, episodes, bytes]
+      properties:
+        fileId: { type: integer, format: int64 }
+        from: { type: string }
+        to: { type: string }
+        season: { type: integer }
+        episodes: { type: array, items: { type: integer } }
+        label: { type: string }
+        mode: { type: string, enum: [rename, copy, relink] }
+        bytes: { type: integer, format: int64 }
+        quality: { type: string }
+        sidecars:
+          type: array
+          items:
+            type: object
+            properties:
+              from: { type: string }
+              to: { type: string }
+        note: { type: string }
+        problem: { type: string, description: "Why it is left out (stays on disk, leaves the library)." }
+        needsPick: { type: boolean }
+
+    RematchItemRef:
+      type: object
+      required: [id, kind, title, inLibrary]
+      properties:
+        id: { type: integer, format: int64 }
+        kind: { type: string }
+        title: { type: string }
+        year: { type: integer }
+        inLibrary: { type: boolean }
+        folder: { type: string }
+        folderChosen: { type: boolean }
+
+    RematchPreview:
+      type: object
+      required: [source, target, moves, leftOut, sourceOutcome, sourceReason, blocklist, blocklistOn, sourceRevision, targetRevision, fingerprint, summary]
+      properties:
+        source: { $ref: "#/components/schemas/RematchItemRef" }
+        target: { $ref: "#/components/schemas/RematchItemRef" }
+        targetCopyId: { type: integer, format: int64 }
+        moves: { type: array, items: { $ref: "#/components/schemas/RematchMove" } }
+        leftOut: { type: array, items: { $ref: "#/components/schemas/RematchMove" } }
+        sourceOutcome: { type: string, enum: [stays, removed] }
+        sourceReason: { type: string }
+        blocklist:
+          type: array
+          items:
+            type: object
+            properties:
+              fileId: { type: integer, format: int64 }
+              release: { type: string }
+              indexer: { type: string }
+        blocklistOn: { type: boolean }
+        blocklistNote: { type: string }
+        cinema: { type: string }
+        episodes:
+          type: array
+          items:
+            type: object
+            properties:
+              season: { type: integer }
+              episode: { type: integer }
+              title: { type: string }
+              hasFile: { type: boolean }
+        copies:
+          type: array
+          items:
+            type: object
+            properties:
+              id: { type: integer, format: int64 }
+              name: { type: string }
+              bookType: { type: string }
+        blocked: { $ref: "#/components/schemas/RematchBlocked" }
+        sourceRevision: { type: integer, format: int64 }
+        targetRevision: { type: integer, format: int64 }
+        fingerprint: { type: string }
+        summary: { type: string }
+
+    RematchBlocked:
+      type: object
+      required: [reason, ref, itemId, message, retry]
+      properties:
+        reason: { type: string, enum: [download, import, replacement, rematch] }
+        ref: { type: string }
+        itemId: { type: integer, format: int64 }
+        message: { type: string }
+        retry: { type: boolean }
+
+    RematchConflict:
+      type: object
+      required: [message]
+      properties:
+        code: { type: string }
+        message: { type: string }
+        blocked: { $ref: "#/components/schemas/RematchBlocked" }
+
+    RematchOperation:
+      type: object
+      required: [operationId, requestId, state, sourceItemId, targetItemId, bytesDone, bytesTotal, createdAt, updatedAt]
+      properties:
+        operationId: { type: string }
+        requestId: { type: string }
+        state:
+          type: string
+          enum: [planned, moving, moved, committed, complete, cancel_pending, cancelled, failed]
+        sourceItemId: { type: integer, format: int64 }
+        targetItemId: { type: integer, format: int64 }
+        plan: { type: object, description: "The stored request and preview." }
+        result:
+          type: object
+          description: "moved [{from,to,episodes,mode}], leftOut, failed, blocklisted, sourceRemoved, leftBehind, cinemaNote."
+        bytesDone: { type: integer, format: int64 }
+        bytesTotal: { type: integer, format: int64 }
+        lastError: { type: string }
+        createdAt: { type: integer, format: int64 }
+        updatedAt: { type: integer, format: int64 }
+        cinema:
+          type: array
+          items:
+            type: object
+            properties:
+              directory: { type: string }
+              status: { type: string }
+              result: { type: string }
+              lastError: { type: string }
+              visibleAt: { type: integer, format: int64 }
 
     DefaultProfilesUpdate:
       type: object

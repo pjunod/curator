@@ -127,12 +127,35 @@ func (d *DB) AddNotifier(ctx context.Context, n ports.NotifierConfig) (int64, er
 func notifierToPort(r sqlitegen.Notifier) ports.NotifierConfig {
 	var settings map[string]string
 	_ = json.Unmarshal([]byte(r.Settings), &settings)
+	var features []string
+	_ = json.Unmarshal([]byte(r.Features), &features)
 	return ports.NotifierConfig{
 		ID: r.ID, Type: r.Type, Name: r.Name, Settings: settings,
 		OnGrab: r.OnGrab != 0, OnImport: r.OnImport != 0,
 		OnFailed: r.OnFailed != 0, OnHealth: r.OnHealth != 0,
-		Enabled: r.Enabled != 0,
+		Enabled: r.Enabled != 0, Features: features, FeaturesAt: r.FeaturesAt,
 	}
+}
+
+// SetDeliveryRemovedSent records whether a moved request's POST carried
+// removed_paths, so a later read of the request is judged by what was sent.
+func (d *DB) SetDeliveryRemovedSent(ctx context.Context, id int64, sent bool) error {
+	_, err := d.W.ExecContext(ctx, `UPDATE notifier_deliveries SET removed_sent=? WHERE id=?`, boolInt(sent), id)
+	return err
+}
+
+// SetNotifierFeatures stores what the notifier's far side said it supports
+// (contract amendment 5.3).
+func (d *DB) SetNotifierFeatures(ctx context.Context, id int64, features []string) error {
+	if features == nil {
+		features = []string{}
+	}
+	raw, err := json.Marshal(features)
+	if err != nil {
+		return err
+	}
+	_, err = d.W.ExecContext(ctx, `UPDATE notifiers SET features=?, features_at=? WHERE id=?`, string(raw), time.Now().UnixMilli(), id)
+	return err
 }
 
 // ListNotifiers returns every stored notifier.
@@ -216,7 +239,10 @@ type Delivery struct {
 	WaitingOn       string               `json:"waitingOn,omitempty"`
 	VisibleAt       int64                `json:"visibleAt,omitempty"`
 	ItemIDs         []int64              `json:"itemIds,omitempty"`
-	MediaItemID     int64                `json:"mediaItemId,omitempty"`
+	OperationID     string               `json:"operationId,omitempty"`
+	// RemovedSent: the last POST of this moved request carried removed_paths.
+	RemovedSent bool  `json:"removedSent,omitempty"`
+	MediaItemID int64 `json:"mediaItemId,omitempty"`
 	// FileResults is Cinema's answer for each expected file at the last
 	// read-back, so an episode of a season pack has its own in-cinema state.
 	FileResults []DeliveryFileResult `json:"fileResults,omitempty"`
@@ -233,6 +259,11 @@ type DeliveryFileResult struct {
 	MtimeNs int64  `json:"mtimeNs,omitempty"`
 	Reason  string `json:"reason,omitempty"`
 	Matched bool   `json:"matched"`
+	// Code and Warning are set on the entry of a removed path (State
+	// present or retained) that cinema answered with a lasting warning: the
+	// panel and the delivery log read the verdict from here, not from text.
+	Code    string `json:"code,omitempty"`
+	Warning string `json:"warning,omitempty"`
 }
 
 // RequestKey is the key Cinema sees for this attempt: "<key>/<attempt>".
@@ -251,7 +282,7 @@ func deliveryFrom(r sqlitegen.NotifierDelivery) Delivery {
 		NextAt: r.NextAt, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
 		PublicationID: r.PublicationID, Directory: r.Directory, IdempotencyKey: r.IdempotencyKey,
 		Attempt: r.Attempt, RemoteRequestID: r.RemoteRequestID, RemoteState: r.RemoteState,
-		WaitingOn: r.WaitingOn, VisibleAt: r.VisibleAt, MediaItemID: r.MediaItemID,
+		WaitingOn: r.WaitingOn, VisibleAt: r.VisibleAt, OperationID: r.OperationID, RemovedSent: r.RemovedSent != 0, MediaItemID: r.MediaItemID,
 	}
 	_ = json.Unmarshal([]byte(r.ExpectedFilesJson), &d.ExpectedFiles)
 	_ = json.Unmarshal([]byte(r.ItemIdsJson), &d.ItemIDs)
@@ -274,6 +305,8 @@ type OutboxWrite struct {
 	ExpectedFiles  []ports.ExpectedFile
 	Event          string
 	Payload        string
+	// OperationID keys a Re-match's sub-delivery (op/<id>/<dir-hash>).
+	OperationID string
 }
 
 // insertOutboxTx writes outbox rows inside the caller's transaction.
@@ -288,13 +321,13 @@ func insertOutboxTx(ctx context.Context, tx *sql.Tx, rows []OutboxWrite, now int
 			expected = string(raw)
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO notifier_deliveries
-			(notifier_id, download_id, media_item_id, publication_id, directory, idempotency_key, expected_files_json, event, payload, next_at, created_at, updated_at)
-			VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+			(notifier_id, download_id, media_item_id, publication_id, directory, idempotency_key, expected_files_json, event, payload, next_at, created_at, updated_at, operation_id)
+			VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
 			ON CONFLICT (notifier_id, idempotency_key) WHERE idempotency_key != '' DO UPDATE SET
 				expected_files_json=excluded.expected_files_json, payload=excluded.payload, status='pending', attempts=0,
 				attempt=attempt+1, last_error='', result='', remote_request_id='', remote_state='', waiting_on='',
 				visible_at=0, item_ids_json='[]', file_results_json='[]', next_at=excluded.next_at, created_at=excluded.created_at, updated_at=excluded.updated_at`,
-			o.NotifierID, o.DownloadID, o.MediaItemID, o.PublicationID, o.Directory, o.IdempotencyKey, expected, o.Event, o.Payload, now, now, now); err != nil {
+			o.NotifierID, o.DownloadID, o.MediaItemID, o.PublicationID, o.Directory, o.IdempotencyKey, expected, o.Event, o.Payload, now, now, now, o.OperationID); err != nil {
 			return err
 		}
 	}
