@@ -2,8 +2,10 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -166,5 +168,165 @@ func TestImportActivityIncludesSalvageAndUnattributedImportedEvidence(t *testing
 	}
 	if !found {
 		t.Fatal("missing real historical import")
+	}
+}
+
+// Model a cancelled failed import after cleanup, then independently reintroduce
+// each durable custody signal. GET classification must never change audit data.
+func TestCancelledImportHistoryPreservesAuditAndUnresolvedCustody(t *testing.T) {
+	e := newAPIEnv(t)
+	ctx := context.Background()
+	item := e.addMovie(t)
+	for _, custody := range []string{"resolved", "resolved_noncancelled", "stage", "prepared", "retained", "authorization", "retained_authorization", "unresolved", "pending_publication", "failed_publication", "failed_with_history", "reservation", "stale_generation"} {
+		t.Run(custody, func(t *testing.T) {
+			id, err := e.db.InsertDownload(ctx, sqlite.Download{MediaItemID: item, State: "failed", Protocol: "usenet", ReleaseTitle: "cancel-fixture-" + custody, ImportPath: "/completed/" + custody})
+			if err != nil {
+				t.Fatal(err)
+			}
+			exec := func(q string, args ...any) {
+				t.Helper()
+				if _, err := e.db.W.ExecContext(ctx, q, args...); err != nil {
+					t.Fatal(err)
+				}
+			}
+			exec(`UPDATE downloads SET error='publication import_failed: existing stage retained; explicit retry or custody review required',import_path=? WHERE id=?`, "/completed/"+custody, id)
+			dl, err := e.db.GetDownload(ctx, id)
+			if err != nil {
+				t.Fatal(err)
+			}
+			a, err := e.db.EnsureImportAttempt(ctx, id, dl.GenerationKey)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := e.db.RecordImportStage(ctx, a.ImportAttemptKey, "/source/"+custody, "/target/"+custody, "/stage/"+custody); err != nil {
+				t.Fatal(err)
+			}
+			exec(`UPDATE import_attempt_stages SET state='operator_disposed' WHERE download_id=?`, id)
+			exec(`UPDATE import_attempt_controls SET outcome='cancelled',requested_at=1,finalized_at=2 WHERE download_id=?`, id)
+			pub, err := e.db.InsertPublication(ctx, sqlite.PublicationWrite{DownloadID: id, Generation: custody, Kind: "completed", Path: "/completed/" + custody, Source: "none", Cohort: "live"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := e.db.SeedPublicationFiles(ctx, pub, []sqlite.PublicationFile{{Path: "film.mkv", Bytes: 123}}); err != nil {
+				t.Fatal(err)
+			}
+			if err := e.db.SetPublicationFileOutcome(ctx, sqlite.PublicationFile{PublicationID: pub, Path: "film.mkv", Outcome: "discarded", Reason: "a later import satisfied every want", DiscardReason: "superseded"}); err != nil {
+				t.Fatal(err)
+			}
+			if err := e.db.SetPublicationState(ctx, pub, "removed", ""); err != nil {
+				t.Fatal(err)
+			}
+			switch custody {
+			case "resolved_noncancelled":
+				exec(`UPDATE import_attempt_controls SET outcome='',requested_at=NULL,finalized_at=NULL WHERE download_id=?`, id)
+			case "stage":
+				exec(`UPDATE import_attempt_stages SET state='held' WHERE download_id=?`, id)
+			case "prepared", "retained":
+				p := sqlite.Placement{ID: "custody-" + custody, DownloadID: id, SourceGeneration: dl.GenerationKey, Source: "/source/" + custody, Target: "/target/" + custody, State: custody}
+				raw, err := json.Marshal(p)
+				if err != nil {
+					t.Fatal(err)
+				}
+				exec(`INSERT INTO import_placements(id,target,state,data,updated_at) VALUES(?,?,?,?,1)`, p.ID, p.Target, p.State, string(raw))
+			case "authorization", "retained_authorization":
+				exec(`INSERT INTO import_publication_authorizations(download_id,generation_key,attempt_epoch,publication_id,source,target,payload,authorized_at) VALUES(?,?,0,?,'/source','/target','{}',1)`, id, dl.GenerationKey, custody)
+				if custody == "retained_authorization" {
+					exec(`UPDATE import_publication_authorizations SET outcome='reconciled',resolved_at=2,resolution='retained_for_review' WHERE download_id=?`, id)
+				}
+			case "unresolved":
+				if err := e.db.SetPublicationFileOutcome(ctx, sqlite.PublicationFile{PublicationID: pub, Path: "film.mkv", Outcome: "unresolved", Reason: "requires review"}); err != nil {
+					t.Fatal(err)
+				}
+			case "pending_publication":
+				if err := e.db.SetPublicationState(ctx, pub, "discovered", ""); err != nil {
+					t.Fatal(err)
+				}
+			case "failed_publication":
+				if err := e.db.SetPublicationState(ctx, pub, "import_failed", "unresolved placement"); err != nil {
+					t.Fatal(err)
+				}
+			case "failed_with_history":
+				open, err := e.db.InsertPublication(ctx, sqlite.PublicationWrite{DownloadID: id, Generation: "new-failure", Kind: "completed", Path: "/completed/new-failure", Source: "none", Cohort: "live"})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := e.db.SetPublicationState(ctx, open, "import_failed", "new unresolved publication"); err != nil {
+					t.Fatal(err)
+				}
+			case "reservation":
+				exec(`UPDATE downloads SET submission_phase='uncertain' WHERE id=?`, id)
+			case "stale_generation":
+				// Real download generations are immutable. A historical control must
+				// not override the current attempt's held stage.
+				exec(`UPDATE import_attempt_controls SET outcome='',requested_at=NULL,finalized_at=NULL WHERE download_id=?`, id)
+				exec(`INSERT INTO import_attempt_controls(download_id,generation_key,outcome,requested_at,finalized_at) VALUES(?,'old-generation','cancelled',1,2)`, id)
+				exec(`UPDATE import_attempt_stages SET state='held' WHERE download_id=?`, id)
+			}
+			// Snapshot every persisted table touched by the fixture before GETs.
+			snapshot := func() string {
+				t.Helper()
+				var out strings.Builder
+				for _, table := range []string{"downloads", "publications", "publication_files", "import_attempt_controls", "import_attempt_stages", "import_publication_authorizations", "import_placements"} {
+					rows, err := e.db.R.QueryContext(ctx, "SELECT * FROM "+table+" ORDER BY rowid")
+					if err != nil {
+						t.Fatal(err)
+					}
+					cols, err := rows.Columns()
+					if err != nil {
+						t.Fatal(err)
+					}
+					for rows.Next() {
+						values := make([]any, len(cols))
+						dest := make([]any, len(cols))
+						for i := range values {
+							dest[i] = &values[i]
+						}
+						if err := rows.Scan(dest...); err != nil {
+							t.Fatal(err)
+						}
+						fmt.Fprintf(&out, "%s:%#v\n", table, values)
+					}
+					if err := rows.Err(); err != nil {
+						t.Fatal(err)
+					}
+					rows.Close()
+				}
+				return out.String()
+			}
+			before := snapshot()
+			want := "attention"
+			if strings.HasPrefix(custody, "resolved") {
+				want = "history"
+			}
+			// Literal title suffix avoids overlapping names in the shared fixture.
+			for _, base := range []string{"/api/v1/imports?filter=", "/api/v1/activity?scope=imports&view="} {
+				var page apigen.ImportActivityPage
+				e.get(t, base+want+"&q=cancel-fixture-"+custody).expect(t, 200).into(t, &page)
+				found := false
+				for _, row := range page.Items {
+					if row.Download.Id == id {
+						found = true
+						if row.Category != apigen.ImportActivityItemCategory(want) || row.Download.State != "failed" || row.Download.Error == nil || *row.Download.Error != "publication import_failed: existing stage retained; explicit retry or custody review required" {
+							t.Fatalf("audit/classification changed: %+v", row)
+						}
+					}
+				}
+				if !found {
+					t.Fatalf("%s: missing %d from %s", base, id, want)
+				}
+				if strings.HasPrefix(custody, "resolved") {
+					if page.Counts["attention"] != 0 || page.Counts["imported"] != 0 || page.Counts["all"] != 1 {
+						t.Fatalf("untruthful counts: %+v", page.Counts)
+					}
+					e.get(t, base+"attention&q=cancel-fixture-"+custody).expect(t, 200).into(t, &page)
+					if page.Total != 0 {
+						t.Fatalf("stale attention: %+v", page)
+					}
+				}
+			}
+			if after := snapshot(); after != before {
+				t.Fatal("GET classification rewrote persisted audit/custody")
+			}
+		})
 	}
 }

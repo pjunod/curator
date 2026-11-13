@@ -19,6 +19,7 @@ type ImportActivityEntry struct {
 	Cancelled                                                                                    bool
 	PendingPublication                                                                           bool
 	FailedPublication                                                                            bool
+	OpenFailedPublication                                                                        bool
 	Unresolved                                                                                   bool
 	ImportedPublication                                                                          bool
 }
@@ -42,6 +43,7 @@ func (d *DB) activityIndex(ctx context.Context, search string, transfers bool) (
  COALESCE(c.outcome IN ('pending','cancelled'),0),
  EXISTS(SELECT 1 FROM publications p WHERE p.download_id=d.id AND p.state IN ('discovered','importing')),
  EXISTS(SELECT 1 FROM publications p WHERE p.download_id=d.id AND (p.state='import_failed' OR (p.kind='completed' AND p.state='removed' AND d.state='failed' AND substr(d.error,1,26)='publication import_failed:'))),
+ EXISTS(SELECT 1 FROM publications p WHERE p.download_id=d.id AND p.state='import_failed'),
  EXISTS(SELECT 1 FROM publications p JOIN publication_files f ON f.publication_id=p.id WHERE p.download_id=d.id AND f.outcome='unresolved'),
  EXISTS(SELECT 1 FROM publications p WHERE p.download_id=d.id AND p.state IN ('imported','notified','removed')),
  d.protocol,d.submission_phase,d.parked_reason,COALESCE(c.outcome,''),
@@ -59,7 +61,7 @@ func (d *DB) activityIndex(ctx context.Context, search string, transfers bool) (
  AND (?='' OR instr(lower(d.release_title),lower(?))>0 OR instr(lower(COALESCE(m.title,'')),lower(?))>0)
  UNION ALL
  SELECT -p.id,p.state,p.path,'','',p.updated_at,p.state NOT IN ('imported','notified','removed'),0,0,
- p.state='import_failed',
+ p.state='import_failed',p.state='import_failed',
  EXISTS(SELECT 1 FROM publication_files f WHERE f.publication_id=p.id AND f.outcome='unresolved'),1,'historical','','','',0,0,0,0,0
  FROM publications p WHERE p.download_id IS NULL
  AND (p.state IN ('imported','notified') OR EXISTS(SELECT 1 FROM publication_files f WHERE f.publication_id=p.id AND f.outcome='placed'))
@@ -73,7 +75,7 @@ func (d *DB) activityIndex(ctx context.Context, search string, transfers bool) (
 	for rows.Next() {
 		var e ImportActivityEntry
 		var at int64
-		if err := rows.Scan(&e.ID, &e.State, &e.Title, &e.Kind, &e.Destination, &at, &e.Review, &e.Cancelled, &e.PendingPublication, &e.FailedPublication, &e.Unresolved, &e.ImportedPublication, &e.Protocol, &e.SubmissionPhase, &e.ParkedReason, &e.CancelOutcome, &e.ReservationActionable, &e.Superseded, &e.LocalImportFailure, &e.AutomaticImportRetry, &e.ActionableFiles); err != nil {
+		if err := rows.Scan(&e.ID, &e.State, &e.Title, &e.Kind, &e.Destination, &at, &e.Review, &e.Cancelled, &e.PendingPublication, &e.FailedPublication, &e.OpenFailedPublication, &e.Unresolved, &e.ImportedPublication, &e.Protocol, &e.SubmissionPhase, &e.ParkedReason, &e.CancelOutcome, &e.ReservationActionable, &e.Superseded, &e.LocalImportFailure, &e.AutomaticImportRetry, &e.ActionableFiles); err != nil {
 			return nil, err
 		}
 		e.UpdatedAt = time.UnixMilli(at)

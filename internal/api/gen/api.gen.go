@@ -2098,6 +2098,7 @@ const (
 	ListImportActivityParamsFilterActive    ListImportActivityParamsFilter = "active"
 	ListImportActivityParamsFilterAll       ListImportActivityParamsFilter = "all"
 	ListImportActivityParamsFilterAttention ListImportActivityParamsFilter = "attention"
+	ListImportActivityParamsFilterHistory   ListImportActivityParamsFilter = "history"
 	ListImportActivityParamsFilterImported  ListImportActivityParamsFilter = "imported"
 	ListImportActivityParamsFilterQueued    ListImportActivityParamsFilter = "queued"
 )
@@ -2110,6 +2111,8 @@ func (e ListImportActivityParamsFilter) Valid() bool {
 	case ListImportActivityParamsFilterAll:
 		return true
 	case ListImportActivityParamsFilterAttention:
+		return true
+	case ListImportActivityParamsFilterHistory:
 		return true
 	case ListImportActivityParamsFilterImported:
 		return true

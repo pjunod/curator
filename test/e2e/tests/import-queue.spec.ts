@@ -42,3 +42,28 @@ for (const width of [1280, 390]) {
   expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(width)
  })
 }
+
+for (const width of [1280, 390]) {
+ test(`resolved cancellation keeps its cause in history and custody in attention at ${width}px`, async ({page}) => {
+  await page.setViewportSize({width,height:850})
+  const resolved=item(502,'history')
+  Object.assign(resolved.download,{state:'failed',error:'publication import_failed: existing stage retained; explicit retry or custody review required',publications:[{id:883,kind:'completed',state:'removed',path:'/completed/502',files:[]}]})
+  resolved.download.importControl.outcome='cancelled'
+  const held=item(503,'attention');held.download.state='failed';held.download.importControl.outcome='cancelled';held.download.importControl.heldStages=1
+  const running=item(504,'progress');running.download.importControl.heldStages=1
+  await mockActivity(page,()=>[resolved,held,running])
+  await page.goto('/activity')
+  await expect(page.locator('[data-activity-id="504"] .activity-attempt-heading .pill')).toHaveText('Copying to library')
+  await page.getByRole('button',{name:/^History 1/}).click()
+  const history=page.locator('[data-activity-id="502"]')
+  await expect(history.locator('.activity-attempt-heading .pill')).toHaveText('Cancelled')
+  await expect(history.getByText('existing stage retained; explicit retry or custody review required',{exact:true})).toBeInViewport({ratio:1})
+  await expect(history.getByText('Publication files have been removed. This record is retained history.',{exact:true})).toBeInViewport({ratio:1})
+  await expect(history.getByRole('checkbox')).toHaveCount(0)
+  await page.getByRole('button',{name:/^Needs attention 1/}).click()
+  const attention=page.locator('[data-activity-id="503"]')
+  await expect(attention.locator('.activity-attempt-heading .pill')).toHaveText('Review required')
+  await expect(attention.getByRole('button',{name:'Review retained files'})).toBeInViewport({ratio:1})
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(width)
+ })
+}
