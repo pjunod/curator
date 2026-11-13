@@ -13,7 +13,7 @@
     "test:dependency-patches": "node --test vendor/deepmerge/regressions.cjs"
   },
   "dependencies": {
-    "@tanstack/react-query": "^5.60.0",
+    "@tanstack/react-query": "^5.107.1",
     "@tanstack/react-router": "^1.90.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
