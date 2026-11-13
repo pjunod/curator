@@ -513,9 +513,9 @@ func TestApprovedManifestlessHistoricalDeletesWhole(t *testing.T) {
 	}
 }
 
-// Review finding 4: a pass that gets through clears an earlier stop. A
-// non-media sidecar is discarded by the import itself, and leaves whatever
-// became of its bytes (a job's directory is a closed scope).
+// A recovered storage pass clears its stop, but an edited discarded sidecar
+// is retained until its bytes again match the manifest. A discard outcome
+// does not authorise deleting a replacement object at the same name.
 func TestRecoveredPassClearsErrorAndDiscardedFilesLeave(t *testing.T) {
 	f := setupV2(t, nil)
 	pub := f.importHeld("Test.Show.S01E01.job-308.runner-nfo", "nfo", map[string]string{epOne + ".mkv": "the episode", epOne + ".nfo": "info", "notes.txt": "keep me?"})
@@ -535,12 +535,24 @@ func TestRecoveredPassClearsErrorAndDiscardedFilesLeave(t *testing.T) {
 	f.sweep()
 	p, files := f.publicationFiles(pub.Path)
 	for name, file := range files {
-		if file.RemovedAt.IsZero() {
+		if name == "notes.txt" {
+			if !file.RemovedAt.IsZero() || !exists(filepath.Join(pub.Path, name)) {
+				t.Fatalf("edited sidecar was deleted: %+v", file)
+			}
+		} else if file.RemovedAt.IsZero() {
 			t.Errorf("%s = %+v, want removed", name, file)
 		}
 	}
-	if p.State != "removed" || exists(pub.Path) {
-		t.Fatalf("after recovery: publication %s error %q", p.State, p.Error)
+	if p.State == "removed" || !strings.Contains(p.Error, "source") {
+		t.Fatalf("edited sidecar not retained visibly: %s %q", p.State, p.Error)
+	}
+	if err := os.WriteFile(filepath.Join(pub.Path, "notes.txt"), []byte("keep me?"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	f.sweep()
+	p, _ = f.publicationFiles(pub.Path)
+	if p.State != "removed" || p.Error != "" || exists(pub.Path) {
+		t.Fatalf("after content recovery: publication %s error %q", p.State, p.Error)
 	}
 }
 
@@ -582,9 +594,9 @@ func TestPublicationClaimsItsChildren(t *testing.T) {
 	}
 }
 
-// Review r2 (7): a file row the publication's manifest does not list is
-// discarded and leaves; it never holds the directory.
-func TestUnlistedPublicationFileIsDiscarded(t *testing.T) {
+// An unlisted row cannot grant authority to delete bytes the manifest never
+// committed, even if the row claims they were placed.
+func TestUnlistedPublicationFileIsRetained(t *testing.T) {
 	f := setupV2(t, nil)
 	pub := f.importHeld("Test.Show.S01E01.job-311.runner-ghost", "ghost", map[string]string{epOne + ".mkv": "the episode"})
 	p, _ := f.publicationFiles(pub.Path)
@@ -596,7 +608,7 @@ func TestUnlistedPublicationFileIsDiscarded(t *testing.T) {
 	}
 	f.sweep()
 	p, files := f.publicationFiles(pub.Path)
-	if g := files["ghost.txt"]; g.Outcome != "discarded" || g.RemovedAt.IsZero() || p.State != "removed" || exists(pub.Path) {
-		t.Fatalf("publication %s (%s) ghost %+v, want discarded and the directory removed", p.State, p.Error, g)
+	if g := files["ghost.txt"]; g.Outcome != "placed" || !g.RemovedAt.IsZero() || p.State == "removed" || !exists(filepath.Join(pub.Path, "ghost.txt")) || !strings.Contains(p.Error, "does not list") {
+		t.Fatalf("publication %s (%s) ghost %+v, want unlisted bytes retained", p.State, p.Error, g)
 	}
 }

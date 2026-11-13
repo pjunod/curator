@@ -317,3 +317,23 @@ restart, and publications left in Resolve for their subtitles and `.nfo`s.
     the plan; dropping the tables is a decision to retire that screen, left
     for Paul.
 
+
+## Addendum — cleanup evidence survives failures (v0.49.1)
+
+34. **Manifest provenance is required before import changes file outcomes.**
+    Import, adoption and termination propagate a failed manifest write instead
+    of merely logging it. Cleanup also refuses a missing, malformed or unlisted
+    manifest while payload files remain. A valid stored `v1_record` remains
+    an equivalent legacy manifest; the historical approval fence and applied
+    migration 0079 are unchanged. A manifestless record-only directory still
+    needs its separate, explicit guarded Storage action.
+35. **Deletion verifies the current source bytes.** The open source descriptor
+    must match the manifest's size and SHA-256, and its inode generation must
+    remain stable through unlink. A library copy proves placement of the old
+    source, not ownership of replacement bytes at its filename. A discard
+    outcome is subject to the same source checks. Legacy digestless entries
+    retain the documented size/identity exception with an explicit log.
+    Tests: `TestPublicationManifestPersistenceFailureStopsImport`,
+    `TestPublicationCleanupMissingManifestKeepsOnlySource`,
+    `TestPublicationCleanupLegacyManifestStillNeedsApproval`, and
+    `TestPublicationCleanupRetainsChangedSourceBeforePass`.

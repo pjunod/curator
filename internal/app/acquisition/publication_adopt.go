@@ -193,7 +193,9 @@ func (s *Service) adoptDirectory(ctx context.Context, path string) (ok, orphan b
 	}
 	// The manifest this pass read is the publication's from now on: the
 	// cleanup requires the file to stay while files remain.
-	s.recordFileManifest(ctx, p, m)
+	if err := s.recordFileManifest(ctx, p, m); err != nil {
+		return false, false, err
+	}
 	s.log.Info("adoption: Runner publication attributed to its download", "path", path, "download", dl.ID, "publication", p.ID, "kind", p.Kind)
 	return true, false, nil
 }

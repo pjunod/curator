@@ -26,13 +26,14 @@ import (
 //     (a library file with no such record is hashed once). A library that
 //     no longer holds it because something newer replaced or removed it
 //     makes it discarded{superseded};
-//   - discarded (superseded, duplicate, rejected): it leaves (a job's
-//     directory is a closed scope);
+//   - discarded (superseded, duplicate, rejected): it leaves only while
+//     its source bytes still match this publication's manifest;
 //   - pending (left by an earlier build): decided first
 //     (redecideLeftoverSidecars).
 //
 // Before each unlink the publication generation (the manifest in the
-// directory), an unchanged inode generation since the file was checked and
+// directory), source size and digest, an unchanged inode generation since
+// the source was verified through its open descriptor, and
 // the storage identity of the completed root are checked again; a root whose
 // identity changed is an unmounted mount point and nothing under it is
 // deleted. A library file whose record remains but whose bytes are missing or
@@ -402,29 +403,34 @@ func allFilesRemoved(files []sqlite.PublicationFile) bool {
 // only the directory is left to remove.
 func (s *Service) cleanupManifest(pub sqlite.Publication, allRemoved bool) (map[string]ports.ManifestFile, error) {
 	var m ports.Manifest
-	raw, err := os.ReadFile(filepath.Join(pub.Path, ports.ManifestFileName))
+	raw, err := readManifestFile(pub.Path)
 	switch {
 	case err == nil:
 		if err := json.Unmarshal(raw, &m); err != nil {
 			return nil, fmt.Errorf("%s is unreadable: %w", ports.ManifestFileName, err)
 		}
-		if pub.Generation != "" && m.Generation != pub.Generation {
-			return nil, fmt.Errorf("the directory's manifest names generation %q, not this publication's %q; nothing deleted", m.Generation, pub.Generation)
-		}
 	case errors.Is(err, os.ErrNotExist):
-		if pub.ManifestSource == "file" && !allRemoved {
+		if allRemoved {
+			// No payload remains to authorise; the caller still proves the
+			// directory empty and checks its storage before rmdir.
+			return nil, nil
+		}
+		if pub.ManifestSource != "v1_record" {
 			return nil, fmt.Errorf("the directory's %s is missing; nothing deleted", ports.ManifestFileName)
 		}
-		// A v1 delivery record (or no manifest at all, for a directory the
-		// cutover froze): the stored manifest is the evidence.
-		if pub.ManifestJSON != "" {
-			_ = json.Unmarshal([]byte(pub.ManifestJSON), &m)
-		}
-		if pub.Generation != "" && m.Generation != "" && m.Generation != pub.Generation {
-			return nil, fmt.Errorf("the stored manifest names generation %q, not %q; nothing deleted", m.Generation, pub.Generation)
+		// Legacy publications may have only a v1 record. Unknown or
+		// malformed stored bodies are never evidence to discard a file.
+		if err := json.Unmarshal([]byte(pub.ManifestJSON), &m); err != nil {
+			return nil, fmt.Errorf("the stored v1 manifest is unreadable; nothing deleted: %w", err)
 		}
 	default:
 		return nil, err
+	}
+	if err := verifyManifestShape(m, pub.Generation); err != nil {
+		return nil, fmt.Errorf("publication manifest is invalid; nothing deleted: %w", err)
+	}
+	if pub.Generation != "" && m.Generation != pub.Generation {
+		return nil, fmt.Errorf("the manifest names generation %q, not this publication's %q; nothing deleted", m.Generation, pub.Generation)
 	}
 	out := make(map[string]ports.ManifestFile, len(m.Files))
 	for _, f := range m.Files {
@@ -435,7 +441,7 @@ func (s *Service) cleanupManifest(pub sqlite.Publication, allRemoved bool) (map[
 
 // cleanupPublicationFile decides one file from its recorded outcome and
 // unlinks it. It never leaves a file for a person: a discarded file leaves
-// (the job's directory is a closed scope); a placed file leaves once its
+// only while its source still matches the manifest; a placed file leaves once its
 // library copy is proven, and becomes discarded{superseded} when the library
 // no longer holds it because something newer replaced or removed it. err is
 // transient (storage, a read error, a file changing while checked, a library
@@ -451,13 +457,12 @@ func (s *Service) cleanupPublicationFile(ctx context.Context, pub sqlite.Publica
 		}
 		return s.db.MarkPublicationFileRemoved(ctx, pub.ID, f.Path, f.Outcome)
 	}
-	if _, ok := manifest[f.Path]; !ok && f.Outcome != "discarded" {
-		// The manifest (this generation's) no longer lists the file: it is
-		// not this publication's media any more, and leaves as a discard.
-		f.Outcome, f.DiscardReason, f.Reason = "discarded", "rejected", "the publication's manifest does not list it; not kept"
-		if err := s.db.SetPublicationFileOutcome(ctx, f); err != nil {
-			return err
-		}
+	expected, ok := manifest[f.Path]
+	if !ok {
+		return fmt.Errorf("the publication's manifest does not list this file; nothing deleted")
+	}
+	if expected.Bytes != f.Bytes || (expected.SHA256 != "" && f.SHA256 != "" && expected.SHA256 != f.SHA256) {
+		return fmt.Errorf("the manifest no longer matches this file's recorded evidence; nothing deleted")
 	}
 	base, err := os.OpenRoot(pub.Path)
 	if err != nil {
@@ -475,10 +480,30 @@ func (s *Service) cleanupPublicationFile(ctx context.Context, pub sqlite.Publica
 		return err
 	}
 	defer func() { _ = parent.Close() }()
-	// The publication file is not read: it is leaving. An unchanged
-	// generation up to the unlink binds this decision to this object.
+	defer func() { _ = file.Close() }()
+	// Verify the source itself, not only the library copy. A replacement
+	// already present before this pass is not ours merely because it keeps
+	// the same pathname. The descriptor and pre-unlink generation check
+	// bind these size/digest measurements to the object we remove.
 	generation := deliveryFileGeneration(named)
-	_ = file.Close()
+	if generation == "" || named.Size() != expected.Bytes {
+		return fmt.Errorf("the source size or identity does not match the manifest; nothing deleted")
+	}
+	digest := expected.SHA256
+	if digest == "" {
+		digest = f.SHA256
+	}
+	if digest != "" {
+		actual, size, err := digestOpenFile(ctx, file)
+		if err != nil {
+			return err
+		}
+		if size != expected.Bytes || actual != digest {
+			return fmt.Errorf("the source bytes do not match the manifest digest; nothing deleted")
+		}
+	} else {
+		s.log.Info("publication cleanup has no legacy source digest; checking size and identity", "publication", pub.ID, "file", f.Path)
+	}
 	var libGeneration string
 	if f.Outcome == "placed" {
 		superseded, why, lib, err := s.placedLibraryState(ctx, f, named)

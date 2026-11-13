@@ -454,20 +454,31 @@ second generation and the historical directories all take the same path.
 
 ### Per-file cleanup
 
+Reading a manifest during import, adoption or termination must persist its
+provenance before files are seeded, placed or discarded. A database failure
+stops that operation and preserves its source. Cleanup independently refuses
+missing, malformed or unlisted manifest evidence while payload files remain;
+it never turns missing evidence into a discard. Valid stored `v1_record`
+manifests remain supported when the old publication has no manifest file.
+The historical batch-approval and storage-identity fences still apply.
+
 - **One rule, one implementation.** Curator deletes a publication file only
   when its recorded outcome is evidence: `placed` — the placement recorded
   the manifest's SHA-256 *and* the library file is still the object it
   published (the same inode, or the placement journal's recorded size and
   inode generation; a library file with no placement record, such as a
   historical import or a subtitle, is hashed once) — or
-  `discarded{superseded|duplicate|rejected}`. Nothing is re-hashed when the
-  record holds. `unresolved` and `pending` files are never touched; a
-  manifest entry without a digest is kept.
+  `discarded{superseded|duplicate|rejected}`. Both outcomes still require
+  the source's size and SHA-256 to match its manifest before deletion;
+  a matching old library copy cannot authorise deleting replacement source
+  bytes. Legacy manifests with no digest use their recorded size and stable
+  file identity, and that exception is logged. `unresolved` and `pending`
+  files are never touched.
 - **Re-checked before every unlink**, in order: the generation (the
   directory's `.runner-manifest.json` — or, for a v1 record, the stored
   manifest — must name the publication's generation), the file identity
-  (its size against the manifest, then an unchanged inode generation since it
-  was checked), and the **storage** of the completed root: its live
+  (its size and SHA-256 against the manifest, then an unchanged inode
+  generation from the verified open descriptor through unlink), and the **storage** of the completed root: its live
   identity against the one the inventory scan recorded (a changed identity is
   an unmounted share), then the storage-change review fences — after an
   accepted replacement volume the recorded identity matches the new one, and

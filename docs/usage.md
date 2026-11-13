@@ -1878,6 +1878,14 @@ later. This action does not add a replacement; use a deliberate Search afterward
 
 ## Download lifecycle decisions and review
 
+Publication cleanup keeps a source file when its size or content differs from
+the manifest, even if its earlier library copy is intact or the file was marked
+discarded. Missing or unreadable manifest evidence also keeps it. Activity
+shows the cleanup reason; restoring the expected source or evidence allows a
+later pass to finish. If saving a manifest fails, import waits without placing
+or discarding files. Existing v1 stored manifests and historical batch approval
+continue to work; this upgrade does not approve any cleanup batch.
+
 Runner admission reads the `deliveries-v1` status capability independently of
 retained publications. Curator persists that choice before submitting a download.
 Malformed or oversized discovery entries remain at Runner and produce a

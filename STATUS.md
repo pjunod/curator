@@ -1,5 +1,26 @@
 # Monarr — Project Status
 
+## Publication cleanup safety — 2026-11-13 · v0.49.1
+
+**Owner:** Codex · **Branch:** `codex/pipeline-v2-cleanup-safety` ·
+**State:** adversarial review approved (no blockers); real gate starting.
+Paul deploys after the reviewed, qualified merge.
+
+Manifest provenance failures now stop import, adoption and termination before
+seeding or changing file outcomes. Cleanup refuses unavailable/invalid/unlisted
+manifest evidence and verifies current source size/digest against the manifest
+on an open descriptor, bound by its inode generation through unlink. Placed and
+discarded files both use this check; edited and unlisted source files stay.
+Valid stored legacy manifests, historical batch approval, storage identity,
+replacement review, and migration 0079 remain in place.
+
+Regression coverage includes the original only-good-copy scenario, persistence
+failure/recovery, edited sources before cleanup, malformed manifests, and legacy
+cleanup with and without batch approval. Independent fresh-context adversarial review found no blockers; its two suggested
+adoption-failure and pre-unlink replacement regressions were added and reviewed.
+The real gate now runs; no production cleanup or deployment has been performed.
+
+
 ## Pipeline contract v2, M6b (curator part): the v1 strings and the v1 manifest source go — 2026-11-08 · v0.47.0 (rebased onto main 53fc80c, 2026-11-12)
 
 **Status:** branch `claude/pipeline-v2-m6b-curator`, rebased onto `origin/main`
