@@ -1,13 +1,13 @@
 module github.com/pjunod/monarr
 
-go 1.25.7
+go 1.26.0
 
 require (
 	github.com/betamos/zeroconf v0.1.7
 	github.com/oapi-codegen/runtime v1.6.0
 	github.com/pressly/goose/v3 v3.27.2
-	golang.org/x/net v0.56.0
-	golang.org/x/sys v0.46.0
+	golang.org/x/net v0.62.0
+	golang.org/x/sys v0.49.0
 	golang.org/x/time v0.15.0
 	modernc.org/sqlite v1.54.0
 )
