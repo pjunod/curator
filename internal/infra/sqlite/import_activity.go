@@ -41,7 +41,7 @@ func (d *DB) activityIndex(ctx context.Context, search string, transfers bool) (
  OR EXISTS(SELECT 1 FROM import_placements x WHERE json_extract(x.data,'$.download_id')=d.id AND x.state IN ('prepared','retained')),
  COALESCE(c.outcome IN ('pending','cancelled'),0),
  EXISTS(SELECT 1 FROM publications p WHERE p.download_id=d.id AND p.state IN ('discovered','importing')),
- EXISTS(SELECT 1 FROM publications p WHERE p.download_id=d.id AND p.state='import_failed'),
+ EXISTS(SELECT 1 FROM publications p WHERE p.download_id=d.id AND (p.state='import_failed' OR (p.kind='completed' AND p.state='removed' AND d.state='failed' AND substr(d.error,1,26)='publication import_failed:'))),
  EXISTS(SELECT 1 FROM publications p JOIN publication_files f ON f.publication_id=p.id WHERE p.download_id=d.id AND f.outcome='unresolved'),
  EXISTS(SELECT 1 FROM publications p WHERE p.download_id=d.id AND p.state IN ('imported','notified','removed')),
  d.protocol,d.submission_phase,d.parked_reason,COALESCE(c.outcome,''),
