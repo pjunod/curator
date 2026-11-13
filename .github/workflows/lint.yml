@@ -15,15 +15,17 @@ concurrency:
 jobs:
   lint:
     name: golangci-lint + gofmt
-    runs-on: ${{ fromJSON(vars.CI_RUNNER_MODE == 'github' && '["ubuntu-24.04"]' || '["self-hosted","Linux","X64","lab","general"]') }}
+    runs-on: ${{ fromJSON((github.event_name == 'pull_request' || vars.CI_RUNNER_MODE == 'github') && '["ubuntu-24.04"]' || '["self-hosted","Linux","X64","lab","general"]') }}
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version-file: go.mod
           # Self-hosted runners keep ~/go/pkg/mod between jobs; restoring the
           # tarball over it hits thousands of "File exists" and can time a job out.
-          cache: ${{ vars.CI_RUNNER_MODE == 'github' }}
+          cache: ${{ runner.environment == 'github-hosted' }}
       - name: make lint (pinned golangci + gofmt sweep)
         run: make lint

@@ -1,10 +1,15 @@
 # Monarr
 
-[![Tests](https://github.com/pjunod/monarr/actions/workflows/tests.yml/badge.svg)](https://github.com/pjunod/monarr/actions/workflows/tests.yml)
-[![Lint](https://github.com/pjunod/monarr/actions/workflows/lint.yml/badge.svg)](https://github.com/pjunod/monarr/actions/workflows/lint.yml)
-[![Compat](https://github.com/pjunod/monarr/actions/workflows/compat.yml/badge.svg)](https://github.com/pjunod/monarr/actions/workflows/compat.yml)
-[![Docker](https://github.com/pjunod/monarr/actions/workflows/docker.yml/badge.svg)](https://github.com/pjunod/monarr/actions/workflows/docker.yml)
-[![Coverage](coverage.svg)](https://github.com/pjunod/monarr/actions/workflows/tests.yml)
+[![Tests](https://github.com/pjunod/curator/actions/workflows/tests.yml/badge.svg)](https://github.com/pjunod/curator/actions/workflows/tests.yml)
+[![Lint](https://github.com/pjunod/curator/actions/workflows/lint.yml/badge.svg)](https://github.com/pjunod/curator/actions/workflows/lint.yml)
+[![Compat](https://github.com/pjunod/curator/actions/workflows/compat.yml/badge.svg)](https://github.com/pjunod/curator/actions/workflows/compat.yml)
+[![Docker](https://github.com/pjunod/curator/actions/workflows/docker.yml/badge.svg)](https://github.com/pjunod/curator/actions/workflows/docker.yml)
+[![Coverage](coverage.svg)](https://github.com/pjunod/curator/actions/workflows/tests.yml)
+
+[![License: GPL-3.0](https://img.shields.io/badge/license-GPL--3.0-blue)](LICENSE)
+[![Release](https://img.shields.io/github/v/release/pjunod/curator)](https://github.com/pjunod/curator/releases)
+[![Security checks](https://github.com/pjunod/curator/actions/workflows/security.yml/badge.svg)](https://github.com/pjunod/curator/actions/workflows/security.yml)
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/pjunod/curator/badge)](https://scorecard.dev/viewer/?uri=github.com/pjunod/curator)
 
 **A unified, modern rewrite of Sonarr + Radarr in Go.** One binary, one database, one UI, one
 acquisition pipeline — for TV, movies, ebooks, and audiobooks, filling the gap left by
@@ -231,6 +236,9 @@ that one did not. A relative path is served the same way, so it works private *a
 the cost is one `coverage: NN.N%` commit from CI whenever the number actually changes.
 
 ## Documentation
+
+- **[Security checks](docs/SECURITY_CHECKS.md)** — what CI scans, how to read Scorecard, and remaining repository controls.
+- **[Report a vulnerability](SECURITY.md)** — private reporting and support scope.
 
 - **[Storage association fix](docs/STORAGE_ASSOCIATION_STATUS.md)** — shared-folder receipt diagnosis, review, validation and delivery.
 - **[Season acquisition status](docs/SEASON_ACQUISITION_STATUS.md)** — build progress, review, checks, and merge.

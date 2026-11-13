@@ -15,9 +15,11 @@ concurrency:
 jobs:
   build:
     name: Docker image builds
-    runs-on: ${{ fromJSON(vars.CI_RUNNER_MODE == 'github' && '["ubuntu-24.04"]' || '["self-hosted","Linux","X64","lab","general"]') }}
+    runs-on: ${{ fromJSON((github.event_name == 'pull_request' || vars.CI_RUNNER_MODE == 'github') && '["ubuntu-24.04"]' || '["self-hosted","Linux","X64","lab","general"]') }}
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
       - name: docker build
         run: docker build -f deploy/Dockerfile -t monarr:ci .
