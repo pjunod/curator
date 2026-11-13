@@ -1,4 +1,7 @@
 import type {
+  Availability,
+  LibrarySeedPage,
+  LibraryShelf,
   AddMediaCopyRequest,
   AutoSearchResult,
   AddMediaRequest,
@@ -148,6 +151,9 @@ export class MonarrClient {
   searchMetadata = (kind: MediaKind, query: string): Promise<SearchResult[]> =>
     this.get(`/metadata/search?kind=${kind}&query=${encodeURIComponent(query)}`)
   getMetadataPreview = (query: string): Promise<MetadataPreview> => this.get(`/metadata/preview?${query}`)
+  getAvailability = (items: SearchResult[]): Promise<Availability[]> => this.send('POST', '/metadata/availability', items.map(item=>({kind:item.kind,tmdbId:item.tmdbId,...(item.tvdbId?{tvdbId:item.tvdbId}:{}),...(item.imdbId?{imdbId:item.imdbId}:{}),...(item.olid?{olid:item.olid}:{})})))
+  getLibraryDiscoverySeeds = (q='',offset=0): Promise<LibrarySeedPage> => this.get(`/discover/library/seeds?q=${encodeURIComponent(q)}&offset=${offset}`)
+  getLibraryDiscoveryItems = (seed: SearchResult,shelf:'related'|'collection'): Promise<LibraryShelf> => this.get(`/discover/library/${seed.availability!.libraryItemId}/items?kind=${seed.kind}&tmdbId=${seed.tmdbId}&shelf=${shelf}`)
   getDiscoverLists = (): Promise<DiscoverList[]> => this.get('/discover/lists')
   getDiscoverItems = (list: string, page = 1): Promise<SearchResult[]> =>
     this.get(`/discover/items?list=${encodeURIComponent(list)}&page=${page}`)

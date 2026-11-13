@@ -1,3 +1,4 @@
+import { AvailabilityBadge } from './AvailabilityBadge'
 import { useEffect, useRef, useState } from 'react'
 import { Link } from '@tanstack/react-router'
 import { useQuery } from '@tanstack/react-query'
@@ -70,11 +71,11 @@ export function RecommendationSearch({ visible, seed, resetContext, onSeed, onPr
     <ul className="result-list">{results.map((row) => <li key={row.key} className="result">
       {row.item.posterPath ? <img src={posterUrl(row.item.posterPath, 'w185')} alt="" loading="lazy" /> : <div className="poster-fallback small">{row.item.title.slice(0, 1)}</div>}
       <div className="result-body"><div className="result-title">{row.item.title} <span className="muted">({row.item.year || '—'})</span></div><p className="muted clamp">{row.item.overview}</p>
-        <button onClick={() => onPreview(row.item)}>View details</button>
+        <AvailabilityBadge value={row.item.availability} checked /><button onClick={() => onPreview(row.item)}>View details</button>
         <details><summary>Why this matches</summary>{row.reasons.length ? row.reasons.map((reason, index) => <p key={index}>{reason.value}<br /><small>{reason.source} · {reason.field} · {new Date(reason.fetchedAt).toLocaleDateString()}</small></p>) : <p>Suggested by the provider's related-series lists.</p>}</details>
         {row.ownership === 'unknown' && <p className="muted">Library ownership could not be checked. Add will verify it.</p>}{row.ownership === 'ambiguous' && <p className="banner warning">Conflicting library identities; resolve them before adding.</p>}
       </div>
-      <div className="result-action"><button onClick={() => onSeed(row.item)}>More like this</button>{row.libraryItemId ? <Link to="/library/$id" params={{ id: String(row.libraryItemId) }}>Open in library</Link> : addedId(row.item) ? <span>Added</span> : <button className="btn-accent" disabled={busy || !canAdd || row.addability !== 'supported'} onClick={() => { onAdd(row.item); heading.current?.focus() }}>Add</button>}</div>
+      <div className="result-action"><button onClick={() => onSeed(row.item)}>More like this</button>{row.libraryItemId ? <Link to="/library/$id" params={{ id: String(row.libraryItemId) }}>Open in library</Link> : addedId(row.item) ? <span>Added</span> : <button className="btn-accent" disabled={busy || !canAdd || row.addability !== 'supported' || !!row.item.availability&&['unknown','ambiguous'].includes(row.item.availability.catalog)} onClick={() => { onAdd(row.item); heading.current?.focus() }}>Add</button>}</div>
     </li>)}</ul>
   </section>
 }

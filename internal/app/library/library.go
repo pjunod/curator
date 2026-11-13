@@ -1478,7 +1478,7 @@ func (s *Service) AddRootFolder(ctx context.Context, path string, kind domain.Ro
 	if err := s.checkNotNested(ctx, clean); err != nil {
 		return domain.RootFolder{}, err
 	}
-	rf, err := s.db.AddRootFolder(ctx, clean, kind)
+	rf, err := s.db.AddRootFolderWithPresence(ctx, clean, kind, presenceRootIdentity(info))
 	if errors.Is(err, sqlite.ErrDuplicate) {
 		return domain.RootFolder{}, fmt.Errorf("root folder already registered")
 	}

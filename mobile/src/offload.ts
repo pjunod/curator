@@ -1,10 +1,10 @@
 import { formatBytes } from './format'
 import type { MediaItemSummary, OffloadOperation } from './types'
 
-/** Library filter (ADR 0028): what is on disk, what is offloaded, or both. */
+/** Library filter (ADR 0028): what has file records, what is offloaded, or both. */
 export type LibraryPresence = 'all' | 'on_disk' | 'offloaded'
 export const PRESENCE_OPTIONS: ReadonlyArray<{ id: LibraryPresence; label: string }> = [
-  { id: 'on_disk', label: 'On disk' },
+  { id: 'on_disk', label: 'Recorded files' },
   { id: 'offloaded', label: 'Offloaded' },
   { id: 'all', label: 'Everything' },
 ]
@@ -15,7 +15,7 @@ export function onDisk(item: Pick<MediaItemSummary, 'kind' | 'fileCount' | 'epis
   return (item.kind === 'series' ? item.episodeFileCount : item.fileCount) > 0 || item.fileCount > 0
 }
 
-/** A show with one offloaded episode and files elsewhere matches BOTH On disk and Offloaded (by design). */
+/** A show with one offloaded episode and files elsewhere matches BOTH Recorded files and Offloaded (by design). */
 export function matchesPresence(item: MediaItemSummary, presence: LibraryPresence): boolean {
   if (presence === 'on_disk') return onDisk(item)
   if (presence === 'offloaded') return Boolean(item.offloaded)

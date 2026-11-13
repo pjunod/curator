@@ -45,7 +45,25 @@ export interface Rating {
   scale: number
 }
 
+export interface SeasonAvailability { number: number; expected: number; present: number; offloaded: number; unknownDates: number }
+export interface Availability {
+ catalog: 'present' | 'absent' | 'ambiguous' | 'unknown'
+ presence: 'present' | 'partial' | 'missing' | 'offloaded' | 'unknown'
+ libraryItemId?: number
+ copyId: number
+ expected: number
+ present: number
+ offloaded: number
+ acquisition: 'none' | 'active' | 'unknown'
+ checkedAt?: string
+ reason?: string
+ seasons?: SeasonAvailability[]
+}
+export interface LibrarySeedPage {items: SearchResult[]; hasMore: boolean}
+export interface LibraryShelf {title: string; source: string; seed: SearchResult; items: SearchResult[]}
+
 export interface MediaItemSummary {
+ availability?: Availability
   id: number
   kind: MediaKind
   title: string
@@ -188,6 +206,7 @@ export interface UpdateMediaCopyRequest {
 }
 
 export interface SearchResult {
+ availability?: Availability
   kind: MediaKind
   tmdbId: number
   tvdbId?: number

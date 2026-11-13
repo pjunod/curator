@@ -1,6 +1,6 @@
 # Monarr — Project Status
 
-## Resolved cancelled imports — 2026-11-13 · v0.50.3
+## Resolved cancelled imports — 2026-11-13 · v0.51.1
 
 **Owner:** Codex · **Branch:** `codex/cancelled-import-attention` ·
 **Review and gate evidence:** [PR #161](https://github.com/pjunod/curator/pull/161).

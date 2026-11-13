@@ -1,3 +1,4 @@
+import { AvailabilityBadge } from '../AvailabilityBadge'
 import { useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
@@ -21,15 +22,16 @@ function CardBadges(props: { m: MediaItemSummary; downloading: boolean }) {
   const comp = completeness(m.kind, m.episodeFileCount, m.episodeCount, m.fileCount)
   return (
     <>
+      {m.availability&&m.kind!=='book'&&<AvailabilityBadge value={m.availability} />}
       <span
         className={`pill ${comp.cls}`}
         title={
           m.kind === 'series'
-            ? 'Monitored episodes aired to date that are on disk'
-            : 'On disk?'
+            ? 'Recorded monitored aired episodes; presence is checked separately'
+            : 'Recorded file count; presence is checked separately'
         }
       >
-        {comp.total === 0 ? '—' : `${comp.have}/${comp.total}`}
+        {comp.total === 0 ? 'No episode records' : `${comp.have}/${comp.total} recorded`}
       </span>
       {m.offloaded && (
         <span className="pill pill-warning pill-offloaded" title={m.kind === 'series' ? `${m.offloadedEpisodes ?? 0} episode(s) offloaded: files deleted on purpose, title kept` : 'Offloaded: files deleted on purpose, title kept'}>
@@ -79,7 +81,7 @@ const FILTERS: { key: FilterKey; label: string }[] = [
   { key: 'all', label: 'Everything' },
   { key: 'monitored', label: 'Monitored' },
   { key: 'unmonitored', label: 'Unmonitored' },
-  { key: 'missing', label: 'Missing (nothing on disk)' },
+  { key: 'missing', label: 'Missing (no file records)' },
   { key: 'incomplete', label: 'Incomplete' },
   { key: 'complete', label: 'Complete' },
 ]

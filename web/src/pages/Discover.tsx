@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Link } from '@tanstack/react-router'
+import { Link, useNavigate } from '@tanstack/react-router'
 import type { DiscoverList, SearchResult } from '../api'
 import {
   addLibraryItem,
+  getAvailability,
   getDiscoverItems,
   getDiscoverLists,
   getProfiles,
@@ -16,6 +17,9 @@ import { CardSizePicker } from '../CardSizePicker'
 import type { DiscoverFilter } from '../discover'
 import { DISCOVER_FILTERS, cardKey, rowCounts, sourceLabel, visibleLists } from '../discover'
 import { useInView } from '../useInView'
+import { LibraryDiscovery } from '../LibraryDiscovery'
+import { AvailabilityBadge } from '../AvailabilityBadge'
+import { matchesAvailability, canAddFromAvailability, type AvailabilityFilter } from '../availability'
 
 // AddedItem is something added during this visit, so the card that was
 // clicked can say so without refetching the row from upstream.
@@ -26,19 +30,24 @@ interface AddedItem {
 
 export function DiscoverPage() {
   const qc = useQueryClient()
+  const navigate=useNavigate()
+  const [mode,setMode]=useState<'library'|'browse'>('library')
+  const [availabilityFilter,setAvailabilityFilter]=useState<AvailabilityFilter>('all')
   const [filter, setFilter] = useState<DiscoverFilter>('all')
   const [open, setOpen] = useState<SearchResult | null>(null)
   const [added, setAdded] = useState<Record<string, AddedItem>>({})
 
-  const lists = useQuery({ queryKey: ['discover-lists'], queryFn: getDiscoverLists })
+  const lists = useQuery({ queryKey: ['discover-lists'], queryFn: getDiscoverLists, enabled:mode==='browse' })
   const rows = visibleLists(lists.data ?? [], filter)
   const counts = rowCounts(lists.data ?? [])
+
+  const pick=(result:SearchResult)=>{const libraryId=added[cardKey(result)]?.id??(result.availability?.catalog==='present'?result.availability.libraryItemId:undefined);if(libraryId)void navigate({to:'/library/$id',params:{id:String(libraryId)}});else setOpen(result)}
 
   return (
     <>
       <header className="page-head">
         <h1>Discover</h1>
-        <div className="tabs" role="tablist">
+        {mode==='browse' && <div className="tabs" role="tablist">
           {DISCOVER_FILTERS.map((f) => (
             <button
               key={f.key}
@@ -50,17 +59,20 @@ export function DiscoverPage() {
               {f.label} <span className="tab-count">{counts[f.key]}</span>
             </button>
           ))}
-        </div>
+        </div>}
         <CardSizePicker />
       </header>
 
-      {lists.isError && (
+      <nav className="discover-mode-tabs" aria-label="Discover views"><button aria-pressed={mode==='library'} onClick={()=>setMode('library')}>For your library</button><button aria-pressed={mode==='browse'} onClick={()=>setMode('browse')}>Browse all</button></nav>
+      <label className="discover-availability-filter">Availability <select aria-label="Availability" value={availabilityFilter} onChange={e=>setAvailabilityFilter(e.target.value as AvailabilityFilter)}><option value="all">All availability</option><option value="to-get">Still to get</option><option value="present">Available in library</option><option value="unknown">Needs a library check</option></select></label>
+      {mode==='library' && <LibraryDiscovery renderResults={items=><Strip loading={false} items={items.filter(item=>matchesAvailability(item.availability,availabilityFilter))} added={added} onPick={pick} />} />}
+      {mode==='browse' && lists.isError && (
         <div className="banner warning">{String((lists.error as Error).message)}</div>
       )}
 
       {/* An empty catalogue is not an error — it is an install with no
           provider configured, which is a setup step and not a failure. */}
-      {lists.isSuccess && lists.data.length === 0 && (
+      {mode==='browse' && lists.isSuccess && lists.data.length === 0 && (
         <div className="empty-state">
           <p>Nothing to browse yet.</p>
           <p className="muted">
@@ -71,7 +83,7 @@ export function DiscoverPage() {
         </div>
       )}
 
-      {rows.map((list) => (
+      {mode==='browse' && rows.map((list) => (
         <DiscoverRow
           key={list.id}
           list={list}
@@ -82,7 +94,8 @@ export function DiscoverPage() {
           // and repeating it is noise.
           showKind={filter === 'all'}
           added={added}
-          onPick={(r) => setOpen(r)}
+          availabilityFilter={availabilityFilter}
+          onPick={pick}
         />
       ))}
 
@@ -94,7 +107,7 @@ export function DiscoverPage() {
           onAdded={(item) => {
             setAdded((prev) => ({ ...prev, [cardKey(open)]: item }))
             void qc.invalidateQueries({ queryKey: ['library'] })
-            void qc.invalidateQueries({ queryKey: ['wanted'] })
+            void qc.invalidateQueries({ queryKey: ['wanted'] });void qc.invalidateQueries({queryKey:['discover-items']});void qc.invalidateQueries({queryKey:['library-discovery-items']});void qc.invalidateQueries({queryKey:['library-seed-availability']});void qc.invalidateQueries({queryKey:['library-discovery-seeds']})
           }}
         />
       )}
@@ -109,6 +122,7 @@ function DiscoverRow(props: {
   showKind: boolean
   added: Record<string, AddedItem>
   onPick: (r: SearchResult) => void
+  availabilityFilter: AvailabilityFilter
 }) {
   const { list } = props
   // The row does not fetch until it is nearly on screen. Fourteen rows fetched
@@ -122,7 +136,8 @@ function DiscoverRow(props: {
     retry: false,
     // The server already caches these for half an hour (ADR 0015), so a
     // remount inside a session should not go back over the wire at all.
-    staleTime: 5 * 60_000,
+    staleTime: 0,
+    refetchInterval: seen ? 30000 : false,
   })
 
   return (
@@ -150,7 +165,7 @@ function DiscoverRow(props: {
       ) : (
         <Strip
           loading={!seen || items.isPending}
-          items={items.data ?? []}
+          items={(items.data ?? []).filter(item=>matchesAvailability(item.availability,props.availabilityFilter))}
           added={props.added}
           onPick={props.onPick}
         />
@@ -250,8 +265,10 @@ function Card(props: { result: SearchResult; added?: AddedItem; onPick: (r: Sear
         <div className="poster-title">{r.title}</div>
         <div className="muted poster-sub">
           <span>{r.year || '—'}</span>
-          {inLibrary && <span className="pill pill-ok">in library</span>}
+          {inLibrary && !r.availability && <span className="pill pill-neutral">in library</span>}
         </div>
+        <AvailabilityBadge value={props.added?{...r.availability!,catalog:'present',presence:'unknown',copyId:0,expected:0,present:0,offloaded:0,acquisition:'unknown'}:r.availability} checked />
+        <span className="muted small">{props.added||r.availability?.catalog==='present'?'View in library':canAddFromAvailability(r.availability)?'Add to library':'Review library check'}</span>
       </div>
     </button>
   )
@@ -266,6 +283,9 @@ function AddDialog(props: {
   onAdded: (item: AddedItem) => void
 }) {
   const r = props.result
+  const libraryCheck=useQuery({queryKey:['discover-add-availability',r.kind,r.tmdbId,r.tvdbId,r.imdbId,r.olid],queryFn:()=>getAvailability([r]),retry:false,refetchInterval:10000})
+  const currentAvailability=libraryCheck.isError?undefined:libraryCheck.data?.[0]
+  const canAdd=canAddFromAvailability(currentAvailability)
   const roots = useQuery({ queryKey: ['rootfolders'], queryFn: getRootFolders })
   const profiles = useQuery({ queryKey: ['profiles'], queryFn: getProfiles })
   const settings = useQuery({ queryKey: ['settings'], queryFn: getSettings })
@@ -335,11 +355,10 @@ function AddDialog(props: {
                   Open in library
                 </Link>
               </ActionNotice>
-            ) : r.inLibrary ? (
-              <p>
-                <span className="pill pill-ok">in library</span>{' '}
-                <span className="muted">already added — nothing to do here.</span>
-              </p>
+            ) : currentAvailability?.catalog==='present' ? (
+              <p><AvailabilityBadge value={currentAvailability} checked /><Link to="/library/$id" params={{id:String(currentAvailability.libraryItemId)}}>Open in library</Link></p>
+            ) : !canAdd ? (
+              <div role="status"><AvailabilityBadge value={currentAvailability} checked /><p>{libraryCheck.isPending?'Checking library identity…':'Refresh the library check before adding this title.'}</p><button onClick={()=>void libraryCheck.refetch()}>Refresh library check</button></div>
             ) : (
               <div className="add-controls discover-add">
                 <label className="inline">
@@ -420,7 +439,7 @@ function AddDialog(props: {
         </div>
 
         <div className="modal-foot">
-          {!props.added && !r.inLibrary && (
+          {!props.added && canAdd && (
             <button
               className="btn-accent"
               disabled={add.isPending || !selectedRootId}

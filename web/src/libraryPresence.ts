@@ -1,10 +1,10 @@
 import type { MediaItemSummary } from './api'
 
-/** Library filter (ADR 0028): what is on disk, what is offloaded, or both. */
+/** Library filter (ADR 0028): what has file records, what is offloaded, or both. */
 export type Presence = 'all' | 'on_disk' | 'offloaded'
 
 export const PRESENCES: { key: Presence; label: string }[] = [
-  { key: 'on_disk', label: 'On disk' },
+  { key: 'on_disk', label: 'Recorded files' },
   { key: 'offloaded', label: 'Offloaded' },
   { key: 'all', label: 'Everything' },
 ]
@@ -14,7 +14,7 @@ export const onDisk = (m: Pick<MediaItemSummary, 'kind' | 'fileCount' | 'episode
   (m.kind === 'series' ? m.episodeFileCount : m.fileCount) > 0 || m.fileCount > 0
 
 /** The default is Everything; an offloaded title is never hidden unless asked.
- *  A show with one offloaded episode and files elsewhere matches BOTH On disk and Offloaded (by design). */
+ *  A show with one offloaded episode and files elsewhere matches BOTH Recorded files and Offloaded (by design). */
 export function matchesPresence(m: MediaItemSummary, p: Presence): boolean {
   switch (p) {
     case 'on_disk': return onDisk(m)

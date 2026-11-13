@@ -105,6 +105,7 @@ test('the choice survives a reload and reaches Discover too', async ({ page }) =
   // One preference, both pages. Discover was never told anything — it reads
   // the same custom property, and a strip card is exactly that wide.
   await page.goto('/discover')
+    await page.getByRole('button', {name:'Browse all',exact:true}).click()
   expect(await cardWidth(page, DISCOVER_CARD)).toBe(await token(page))
   const largeStrip = await cardWidth(page, DISCOVER_CARD)
 

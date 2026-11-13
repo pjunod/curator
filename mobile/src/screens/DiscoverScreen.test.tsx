@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ApiError } from '../api'
 import type { MonarrClient } from '../api'
 import type { SearchResult } from '../types'
-import { Button, IconButton } from '../components/UI'
+import { Button, IconButton, Chip } from '../components/UI'
 import { TopNavigationProvider } from '../navigation-context'
 import { AddSheet, DiscoverScreen } from './DiscoverScreen'
 
@@ -22,9 +22,11 @@ Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
 const original: SearchResult = { kind: 'series', tmdbId: 0, tvdbId: 414217, imdbId: 'tt16867040', hydrationSource: 'tvmaze', title: 'Cunk', year: 2022, overview: 'Original synopsis', posterPath: '', inLibrary: false }
 let renderer: ReactTestRenderer | undefined
 afterEach(async () => { if (renderer) await act(async () => renderer!.unmount()); renderer = undefined })
-const button = (label: string) => renderer!.root.findAll((node) => (node.type === Button || node.type === IconButton) && node.props.label === label)[0]!
+const button = (label: string) => renderer!.root.findAll((node) => (node.type === Button || node.type === IconButton || node.type === Chip) && node.props.label === label)[0]!
 const press = async (label: string) => { await act(async () => { button(label).props.onPress() }) }
 const makeClient = () => ({
+  getAvailability: vi.fn().mockResolvedValue([{catalog: 'absent', presence: 'unknown', acquisition: 'none', libraryItemId: 0, copyId: 0, expected: 0, present: 0, offloaded: 0}]),
+  getLibraryDiscoverySeeds: vi.fn().mockResolvedValue({items: [],hasMore:false}),
   getRootFolders: vi.fn().mockResolvedValue([{ id: 8, path: '/tv', kind: 'series' }]),
   getProfiles: vi.fn().mockResolvedValue([]),
   getMetadataPreview: vi.fn().mockResolvedValue({ kind: 'series', title: 'Cunk', overview: 'Full synopsis', ids: { tvdb: 414217, tmdb: 999 }, ownership: 'absent', addability: 'supported' }),
@@ -128,6 +130,7 @@ describe('native preview and add steps', () => {
       searchMetadata: vi.fn().mockResolvedValue([original]),
     }
     await act(async () => { renderer = create(<DiscoverScreen client={client as unknown as MonarrClient} onAdded={vi.fn()} />) })
+    await press('Browse all')
     await act(async () => { renderer!.root.findByType('input' as never).props.onChangeText('Cunk') })
     await press('Search')
     const previewTarget = () => renderer!.root.findAll((node) => node.type === ('pressable' as never) && node.props.accessibilityLabel === 'View details for Cunk')[0]!
