@@ -1,3 +1,4 @@
+import { availabilityLabel } from '../availability'
 import { useEffect, useMemo, useState } from 'react'
 import { Alert, ScrollView, StyleSheet, Switch, Text, View } from 'react-native'
 import type { MonarrClient } from '../api'
@@ -243,6 +244,7 @@ export function MediaDetailScreen({ client, id, onBack, onInteractiveSearch, onO
             <Text style={[styles.title, { color: theme.text }]}>{item.title}</Text>
             <Text style={[styles.meta, { color: theme.muted }]}>{[item.author, item.year, item.status, item.runtime ? `${item.runtime} min` : ''].filter(Boolean).join(' · ')}</Text>
             <View style={styles.badges}>
+              {item.kind!=='book'?<Badge label={`Primary copy · ${availabilityLabel(item.availability)}`} tone={item.availability?.presence==='present'?'ok':'neutral'} />:null}
               <Badge label={item.monitored ? 'Monitored' : 'Unmonitored'} tone={item.monitored ? 'ok' : 'neutral'} />
               {item.kind === 'movie' && item.offloaded ? <Badge label="Offloaded" tone="warning" /> : null}
               {item.kind === 'series' && offloadedEpisodes > 0 ? <Badge label={offloadedEpisodes === episodes.length ? 'Offloaded' : `${offloadedEpisodes} offloaded`} tone="warning" /> : null}
@@ -383,7 +385,7 @@ export function MediaDetailScreen({ client, id, onBack, onInteractiveSearch, onO
           <>
             <SectionTitle>Episodes</SectionTitle>
             <Panel>
-              <Text style={[styles.stat, { color: theme.text }]}>{onDisk} of {aired.length} aired episodes on disk</Text>
+              <Text style={[styles.stat, { color: theme.text }]}>{onDisk} of {aired.length} episode records linked to files (all copies)</Text>
               {item.seasons.map((season) => {
                 const present = season.episodes.filter((episode) => episode.hasFile).length
                 // The season flag only means "new episodes inherit it"; each episode's own flag says what is offloaded.
@@ -394,7 +396,7 @@ export function MediaDetailScreen({ client, id, onBack, onInteractiveSearch, onO
                     <View style={[styles.row, { borderTopColor: theme.border }]}>
                       <View style={styles.flex}>
                         <Text style={[styles.rowTitle, { color: theme.text }]}>{label}</Text>
-                        <Text style={[styles.meta, { color: theme.muted }]}>{present}/{season.episodes.length} episodes on disk{seasonOffloaded ? ' · offloaded' : ''}</Text>
+                        <Text style={[styles.meta, { color: theme.muted }]}>{present}/{season.episodes.length} episode records linked to files{seasonOffloaded ? ' · offloaded' : ''}</Text>
                       </View>
                       <Switch
                         accessibilityLabel={`Monitor season ${season.number}`}
@@ -423,7 +425,7 @@ export function MediaDetailScreen({ client, id, onBack, onInteractiveSearch, onO
                         <View key={episode.id} style={[styles.row, { borderTopColor: theme.border }]}>
                           <View style={styles.flex}>
                             <Text style={[styles.rowTitle, { color: theme.text }]}>{token} {episode.title || 'TBA'}</Text>
-                            <Text style={[styles.meta, { color: theme.muted }]}>{gone ? 'offloaded' : episode.hasFile ? 'on disk' : 'not on disk'}</Text>
+                            <Text style={[styles.meta, { color: theme.muted }]}>{gone ? 'offloaded' : episode.hasFile ? 'file recorded' : 'no file record'}</Text>
                           </View>
                           {gone ? (
                             <Button compact label="Re-acquire" disabled={reacquiring} onPress={() => void reacquire({ scope: 'episode', episodeId: episode.id }, token)} />
@@ -545,7 +547,7 @@ export function MediaDetailScreen({ client, id, onBack, onInteractiveSearch, onO
 
         <SectionTitle>Files</SectionTitle>
         {item.files.length === 0 ? (
-          <Panel><Text style={[styles.meta, { color: theme.muted }]}>Nothing on disk yet.</Text></Panel>
+          <Panel><Text style={[styles.meta, { color: theme.muted }]}>No file records yet.</Text></Panel>
         ) : item.files.map((file) => {
           const copy = file.copyId ? copies.find((candidate) => candidate.id === file.copyId) : undefined
           return (

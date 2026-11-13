@@ -1140,3 +1140,27 @@ The Import Queue page follows the existing **Activity retention** setting in
 Settings → Library. Set the window to `0` to disable automatic expiry of future
 eligible records. This does not restore already expired records. Clearing
 Activity does not hide an import receipt while it remains in storage.
+
+
+## Library volume review
+
+New root-folder registration records the current volume identity. Existing
+roots may establish their first identity from unchanged file records that
+predate the availability migration. Newly scanned files and an empty folder
+cannot establish that first trust automatically. Use **Review volume** beside
+the root when an existing root has no trustworthy evidence, or after an
+intentional storage replacement.
+
+The dialog compares the saved and observed identities and shows affected file
+records and active work. Restore an unavailable mount first. If the original
+volume returns, no rebind is needed. For an intentional replacement, acknowledge
+the exact current review and choose **Use current volume**. A changed volume,
+library revision or custody state requires another review. Active downloads,
+imports and file-changing operations block rebinding until they finish or stop
+safely. A completed cancellation without retained custody does not block it.
+
+Confirmation invalidates previous availability observations. It does not delete
+filesystem files. Later scans can remove catalogue records for files absent on
+the newly trusted volume, so check the selected mount before confirming. Scan
+disk afterwards to verify availability. Unsupported volume identity platforms
+keep availability unknown while ordinary scanning continues.

@@ -185,6 +185,36 @@ nothing on disk is moved, and the `library-folders` warning under
 
 ## Discover
 
+Discover opens **For your library** on web and native. Choose a movie or show
+with a TMDB identity. Search and page through library titles, then see related
+TMDB titles, verified movie collection entries, or the selected show's regular
+seasons still to review. These suggestions use catalogue metadata, not viewing
+history. **Browse all** retains the existing provider lists.
+
+Availability separates **in Curator** from **available in the primary copy**.
+The shared status appears in search, discovery, recommendations and title
+details. Available means a successful manifest check at the shown time; it does
+not promise playback. Show counts cover known aired regular episodes only.
+Specials and future episodes are excluded. Missing episode dates or unlinked
+files leave coverage unknown. Additional copies do not silently complete the
+primary copy. Offload intent and active acquisition remain separate facts.
+
+Library checks expire after 13 hours against the normal 12-hour scan schedule.
+After an import, metadata edit, failed check or volume change, status may be
+unknown until **Settings → Library → Scan disk** succeeds. Unknown status blocks
+a duplicate Add; refresh the check or open the existing title. An untracked
+provider title says **Not in Curator**, rather than claiming files are missing.
+**Still to get** includes partial, offloaded and unknown entries; **Available in
+library** requires verified primary presence.
+
+**Review Season N** opens that season's existing controls on web. Native opens
+the show in the library. Review monitoring and searches there; opening a shelf
+or following a review link never starts acquisition. Related shelves show up to
+30 titles from the first TMDB recommendation page. Collection shelves verify
+membership and omit available primary copies. Each provider shelf reports its
+own refresh failure; a provider outage does not prove library absence.
+
+
 **Discover** (sidebar) is for the other half of the problem: adding
 something when you do not already know its name. It is rows of posters —
 *Trending this week*, *In theaters now*, *Coming soon*, *Popular*, *Top

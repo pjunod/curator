@@ -1,3 +1,5 @@
+import { LibraryDiscovery } from '../components/LibraryDiscovery'
+import { availabilityLabel } from '../availability'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { ActivityIndicator, Keyboard, Modal, ScrollView, StyleSheet, Switch, Text, View } from 'react-native'
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context'
@@ -24,6 +26,7 @@ export function DiscoverScreen({
 }) {
   const theme = useTheme()
   const { itemSize } = usePreferences()
+  const [mode,setMode]=useState<'library'|'browse'>('library')
   const [kind, setKind] = useState<MediaKind>('movie')
   const [bookType, setBookType] = useState<BookType>('ebook')
   const [listID, setListID] = useState('')
@@ -32,7 +35,7 @@ export function DiscoverScreen({
   const [searching, setSearching] = useState(false)
   const [searchError, setSearchError] = useState('')
   const [adding, setAdding] = useState<{ item: SearchResult; step: 'preview' | 'options' } | null>(null)
-  const lists = useResource(() => client.getDiscoverLists(), [client])
+  const lists = useResource(() => mode==='browse'?client.getDiscoverLists():Promise.resolve([]), [client,mode])
   const kindLists = useMemo(() => (lists.data ?? []).filter((list) => list.kind === kind), [kind, lists.data])
 
   useEffect(() => {
@@ -43,8 +46,8 @@ export function DiscoverScreen({
   }, [kind, listID, lists.data])
 
   const items = useResource(
-    () => (listID ? client.getDiscoverItems(listID) : Promise.resolve([])),
-    [client, listID],
+    () => (mode==='browse'&&listID ? client.getDiscoverItems(listID) : Promise.resolve([])),
+    [client, listID,mode],
   )
 
   const search = async () => {
@@ -80,6 +83,9 @@ export function DiscoverScreen({
     <AppScreen>
       <Header title="Discover" left={<Wordmark size={19} />} subtitle="Find something worth adding" />
       <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+        <View style={styles.kinds}><Chip label="For your library" selected={mode==='library'} onPress={()=>setMode('library')}/><Chip label="Browse all" selected={mode==='browse'} onPress={()=>setMode('browse')}/></View>
+        {mode==='library'?<LibraryDiscovery client={client} onPick={(item,step)=>{Keyboard.dismiss();setAdding({item,step})}} onOpenLibrary={onAdded}/>:null}
+        {mode==='browse'?<>
         <View style={styles.kinds}>
           {(['movie', 'series', 'book'] as const).map((value) => (
             <Chip key={value} label={value === 'series' ? 'TV' : `${value.charAt(0).toUpperCase()}${value.slice(1)}s`} selected={kind === value} onPress={() => setKind(value)} />
@@ -136,6 +142,7 @@ export function DiscoverScreen({
             />
           ))}
         </View>
+        </>:null}
       </ScrollView>
 
       {adding ? (
@@ -190,8 +197,13 @@ export function AddSheet({
   const [monitor, setMonitor] = useState<'all' | 'latest' | 'first_season' | 'none'>('all')
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
+  const availability=useResource(async()=>{
+    try{return (await client.getAvailability([item]))[0]}
+    catch(cause){if(cause instanceof ApiError&&cause.status===404)return item.availability;throw cause}
+  },[client,item.kind,item.tmdbId,item.tvdbId,item.imdbId,item.olid])
   const state = previewState(item, bookType, preview.data, preview.conflict)
-  state.blocked ||= !!preview.unsupported
+  state.blocked ||= !!preview.unsupported || availability.loading || !!availability.error || availability.data?.catalog==='unknown' || availability.data?.catalog==='ambiguous'
+  if(item.kind!=='book'&&availability.data?.catalog==='present')state.owned=true
   const back = () => {
     if (step === 'options' && initialStep === 'preview') setStep('preview')
     else onClose()
@@ -242,6 +254,10 @@ export function AddSheet({
         <AppScreen forceTopInset>
           <Header title={step === 'preview' ? 'Title details' : `Add ${item.kind === 'book' ? bookType : item.kind === 'series' ? 'series' : item.kind}`} left={<IconButton label={step === 'options' && initialStep === 'preview' ? 'Back to details' : 'Close'} glyph={step === 'options' && initialStep === 'preview' ? '‹' : '×'} onPress={back} />} />
           <ScrollView key={step} style={styles.flex} contentContainerStyle={styles.sheetContent}>
+            {availability.data?<Text style={{color:theme.muted}}>{availabilityLabel(availability.data)}</Text>:null}
+            <InlineError message={availability.error}/>
+            {availability.error?<Button secondary label="Retry library check" onPress={()=>void availability.refresh()}/>:null}
+            {availability.data?.catalog==='present'&&availability.data.libraryItemId?<Button secondary label="View in library" onPress={()=>onAdded(availability.data!.libraryItemId!)}/>:null}
             <PreviewDetails item={item} data={preview.data} loading={preview.loading} error={preview.error} conflict={preview.conflict} unsupported={preview.unsupported} retry={() => void preview.refresh()} />
             {step === 'options' ? <>
 

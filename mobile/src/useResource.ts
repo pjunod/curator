@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 interface Resource<T> {
   data: T | null
@@ -14,6 +14,10 @@ export function useResource<T>(load: () => Promise<T>, dependencies: readonly un
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
   const alive = useRef(true)
+  const generation = useRef(0)
+  const epoch = useMemo(() => ({}), dependencies)
+  const currentEpoch = useRef(epoch)
+  currentEpoch.current = epoch
 
   useEffect(() => {
     alive.current = true
@@ -25,15 +29,17 @@ export function useResource<T>(load: () => Promise<T>, dependencies: readonly un
   // Callers pass stable primitive dependencies. The loader itself is omitted
   // intentionally so an inline closure cannot turn one request into a loop.
   const refresh = useCallback(async () => {
+    if (!alive.current || currentEpoch.current !== epoch) return
+    const ticket=++generation.current
     setRefreshing(true)
     setError('')
     try {
       const value = await load()
-      if (alive.current) setData(value)
+      if (alive.current && ticket===generation.current && currentEpoch.current === epoch) setData(value)
     } catch (cause) {
-      if (alive.current) setError(cause instanceof Error ? cause.message : 'Something went wrong.')
+      if (alive.current && ticket===generation.current && currentEpoch.current === epoch) setError(cause instanceof Error ? cause.message : 'Something went wrong.')
     } finally {
-      if (alive.current) {
+      if (alive.current && ticket===generation.current && currentEpoch.current === epoch) {
         setLoading(false)
         setRefreshing(false)
       }
@@ -42,8 +48,10 @@ export function useResource<T>(load: () => Promise<T>, dependencies: readonly un
   }, dependencies)
 
   useEffect(() => {
+    setData(null)
     setLoading(true)
     void refresh()
+    return ()=>{generation.current++}
   }, [refresh])
 
   return { data, error, loading, refreshing, refresh }

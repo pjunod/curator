@@ -12,13 +12,14 @@ import (
 
 	"github.com/pjunod/monarr/internal/domain"
 	"github.com/pjunod/monarr/internal/domain/filename"
-	"github.com/pjunod/monarr/internal/domain/mediainfo"
 	"github.com/pjunod/monarr/internal/domain/parser"
 	"github.com/pjunod/monarr/internal/domain/quality"
 	"github.com/pjunod/monarr/internal/infra/sqlite"
 )
 
 const scanReportKey = "last_scan_report"
+
+var errScanIncomplete = errors.New("library scope scan incomplete; retained existing file records")
 
 // ScanCompleted is published on the bus after every reconcile.
 type ScanCompleted struct {
@@ -103,7 +104,14 @@ func (s *Service) Scan(ctx context.Context) (Report, error) {
 	for _, f := range movingFolders {
 		claimed[filepath.Clean(f)] = true
 	}
+	presenceRoots, err := s.db.ListRootFolders(ctx)
+	if err != nil {
+		return report, err
+	}
 	for _, item := range items {
+		if err := s.db.InvalidatePresence(ctx, item.ID); err != nil {
+			return report, err
+		}
 		// Copies with their own folders are claimed and scanned too.
 		copies, err := s.db.ListMediaCopies(ctx, item.ID)
 		if err != nil {
@@ -125,6 +133,19 @@ func (s *Service) Scan(ctx context.Context) (Report, error) {
 			s.log.Info("scan: skipping a title a re-match is moving files for", "title", item.Title)
 			continue
 		}
+		if item.RootFolderID != 0 {
+			rootPath := ""
+			for _, root := range presenceRoots {
+				if root.ID == item.RootFolderID {
+					rootPath = root.Path
+					break
+				}
+			}
+			if _, _, rootErr := s.checkPresenceRoot(ctx, item.RootFolderID, rootPath); rootErr != nil && !errors.Is(rootErr, errPresenceUnsupported) {
+				s.log.Warn("scan: library root unavailable; keeping existing records", "title", item.Title, "err", rootErr)
+				continue
+			}
+		}
 		if reason := folderProblem(item.Path); reason != "" {
 			missing, err := s.missingItem(ctx, item, reason)
 			if err != nil {
@@ -133,6 +154,11 @@ func (s *Service) Scan(ctx context.Context) (Report, error) {
 			if missing != nil {
 				report.MissingPaths = append(report.MissingPaths, item.Path)
 				report.MissingItems = append(report.MissingItems, *missing)
+			}
+			if reason == "missing" {
+				if e := s.verifyPresence(ctx, item.ID, true); e != nil {
+					s.log.Debug("scan: presence unknown", "title", item.Title, "err", e)
+				}
 			}
 			continue
 		}
@@ -144,6 +170,9 @@ func (s *Service) Scan(ctx context.Context) (Report, error) {
 		if err != nil {
 			s.log.Warn("scan: item failed", "title", item.Title, "err", err)
 			continue
+		}
+		if e := s.VerifyPresence(ctx, item.ID); e != nil {
+			s.log.Debug("scan: presence unknown", "title", item.Title, "err", e)
 		}
 		report.ItemsScanned++
 		report.FilesLinked += linked
@@ -247,167 +276,215 @@ func (s *Service) rematchOpen(ctx context.Context, snapshot map[int64]bool, item
 // Files found in a copy's separate folder are attributed to that copy;
 // files in a shared folder keep whatever attribution their row already has
 // (the upsert never overwrites copy_id).
-func (s *Service) scanItem(ctx context.Context, item domain.MediaItem, copies []domain.MediaCopy) (linked, removed int, err error) {
+func (s *Service) scanItem(ctx context.Context, selected domain.MediaItem, _ []domain.MediaCopy) (linked, removed int, err error) {
+	if s.rematchOpen(ctx, nil, selected.ID) {
+		return 0, 0, errRematchStarted
+	}
+	revision, shared, err := s.db.PresenceRevision(ctx, selected.ID)
+	if err != nil {
+		return 0, 0, err
+	}
+	item, err := s.db.GetMediaItemFull(ctx, selected.ID)
+	if err != nil {
+		return 0, 0, err
+	}
+	roots, err := s.db.ListRootFolders(ctx)
+	if err != nil {
+		return 0, 0, err
+	}
+	paths := map[int64]string{}
+	for _, root := range roots {
+		paths[root.ID] = root.Path
+	}
+	type scope struct {
+		id, root int64
+		path     string
+		before   os.FileInfo
+		binding  sqlite.ScanRootBinding
+	}
+	scopes := []scope{{id: 0, root: item.RootFolderID, path: item.Path}}
+	for _, cp := range item.Copies {
+		root, path := cp.RootFolderID, cp.Path
+		if root == 0 {
+			root = item.RootFolderID
+		}
+		if path == "" {
+			path = item.Path
+		}
+		scopes = append(scopes, scope{id: cp.ID, root: root, path: path})
+	}
+	prune := map[int64]bool{}
+	bindings := []sqlite.ScanRootBinding{}
+	for i := range scopes {
+		sc := &scopes[i]
+		if sc.path != "" {
+			if err := validatePresenceScope(paths[sc.root], sc.path); err != nil {
+				return 0, 0, err
+			}
+		}
+		for _, file := range item.Files {
+			if file.CopyID == sc.id && sc.path != "" && !presenceInside(sc.path, file.Path) {
+				return 0, 0, errScanIncomplete
+			}
+		}
+		if sc.root == 0 {
+			prune[sc.id] = true
+			continue
+		} // legacy unassigned-root scanning stays supported
+		before, identity, e := s.checkPresenceRoot(ctx, sc.root, paths[sc.root])
+		if errors.Is(e, errPresenceUnsupported) {
+			prune[sc.id] = true
+			continue
+		}
+		if e != nil {
+			return 0, 0, e
+		}
+		generation, e := s.db.PresenceRootGeneration(ctx, sc.root, paths[sc.root], identity)
+		if e != nil {
+			return 0, 0, e
+		}
+		sc.before = before
+		sc.binding = sqlite.ScanRootBinding{RootID: sc.root, Path: paths[sc.root], Identity: identity, Generation: generation}
+		bindings = append(bindings, sc.binding)
+		prune[sc.id] = generation > 0
+		if generation == 0 {
+			offloaded := item.OffloadedAt > 0
+			for _, season := range item.Seasons {
+				for _, episode := range season.Episodes {
+					offloaded = offloaded || episode.OffloadedAt > 0
+				}
+			}
+			if offloaded {
+				return 0, 0, fmt.Errorf("verify this library volume before indexing an offloaded title")
+			}
+		}
+	}
 	isMedia := filename.IsVideo
 	if item.Kind == domain.KindBook {
 		isMedia = filename.IsBook
 	}
-	type foundFile struct {
-		size   int64
-		copyID int64
+	old := map[string]domain.MediaFile{}
+	for _, f := range item.Files {
+		old[f.Path] = f
 	}
-	// A shared book folder needs content-based routing. Profiles decide which
-	// formats are preferred inside an edition; the extension decides whether
-	// a file is an ebook or audiobook at all. Separate copy folders remain
-	// explicit and therefore keep their folder's copy id.
-	bookCopyID := func(path string) int64 {
-		bookType := quality.BookTypeForSource(quality.Source(filename.BookQualitySource(path)))
-		if bookType == item.BookType {
-			return 0
+	found := map[string]sqlite.ScannedLibraryFile{}
+	episodeIDs := map[[2]int]int64{}
+	for _, season := range item.Seasons {
+		for _, ep := range season.Episodes {
+			episodeIDs[[2]int{ep.SeasonNumber, ep.EpisodeNumber}] = ep.ID
 		}
-		for _, cp := range copies {
-			if cp.BookType == bookType {
-				return cp.ID
-			}
-		}
-		return 0 // no matching edition exists; preserve historical scan behaviour
 	}
-	onDisk := map[string]foundFile{} // path -> size + copy attribution
-	walk := func(root string, copyID int64) error {
-		return filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
-			if err != nil || d.IsDir() || !isMedia(path) {
-				return err
-			}
-			info, ierr := d.Info()
-			if ierr != nil {
-				return nil // vanished mid-walk; skip
-			}
-			attributedCopy := copyID
-			if item.Kind == domain.KindBook && copyID == 0 {
-				attributedCopy = bookCopyID(path)
-			}
-			onDisk[path] = foundFile{size: info.Size(), copyID: attributedCopy}
-			return nil
-		})
-	}
-	if walkErr := walk(item.Path, 0); walkErr != nil {
-		return 0, 0, walkErr
-	}
-	for _, cp := range copies {
-		if cp.Path == "" || cp.Path == item.Path {
+	walked := map[string]bool{}
+	for _, sc := range scopes {
+		if sc.path == "" {
+			prune[sc.id] = false
 			continue
 		}
-		if _, statErr := os.Stat(cp.Path); statErr != nil {
-			continue // copy folder not created yet — nothing to scan
+		if walked[sc.path] {
+			continue
 		}
-		if walkErr := walk(cp.Path, cp.ID); walkErr != nil {
-			return 0, 0, walkErr
+		walked[sc.path] = true
+		if _, e := os.Stat(sc.path); os.IsNotExist(e) {
+			continue
+		} else if e != nil {
+			return 0, 0, errScanIncomplete
+		}
+		e := filepath.WalkDir(sc.path, func(path string, entry fs.DirEntry, walkErr error) error {
+			if walkErr != nil {
+				return walkErr
+			}
+			if entry.Type()&os.ModeSymlink != 0 {
+				return errScanIncomplete
+			}
+			if entry.IsDir() || !isMedia(path) {
+				return nil
+			}
+			info, e := entry.Info()
+			if e != nil {
+				return errScanIncomplete
+			}
+			if !info.Mode().IsRegular() {
+				return errScanIncomplete
+			}
+			copyID := sc.id
+			if prior, exists := old[path]; exists {
+				copyID = prior.CopyID
+			}
+			if item.Kind == domain.KindBook && sc.id == 0 {
+				bookType := quality.BookTypeForSource(quality.Source(filename.BookQualitySource(path)))
+				copyID = 0
+				if bookType != item.BookType {
+					for _, cp := range item.Copies {
+						if cp.BookType == bookType {
+							copyID = cp.ID
+							break
+						}
+					}
+				}
+			}
+			file := sqlite.ScannedLibraryFile{Path: path, Size: info.Size(), CopyID: copyID}
+			if item.Kind == domain.KindSeries {
+				if eps, ok := filename.Extract(path); ok {
+					for _, num := range eps.Episodes {
+						if id := episodeIDs[[2]int{eps.Season, num}]; id > 0 {
+							file.EpisodeIDs = append(file.EpisodeIDs, id)
+						}
+					}
+				}
+			}
+			found[path] = file
+			return nil
+		})
+		if e != nil {
+			return 0, 0, e
 		}
 	}
-
-	// The walk is the slow part: a move may have started during it. The
-	// check is repeated before the rows are written and before they are
-	// pruned, because what the walk saw is a snapshot of files in motion.
-	if s.rematchOpen(ctx, nil, item.ID) {
-		return 0, 0, errRematchStarted
+	for _, sc := range scopes {
+		if sc.before != nil {
+			after, e := os.Stat(sc.binding.Path)
+			if e != nil || !os.SameFile(sc.before, after) {
+				return 0, 0, errScanIncomplete
+			}
+			if e = s.db.CheckPresenceRoot(ctx, sc.root, sc.binding.Path, sc.binding.Identity); e != nil {
+				return 0, 0, e
+			}
+		}
 	}
-	existing, err := s.db.ListFilesForItem(ctx, item.ID)
-	if err != nil {
-		return 0, 0, err
+	files := make([]sqlite.ScannedLibraryFile, 0, len(found))
+	for _, f := range found {
+		files = append(files, f)
 	}
-	existingByPath := map[string]domain.MediaFile{}
-	for _, f := range existing {
-		existingByPath[f.Path] = f
-	}
-	// One query for the whole item, so deciding what to re-probe costs
-	// nothing per file. Missing entries simply mean "never probed".
 	probeState := map[string]sqlite.FileQuality{}
-	if records, qErr := s.db.FileQualityRecords(ctx, item.ID); qErr == nil {
+	if records, e := s.db.FileQualityRecords(ctx, item.ID); e == nil {
 		for _, r := range records {
 			probeState[r.Path] = r
 		}
-	} else {
-		s.log.Warn("scan: could not read file quality records", "item", item.Title, "err", qErr)
 	}
+	result, err := s.db.ApplyLibraryScan(ctx, item, revision, shared, bindings, prune, files)
+	if err != nil {
+		return 0, 0, err
+	}
+	// Probe work uses the reconciled current file. Filename guesses never
+	// overwrite a newly imported/measured record if bytes changed meanwhile.
 
-	for path, ff := range onDisk {
-		fileID, err := s.db.UpsertFile(ctx, item.ID, ff.copyID, path, ff.size)
-		if err != nil {
-			return linked, removed, err
-		}
-		// Upsert deliberately preserves importer attribution. A book file in a
-		// shared folder is the one safe exception: format family is explicit in
-		// the extension, so once both editions exist a scan can repair an older
-		// row that predates edition-aware storage.
+	for path, ff := range found {
+		id := result.FileIDs[path]
 		if item.Kind == domain.KindBook {
-			if old, ok := existingByPath[path]; ok && old.CopyID != ff.copyID {
-				if err := s.db.UpdateFileCopy(ctx, fileID, ff.copyID); err != nil {
-					return linked, removed, err
+			if src := filename.BookQualitySource(path); src != "" {
+				_ = s.db.SetScanFileQuality(ctx, id, item.ID, ff.Size, result.FileGenerations[path], quality.Quality{Source: quality.Source(src)})
+			}
+		} else {
+			if q := parser.Parse(filepath.Base(path)).Quality; q.Resolution != 0 || q.Source != quality.SourceUnknown {
+				_ = s.db.SetScanFileQuality(ctx, id, item.ID, ff.Size, result.FileGenerations[path], q)
+			}
+			if rec, ok := probeState[path]; !ok || rec.NeedsProbe(ff.Size) {
+				if e := s.EnqueueProbe(ctx, id); e != nil {
+					s.log.Warn("scan: probe could not be queued", "file", id, "err", e)
 				}
 			}
-		}
-		// The filename is a hint now, not the authority (ADR 0013 §3): it
-		// seeds a quality so an unprobed library still has something to show,
-		// and the probe overwrites it with measurement. Book files are the
-		// exception — the extension IS the format, and there is no container
-		// to walk (ADR 0006).
-		old, known := existingByPath[path]
-		if !known || old.Provenance == mediainfo.ProvenanceUnknown || old.Provenance == mediainfo.ProvenanceFilename {
-			if src := filename.BookQualitySource(path); item.Kind == domain.KindBook && src != "" {
-				_ = s.db.SetFileQualityFrom(ctx, fileID, quality.Quality{Source: quality.Source(src)},
-					mediainfo.ProvenanceFilename, mediainfo.ConfidenceNone)
-			} else if q := parser.Parse(filepath.Base(path)).Quality; q.Resolution != 0 || q.Source != quality.SourceUnknown {
-				_ = s.db.SetFileQualityFrom(ctx, fileID, q,
-					mediainfo.ProvenanceFilename, mediainfo.ConfidenceNone)
-			}
-		}
-		// Measure anything we have not measured at this size. This IS the
-		// backfill: no separate migration pass, no "run this once" button —
-		// the first scan after upgrade walks the library and queues the work.
-		if item.Kind != domain.KindBook {
-			if rec, ok := probeState[path]; !ok || rec.NeedsProbe(ff.size) {
-				if pErr := s.EnqueueProbe(ctx, fileID); pErr != nil {
-					s.log.Warn("scan: could not queue probe", "path", path, "err", pErr)
-				}
-			}
-		}
-		if item.Kind == domain.KindSeries {
-			if eps, ok := filename.Extract(path); ok {
-				var ids []int64
-				for _, epNum := range eps.Episodes {
-					epID, err := s.db.GetEpisodeID(ctx, item.ID, eps.Season, epNum)
-					if err != nil {
-						if errors.Is(err, ErrNotFound) {
-							continue // file references an episode we don't know
-						}
-						return linked, removed, err
-					}
-					ids = append(ids, epID)
-				}
-				if len(ids) > 0 {
-					if err := s.db.ReplaceFileEpisodeLinks(ctx, fileID, ids); err != nil {
-						return linked, removed, err
-					}
-				}
-			}
-		}
-		if _, existed := existingByPath[path]; !existed {
-			linked++
 		}
 	}
-
-	if s.rematchOpen(ctx, nil, item.ID) {
-		return linked, removed, errRematchStarted
-	}
-	for path, f := range existingByPath {
-		if _, still := onDisk[path]; !still {
-			if err := s.db.DeleteFile(ctx, f.ID); err != nil {
-				return linked, removed, err
-			}
-			removed++
-		}
-	}
-	return linked, removed, nil
+	return result.Linked, result.Removed, nil
 }
 
 // LastScanReport returns the persisted report from the most recent Scan.

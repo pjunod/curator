@@ -65,6 +65,7 @@ type Deps struct {
 	Pipeline *pipeline.Timings
 	// Discover serves the browse rows (ADR 0015); nil returns an empty
 	// catalogue rather than failing, so a test server needs no provider.
+	LibraryDiscovery    *discover.LibraryService
 	Discover            *discover.Service
 	Recommendations     *recommendation.Service
 	RecommendationModel interface {

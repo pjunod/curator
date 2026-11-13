@@ -147,3 +147,7 @@ Superseded plans and proposals, kept as history. Each starts with a one-line poi
 ## Renderings
 
 - [renderings/](renderings/) — HTML and PNG captures the proposals and previews were reviewed against (`download-lifecycle/`, `media-preview/`).
+
+- [Household discovery plan](HOUSEHOLD_DISCOVERY_PLAN.md) — approved daily-use journeys and renderings.
+- [Household discovery status](HOUSEHOLD_DISCOVERY_STATUS.md) — review findings, milestones and delivery evidence.
+- [ADR 0029](adr/0029-shared-availability.md) — shared observed availability and bounded owner shelves.

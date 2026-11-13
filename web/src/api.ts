@@ -57,7 +57,25 @@ export interface BookEditionSummary {
   fileCount: number
 }
 
+export interface SeasonAvailability { number: number; expected: number; present: number; offloaded: number; unknownDates: number }
+export interface Availability {
+ catalog: 'present' | 'absent' | 'ambiguous' | 'unknown'
+ presence: 'present' | 'partial' | 'missing' | 'offloaded' | 'unknown'
+ libraryItemId?: number
+ copyId: number
+ expected: number
+ present: number
+ offloaded: number
+ acquisition: 'none' | 'active' | 'unknown'
+ checkedAt?: string
+ reason?: string
+ seasons?: SeasonAvailability[]
+}
+export interface LibrarySeedPage {items: SearchResult[]; hasMore: boolean}
+export interface LibraryShelf {title: string; source: string; seed: SearchResult; items: SearchResult[]}
+
 export interface MediaItemSummary {
+ availability?: Availability
   id: number
   kind: MediaKind
   title: string
@@ -338,6 +356,7 @@ export interface UpdateMediaItemRequest {
 }
 
 export interface SearchResult {
+ availability?: Availability
   kind: MediaKind
   tmdbId: number
   /** Set when the series came from the provider chain rather than TMDB. */
@@ -2325,3 +2344,17 @@ export const confirmItemInCinema = (id: number, episodeId?: number) =>
 
 export const getActivity = (view: 'progress' | 'attention' | 'history', scope: 'all' | 'imports', q: string, limit: number, offset: number) =>
   get<ImportActivityPage>(`/activity?${new URLSearchParams({ view, scope, q, limit: String(limit), offset: String(offset) })}`)
+
+export const getAvailability = (items: Pick<SearchResult, 'kind'|'tmdbId'|'tvdbId'|'imdbId'|'olid'>[]) => send<Availability[]>('POST', '/metadata/availability', items.map(item=>({kind:item.kind,tmdbId:item.tmdbId,...(item.tvdbId?{tvdbId:item.tvdbId}:{}),...(item.imdbId?{imdbId:item.imdbId}:{}),...(item.olid?{olid:item.olid}:{})})))
+export const getLibraryDiscoverySeeds = (q='',offset=0) => get<LibrarySeedPage>(`/discover/library/seeds?q=${encodeURIComponent(q)}&offset=${offset}`)
+export const getLibraryDiscoveryItems = (seed:SearchResult,shelf:'related'|'collection') => get<LibraryShelf>(`/discover/library/${seed.availability!.libraryItemId}/items?kind=${seed.kind}&tmdbId=${seed.tmdbId}&shelf=${shelf}`)
+
+export interface LibraryVolumeReview {
+ state:{rootId:number;path:string;expectedIdentity:string;generation:number;sharedRevision:number;libraryRevision:number;fileRecords:number;activeWork:number}
+ observedIdentity:string
+ empty:boolean
+ blocker?:string
+ fingerprint:string
+}
+export const previewLibraryVolume=(id:number)=>get<LibraryVolumeReview>(`/rootfolders/${id}/volume`)
+export const confirmLibraryVolume=(id:number,fingerprint:string,acknowledged:boolean)=>send('POST',`/rootfolders/${id}/volume`,{fingerprint,acknowledged})
