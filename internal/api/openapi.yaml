@@ -1125,6 +1125,76 @@ paths:
       responses:
         '204': { description: Removed }
         '409': { description: Disable semantic ranking first }
+  /metadata/availability:
+    post:
+      operationId: lookupAvailability
+      summary: Read catalogue and observed primary-copy availability for exact identities.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              maxItems: 100
+              items: { $ref: '#/components/schemas/AvailabilityTarget' }
+      responses:
+        '200':
+          description: Facts in the same order as the requested identities; failures are unknown.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Availability' }
+        '400': { description: Invalid request. }
+  /discover/library/seeds:
+    get:
+      operationId: listLibraryDiscoverySeeds
+      summary: Page exact library movie and series identities usable as discovery seeds.
+      parameters:
+        - { name: q, in: query, schema: { type: string, maxLength: 200 } }
+        - { name: offset, in: query, schema: { type: integer, minimum: 0, maximum: 100000 } }
+      responses:
+        '200':
+          description: Fifty seeds per page, with current local availability.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, hasMore]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/SearchResult' }
+                  hasMore: { type: boolean }
+        '400': { description: Invalid request. }
+  /discover/library/{id}/items:
+    get:
+      operationId: getLibraryDiscoveryItems
+      summary: Read one bounded kind-aware shelf from an explicitly selected library seed.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer, format: int64 } }
+        - { name: kind, in: query, required: true, schema: { type: string, enum: [movie, series] } }
+        - { name: tmdbId, in: query, required: true, schema: { type: integer, format: int64, minimum: 1 } }
+        - { name: shelf, in: query, required: true, schema: { type: string, enum: [related, collection] } }
+      responses:
+        '200':
+          description: Provider metadata freshly joined to local availability; never initiates acquisition.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [title, source, seed, items]
+                properties:
+                  title: { type: string }
+                  source: { type: string }
+                  seed: { $ref: '#/components/schemas/SearchResult' }
+                  items:
+                    type: array
+                    maxItems: 100
+                    items: { $ref: '#/components/schemas/SearchResult' }
+        '400': { description: Invalid request. }
+        '409': { description: The selected library identity changed; select it again. }
+        '503': { description: The shelf provider or library is unavailable. }
   /discover/lists:
     get:
       operationId: listDiscoverLists
@@ -1184,6 +1254,36 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
 
+  /rootfolders/{id}/volume:
+    get:
+      operationId: previewLibraryVolume
+      summary: Owner review of the exact library volume binding, without mutations.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer, format: int64 } }
+      responses:
+        '200':
+          description: Owner-only volume review, including custody blockers and a fingerprint.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LibraryVolumeReview" }
+    post:
+      operationId: confirmLibraryVolume
+      summary: Confirm a freshly observed library volume; never deletes filesystem data.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer, format: int64 } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [fingerprint, acknowledged]
+              properties:
+                fingerprint: { type: string, minLength: 64, maxLength: 64 }
+                acknowledged: { type: boolean }
+      responses:
+        '204': { description: Binding confirmed and old availability proofs invalidated. }
+        '409': { description: Volume or custody changed, acknowledgement missing, or work is active. }
   /rootfolders:
     get:
       operationId: listRootFolders
@@ -4327,6 +4427,7 @@ components:
          rating, ratingVotes, ratings, episodeCount, episodeFileCount, fileCount,
          addedAt]
       properties:
+        availability: { $ref: "#/components/schemas/Availability" }
         id:
           type: integer
           format: int64
@@ -4582,6 +4683,7 @@ components:
         - countries
         - identitySources
       properties:
+        availability: { $ref: "#/components/schemas/Availability" }
         id:
           type: integer
           format: int64
@@ -4889,10 +4991,71 @@ components:
           enum: [supported, unsupported, conflict]
         addBlockReason: { type: string }
 
+    LibraryVolumeReview:
+      type: object
+      required: [state, observedIdentity, empty, fingerprint]
+      properties:
+        state: { $ref: '#/components/schemas/LibraryVolumeState' }
+        observedIdentity: { type: string }
+        empty: { type: boolean }
+        blocker: { type: string }
+        fingerprint: { type: string }
+    LibraryVolumeState:
+      type: object
+      required: [rootId, path, expectedIdentity, generation, sharedRevision, libraryRevision, fileRecords, activeWork]
+      properties:
+        rootId: { type: integer, format: int64 }
+        path: { type: string }
+        expectedIdentity: { type: string }
+        generation: { type: integer, format: int64 }
+        sharedRevision: { type: integer, format: int64 }
+        libraryRevision: { type: integer, format: int64 }
+        fileRecords: { type: integer }
+        activeWork: { type: integer }
+    AvailabilityTarget:
+      type: object
+      required: [kind]
+      properties:
+        libraryItemId: { type: integer, format: int64 }
+        kind: { $ref: '#/components/schemas/MediaKind' }
+        tmdbId: { type: integer, format: int64 }
+        tvdbId: { type: integer, format: int64 }
+        imdbId: { type: string }
+        olid: { type: string }
+        isbn13: { type: string }
+        asin: { type: string }
+    Availability:
+      type: object
+      required: [catalog, presence, copyId, expected, present, offloaded, acquisition]
+      description: Read-only primary-copy facts, independent of requests and playback readiness. Series counts cover known aired regular episodes. First-run, failed, changed or older-than-13h observations are unknown.
+      properties:
+        catalog: { type: string, enum: [present, absent, ambiguous, unknown] }
+        presence: { type: string, enum: [present, partial, missing, offloaded, unknown] }
+        libraryItemId: { type: integer, format: int64 }
+        copyId: { type: integer, format: int64 }
+        expected: { type: integer }
+        present: { type: integer }
+        offloaded: { type: integer }
+        acquisition: { type: string, enum: [none, active, unknown] }
+        checkedAt: { type: string, format: date-time }
+        reason: { type: string }
+        seasons:
+          type: array
+          items: { $ref: '#/components/schemas/SeasonAvailability' }
+    SeasonAvailability:
+      type: object
+      required: [number, expected, present, offloaded, unknownDates]
+      properties:
+        number: { type: integer }
+        expected: { type: integer }
+        present: { type: integer }
+        offloaded: { type: integer }
+        unknownDates: { type: integer }
     SearchResult:
       type: object
       required: [kind, tmdbId, title, year, overview, posterPath, inLibrary]
       properties:
+        availability: { $ref: "#/components/schemas/Availability" }
         kind:
           $ref: "#/components/schemas/MediaKind"
         tmdbId:

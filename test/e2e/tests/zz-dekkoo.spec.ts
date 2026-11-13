@@ -34,6 +34,7 @@ for (const viewport of [{ width: 1280, height: 900 }, { width: 390, height: 844 
       if (item.title === 'Dekkoo Fixture Film' && item.kind === 'movie') expect((await request.delete(`/api/v1/library/${item.id}`)).ok()).toBeTruthy()
     }
     await page.goto('/discover')
+    await page.getByRole('button', {name:'Browse all',exact:true}).click()
     await expect(page.getByRole('tab', { name: 'Dekkoo', exact: true })).toHaveCount(0)
     await expect(page.getByLabel('Title to find')).toHaveCount(0)
     await page.getByRole('tab', { name: /Movies/ }).click()

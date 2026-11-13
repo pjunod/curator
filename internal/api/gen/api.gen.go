@@ -50,6 +50,78 @@ func (e AutoSearchTargetSkipped) Valid() bool {
 	}
 }
 
+// Defines values for AvailabilityAcquisition.
+const (
+	AvailabilityAcquisitionActive  AvailabilityAcquisition = "active"
+	AvailabilityAcquisitionNone    AvailabilityAcquisition = "none"
+	AvailabilityAcquisitionUnknown AvailabilityAcquisition = "unknown"
+)
+
+// Valid indicates whether the value is a known member of the AvailabilityAcquisition enum.
+func (e AvailabilityAcquisition) Valid() bool {
+	switch e {
+	case AvailabilityAcquisitionActive:
+		return true
+	case AvailabilityAcquisitionNone:
+		return true
+	case AvailabilityAcquisitionUnknown:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for AvailabilityCatalog.
+const (
+	AvailabilityCatalogAbsent    AvailabilityCatalog = "absent"
+	AvailabilityCatalogAmbiguous AvailabilityCatalog = "ambiguous"
+	AvailabilityCatalogPresent   AvailabilityCatalog = "present"
+	AvailabilityCatalogUnknown   AvailabilityCatalog = "unknown"
+)
+
+// Valid indicates whether the value is a known member of the AvailabilityCatalog enum.
+func (e AvailabilityCatalog) Valid() bool {
+	switch e {
+	case AvailabilityCatalogAbsent:
+		return true
+	case AvailabilityCatalogAmbiguous:
+		return true
+	case AvailabilityCatalogPresent:
+		return true
+	case AvailabilityCatalogUnknown:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for AvailabilityPresence.
+const (
+	AvailabilityPresenceMissing   AvailabilityPresence = "missing"
+	AvailabilityPresenceOffloaded AvailabilityPresence = "offloaded"
+	AvailabilityPresencePartial   AvailabilityPresence = "partial"
+	AvailabilityPresencePresent   AvailabilityPresence = "present"
+	AvailabilityPresenceUnknown   AvailabilityPresence = "unknown"
+)
+
+// Valid indicates whether the value is a known member of the AvailabilityPresence enum.
+func (e AvailabilityPresence) Valid() bool {
+	switch e {
+	case AvailabilityPresenceMissing:
+		return true
+	case AvailabilityPresenceOffloaded:
+		return true
+	case AvailabilityPresencePartial:
+		return true
+	case AvailabilityPresencePresent:
+		return true
+	case AvailabilityPresenceUnknown:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for BookType.
 const (
 	Audiobook BookType = "audiobook"
@@ -1036,16 +1108,16 @@ func (e RecommendationRequestKind) Valid() bool {
 
 // Defines values for RecommendationResponseCoverage.
 const (
-	Bounded RecommendationResponseCoverage = "bounded"
-	Partial RecommendationResponseCoverage = "partial"
+	RecommendationResponseCoverageBounded RecommendationResponseCoverage = "bounded"
+	RecommendationResponseCoveragePartial RecommendationResponseCoverage = "partial"
 )
 
 // Valid indicates whether the value is a known member of the RecommendationResponseCoverage enum.
 func (e RecommendationResponseCoverage) Valid() bool {
 	switch e {
-	case Bounded:
+	case RecommendationResponseCoverageBounded:
 		return true
-	case Partial:
+	case RecommendationResponseCoveragePartial:
 		return true
 	default:
 		return false
@@ -1967,6 +2039,42 @@ func (e ListActivityParamsScope) Valid() bool {
 	}
 }
 
+// Defines values for GetLibraryDiscoveryItemsParamsKind.
+const (
+	GetLibraryDiscoveryItemsParamsKindMovie  GetLibraryDiscoveryItemsParamsKind = "movie"
+	GetLibraryDiscoveryItemsParamsKindSeries GetLibraryDiscoveryItemsParamsKind = "series"
+)
+
+// Valid indicates whether the value is a known member of the GetLibraryDiscoveryItemsParamsKind enum.
+func (e GetLibraryDiscoveryItemsParamsKind) Valid() bool {
+	switch e {
+	case GetLibraryDiscoveryItemsParamsKindMovie:
+		return true
+	case GetLibraryDiscoveryItemsParamsKindSeries:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for GetLibraryDiscoveryItemsParamsShelf.
+const (
+	Collection GetLibraryDiscoveryItemsParamsShelf = "collection"
+	Related    GetLibraryDiscoveryItemsParamsShelf = "related"
+)
+
+// Valid indicates whether the value is a known member of the GetLibraryDiscoveryItemsParamsShelf enum.
+func (e GetLibraryDiscoveryItemsParamsShelf) Valid() bool {
+	switch e {
+	case Collection:
+		return true
+	case Related:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for SetPublicationCleanupJSONBodyAction.
 const (
 	Pause  SetPublicationCleanupJSONBodyAction = "pause"
@@ -2204,6 +2312,42 @@ type AutoSearchTarget struct {
 
 // AutoSearchTargetSkipped Set when the target was not searched, and why. "unmonitored" means monitoring is off for it; "downloading" means it already has a download in progress; "compared_recently" means this season's comparison completed too recently to repeat, so nothing was queued. Exact Wanted runs can additionally report a target that disappeared, changed reason, reached its re-grab cap, or was left by cancellation.
 type AutoSearchTargetSkipped string
+
+// Availability Read-only primary-copy facts, independent of requests and playback readiness. Series counts cover known aired regular episodes. First-run, failed, changed or older-than-13h observations are unknown.
+type Availability struct {
+	Acquisition   AvailabilityAcquisition `json:"acquisition"`
+	Catalog       AvailabilityCatalog     `json:"catalog"`
+	CheckedAt     *time.Time              `json:"checkedAt,omitempty"`
+	CopyId        int64                   `json:"copyId"`
+	Expected      int                     `json:"expected"`
+	LibraryItemId *int64                  `json:"libraryItemId,omitempty"`
+	Offloaded     int                     `json:"offloaded"`
+	Presence      AvailabilityPresence    `json:"presence"`
+	Present       int                     `json:"present"`
+	Reason        *string                 `json:"reason,omitempty"`
+	Seasons       *[]SeasonAvailability   `json:"seasons,omitempty"`
+}
+
+// AvailabilityAcquisition defines model for Availability.Acquisition.
+type AvailabilityAcquisition string
+
+// AvailabilityCatalog defines model for Availability.Catalog.
+type AvailabilityCatalog string
+
+// AvailabilityPresence defines model for Availability.Presence.
+type AvailabilityPresence string
+
+// AvailabilityTarget defines model for AvailabilityTarget.
+type AvailabilityTarget struct {
+	Asin          *string   `json:"asin,omitempty"`
+	ImdbId        *string   `json:"imdbId,omitempty"`
+	Isbn13        *string   `json:"isbn13,omitempty"`
+	Kind          MediaKind `json:"kind"`
+	LibraryItemId *int64    `json:"libraryItemId,omitempty"`
+	Olid          *string   `json:"olid,omitempty"`
+	TmdbId        *int64    `json:"tmdbId,omitempty"`
+	TvdbId        *int64    `json:"tvdbId,omitempty"`
+}
 
 // BackupInfo defines model for BackupInfo.
 type BackupInfo struct {
@@ -3039,6 +3183,27 @@ type LibraryReviewFlag struct {
 // LibraryReviewFlagState defines model for LibraryReviewFlag.State.
 type LibraryReviewFlagState string
 
+// LibraryVolumeReview defines model for LibraryVolumeReview.
+type LibraryVolumeReview struct {
+	Blocker          *string            `json:"blocker,omitempty"`
+	Empty            bool               `json:"empty"`
+	Fingerprint      string             `json:"fingerprint"`
+	ObservedIdentity string             `json:"observedIdentity"`
+	State            LibraryVolumeState `json:"state"`
+}
+
+// LibraryVolumeState defines model for LibraryVolumeState.
+type LibraryVolumeState struct {
+	ActiveWork       int    `json:"activeWork"`
+	ExpectedIdentity string `json:"expectedIdentity"`
+	FileRecords      int    `json:"fileRecords"`
+	Generation       int64  `json:"generation"`
+	LibraryRevision  int64  `json:"libraryRevision"`
+	Path             string `json:"path"`
+	RootId           int64  `json:"rootId"`
+	SharedRevision   int64  `json:"sharedRevision"`
+}
+
 // ManualImportAccepted defines model for ManualImportAccepted.
 type ManualImportAccepted struct {
 	// DownloadId Activity row that now owns the background import.
@@ -3182,8 +3347,11 @@ type MediaItemDetail struct {
 	AudioLanguages *[]string `json:"audioLanguages,omitempty"`
 
 	// Author Books only (ADR 0006); empty for movies/series.
-	Author       string `json:"author"`
-	BackdropPath string `json:"backdropPath"`
+	Author string `json:"author"`
+
+	// Availability Read-only primary-copy facts, independent of requests and playback readiness. Series counts cover known aired regular episodes. First-run, failed, changed or older-than-13h observations are unknown.
+	Availability *Availability `json:"availability,omitempty"`
+	BackdropPath string        `json:"backdropPath"`
 
 	// BookType A persistent edition medium under the book kind. The quality profile chooses formats within this medium and cannot change it (ADR 0018).
 	BookType *BookType `json:"bookType,omitempty"`
@@ -3264,6 +3432,9 @@ type MediaItemSummary struct {
 
 	// Author Books only (ADR 0006); empty for movies/series.
 	Author string `json:"author"`
+
+	// Availability Read-only primary-copy facts, independent of requests and playback readiness. Series counts cover known aired regular episodes. First-run, failed, changed or older-than-13h observations are unknown.
+	Availability *Availability `json:"availability,omitempty"`
 
 	// BookEditions Per-edition completeness for book library views. Empty/absent for video.
 	BookEditions *[]BookEditionSummary `json:"bookEditions,omitempty"`
@@ -4469,6 +4640,9 @@ type ScannedPublication struct {
 type SearchResult struct {
 	Author *string `json:"author,omitempty"`
 
+	// Availability Read-only primary-copy facts, independent of requests and playback readiness. Series counts cover known aired regular episodes. First-run, failed, changed or older-than-13h observations are unknown.
+	Availability *Availability `json:"availability,omitempty"`
+
 	// BookTypes Which editions of this Open Library work are already curated.
 	BookTypes *[]BookType `json:"bookTypes,omitempty"`
 
@@ -4491,6 +4665,15 @@ type SearchResult struct {
 	// TvdbId Set for a series the provider chain supplied (ADR 0011); such a result has no tmdbId.
 	TvdbId *int64 `json:"tvdbId,omitempty"`
 	Year   int    `json:"year"`
+}
+
+// SeasonAvailability defines model for SeasonAvailability.
+type SeasonAvailability struct {
+	Expected     int `json:"expected"`
+	Number       int `json:"number"`
+	Offloaded    int `json:"offloaded"`
+	Present      int `json:"present"`
+	UnknownDates int `json:"unknownDates"`
 }
 
 // SeasonInfo defines model for SeasonInfo.
@@ -5054,6 +5237,25 @@ type DiscoverItemsParams struct {
 	Page *int `form:"page,omitempty" json:"page,omitempty"`
 }
 
+// ListLibraryDiscoverySeedsParams defines parameters for ListLibraryDiscoverySeeds.
+type ListLibraryDiscoverySeedsParams struct {
+	Q      *string `form:"q,omitempty" json:"q,omitempty"`
+	Offset *int    `form:"offset,omitempty" json:"offset,omitempty"`
+}
+
+// GetLibraryDiscoveryItemsParams defines parameters for GetLibraryDiscoveryItems.
+type GetLibraryDiscoveryItemsParams struct {
+	Kind   GetLibraryDiscoveryItemsParamsKind  `form:"kind" json:"kind"`
+	TmdbId int64                               `form:"tmdbId" json:"tmdbId"`
+	Shelf  GetLibraryDiscoveryItemsParamsShelf `form:"shelf" json:"shelf"`
+}
+
+// GetLibraryDiscoveryItemsParamsKind defines parameters for GetLibraryDiscoveryItems.
+type GetLibraryDiscoveryItemsParamsKind string
+
+// GetLibraryDiscoveryItemsParamsShelf defines parameters for GetLibraryDiscoveryItems.
+type GetLibraryDiscoveryItemsParamsShelf string
+
 // ListDeliveryLifecycleParams defines parameters for ListDeliveryLifecycle.
 type ListDeliveryLifecycleParams struct {
 	BeforeId   *int64 `form:"beforeId,omitempty" json:"beforeId,omitempty"`
@@ -5250,6 +5452,9 @@ type ConfirmLibraryItemInCinemaParams struct {
 	Episode *int64 `form:"episode,omitempty" json:"episode,omitempty"`
 }
 
+// LookupAvailabilityJSONBody defines parameters for LookupAvailability.
+type LookupAvailabilityJSONBody = []AvailabilityTarget
+
 // PreviewMetadataParams defines parameters for PreviewMetadata.
 type PreviewMetadataParams struct {
 	Kind   MediaKind `form:"kind" json:"kind"`
@@ -5340,6 +5545,12 @@ type AddRootFolderJSONBody struct {
 type UpdateRootFolderJSONBody struct {
 	// Kind What a root folder holds (ADR 0009). "mixed" means the kind is not known, so adoption asks instead of assuming — the behaviour every root had before kinds existed.
 	Kind RootKind `json:"kind"`
+}
+
+// ConfirmLibraryVolumeJSONBody defines parameters for ConfirmLibraryVolume.
+type ConfirmLibraryVolumeJSONBody struct {
+	Acknowledged bool   `json:"acknowledged"`
+	Fingerprint  string `json:"fingerprint"`
 }
 
 // AbortDeploymentDrainJSONBody defines parameters for AbortDeploymentDrain.
@@ -5495,6 +5706,9 @@ type ResolveLibraryReviewFlagJSONRequestBody ResolveLibraryReviewFlagJSONBody
 // SetSeasonMonitoredJSONRequestBody defines body for SetSeasonMonitored for application/json ContentType.
 type SetSeasonMonitoredJSONRequestBody = MonitorRequest
 
+// LookupAvailabilityJSONRequestBody defines body for LookupAvailability for application/json ContentType.
+type LookupAvailabilityJSONRequestBody = LookupAvailabilityJSONBody
+
 // RecommendSeriesJSONRequestBody defines body for RecommendSeries for application/json ContentType.
 type RecommendSeriesJSONRequestBody = RecommendationRequest
 
@@ -5533,6 +5747,9 @@ type AddRootFolderJSONRequestBody AddRootFolderJSONBody
 
 // UpdateRootFolderJSONRequestBody defines body for UpdateRootFolder for application/json ContentType.
 type UpdateRootFolderJSONRequestBody UpdateRootFolderJSONBody
+
+// ConfirmLibraryVolumeJSONRequestBody defines body for ConfirmLibraryVolume for application/json ContentType.
+type ConfirmLibraryVolumeJSONRequestBody ConfirmLibraryVolumeJSONBody
 
 // UpdateSettingsJSONRequestBody defines body for UpdateSettings for application/json ContentType.
 type UpdateSettingsJSONRequestBody = SettingsUpdate
@@ -5581,6 +5798,12 @@ type ServerInterface interface {
 	// DiscoverItems One page of one Discover row
 	// (GET /discover/items)
 	DiscoverItems(w http.ResponseWriter, r *http.Request, params DiscoverItemsParams)
+	// ListLibraryDiscoverySeeds Page exact library movie and series identities usable as discovery seeds.
+	// (GET /discover/library/seeds)
+	ListLibraryDiscoverySeeds(w http.ResponseWriter, r *http.Request, params ListLibraryDiscoverySeedsParams)
+	// GetLibraryDiscoveryItems Read one bounded kind-aware shelf from an explicitly selected library seed.
+	// (GET /discover/library/{id}/items)
+	GetLibraryDiscoveryItems(w http.ResponseWriter, r *http.Request, id int64, params GetLibraryDiscoveryItemsParams)
 	// ListDiscoverLists The Discover catalogue
 	// (GET /discover/lists)
 	ListDiscoverLists(w http.ResponseWriter, r *http.Request)
@@ -5869,6 +6092,9 @@ type ServerInterface interface {
 	// ConfirmLibraryItemInCinema Ask cinema to confirm this item's files
 	// (POST /library/{id}/status/confirm)
 	ConfirmLibraryItemInCinema(w http.ResponseWriter, r *http.Request, id int64, params ConfirmLibraryItemInCinemaParams)
+	// LookupAvailability Read catalogue and observed primary-copy availability for exact identities.
+	// (POST /metadata/availability)
+	LookupAvailability(w http.ResponseWriter, r *http.Request)
 	// PreviewMetadata Read a title before adding, without loading episodes or writing library state
 	// (GET /metadata/preview)
 	PreviewMetadata(w http.ResponseWriter, r *http.Request, params PreviewMetadataParams)
@@ -6007,6 +6233,12 @@ type ServerInterface interface {
 	// UpdateRootFolder Retype a root folder (items already in it are untouched)
 	// (PATCH /rootfolders/{id})
 	UpdateRootFolder(w http.ResponseWriter, r *http.Request, id int64)
+	// PreviewLibraryVolume Owner review of the exact library volume binding, without mutations.
+	// (GET /rootfolders/{id}/volume)
+	PreviewLibraryVolume(w http.ResponseWriter, r *http.Request, id int64)
+	// ConfirmLibraryVolume Confirm a freshly observed library volume; never deletes filesystem data.
+	// (POST /rootfolders/{id}/volume)
+	ConfirmLibraryVolume(w http.ResponseWriter, r *http.Request, id int64)
 	// GetSettings Read settings (secrets masked)
 	// (GET /settings)
 	GetSettings(w http.ResponseWriter, r *http.Request)
@@ -6362,6 +6594,120 @@ func (siw *ServerInterfaceWrapper) DiscoverItems(w http.ResponseWriter, r *http.
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.DiscoverItems(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListLibraryDiscoverySeeds operation middleware
+func (siw *ServerInterfaceWrapper) ListLibraryDiscoverySeeds(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListLibraryDiscoverySeedsParams
+
+	// ------------- Optional query parameter "q" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "q", r.URL.Query(), &params.Q, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "q"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "q", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "offset" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "offset", r.URL.Query(), &params.Offset, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "offset"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "offset", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListLibraryDiscoverySeeds(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetLibraryDiscoveryItems operation middleware
+func (siw *ServerInterfaceWrapper) GetLibraryDiscoveryItems(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetLibraryDiscoveryItemsParams
+
+	// ------------- Required query parameter "kind" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "kind", r.URL.Query(), &params.Kind, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "kind"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "kind", Err: err})
+		}
+		return
+	}
+
+	// ------------- Required query parameter "tmdbId" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "tmdbId", r.URL.Query(), &params.TmdbId, runtime.BindQueryParameterOptions{Type: "integer", Format: "int64"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "tmdbId"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "tmdbId", Err: err})
+		}
+		return
+	}
+
+	// ------------- Required query parameter "shelf" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "shelf", r.URL.Query(), &params.Shelf, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "shelf"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "shelf", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetLibraryDiscoveryItems(w, r, id, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -8802,6 +9148,20 @@ func (siw *ServerInterfaceWrapper) ConfirmLibraryItemInCinema(w http.ResponseWri
 	handler.ServeHTTP(w, r)
 }
 
+// LookupAvailability operation middleware
+func (siw *ServerInterfaceWrapper) LookupAvailability(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.LookupAvailability(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // PreviewMetadata operation middleware
 func (siw *ServerInterfaceWrapper) PreviewMetadata(w http.ResponseWriter, r *http.Request) {
 
@@ -9998,6 +10358,58 @@ func (siw *ServerInterfaceWrapper) UpdateRootFolder(w http.ResponseWriter, r *ht
 	handler.ServeHTTP(w, r)
 }
 
+// PreviewLibraryVolume operation middleware
+func (siw *ServerInterfaceWrapper) PreviewLibraryVolume(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PreviewLibraryVolume(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ConfirmLibraryVolume operation middleware
+func (siw *ServerInterfaceWrapper) ConfirmLibraryVolume(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ConfirmLibraryVolume(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // GetSettings operation middleware
 func (siw *ServerInterfaceWrapper) GetSettings(w http.ResponseWriter, r *http.Request) {
 
@@ -10495,8 +10907,13 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/metadata/recommendations/status", wrapper.RecommendationStatus)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/metadata/recommendations/model/install", wrapper.InstallRecommendationModel)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/metadata/recommendations/model", wrapper.RemoveRecommendationModel)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/metadata/availability", wrapper.LookupAvailability)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/discover/library/seeds", wrapper.ListLibraryDiscoverySeeds)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/discover/library/{id}/items", wrapper.GetLibraryDiscoveryItems)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/discover/lists", wrapper.ListDiscoverLists)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/discover/items", wrapper.DiscoverItems)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/rootfolders/{id}/volume", wrapper.PreviewLibraryVolume)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/rootfolders/{id}/volume", wrapper.ConfirmLibraryVolume)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/rootfolders", wrapper.ListRootFolders)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/rootfolders", wrapper.AddRootFolder)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/rootfolders/{id}", wrapper.DeleteRootFolder)

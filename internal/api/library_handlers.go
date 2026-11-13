@@ -408,8 +408,15 @@ func (s *Server) ListLibrary(w http.ResponseWriter, r *http.Request, params apig
 		return
 	}
 	out := make([]apigen.MediaItemSummary, 0, len(items))
-	for _, m := range items {
-		out = append(out, summaryDTO(m))
+	targets := make([]domain.AvailabilityTarget, len(items))
+	for i, m := range items {
+		targets[i] = domain.AvailabilityTarget{LibraryItemID: m.ID, Kind: m.Kind, IDs: m.IDs}
+	}
+	facts := s.availabilityFacts(r.Context(), targets)
+	for i, m := range items {
+		dto := summaryDTO(m)
+		dto.Availability = ptrAvailability(availabilityDTO(facts[i]))
+		out = append(out, dto)
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -488,7 +495,10 @@ func (s *Server) GetLibraryItem(w http.ResponseWriter, r *http.Request, id int64
 		s.libraryErr(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, detailDTO(item))
+	dto := detailDTO(item)
+	facts := s.availabilityFacts(r.Context(), []domain.AvailabilityTarget{{LibraryItemID: item.ID, Kind: item.Kind, IDs: item.IDs}})
+	dto.Availability = ptrAvailability(availabilityDTO(facts[0]))
+	writeJSON(w, http.StatusOK, dto)
 }
 
 // AddLibraryAlias implements POST /library/{id}/aliases.
@@ -915,6 +925,7 @@ func (s *Server) SearchMetadata(w http.ResponseWriter, r *http.Request, params a
 		}
 		out = append(out, sr)
 	}
+	s.enrichAvailability(r.Context(), out)
 	writeJSON(w, http.StatusOK, out)
 }
 

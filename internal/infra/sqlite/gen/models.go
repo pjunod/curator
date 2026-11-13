@@ -291,6 +291,38 @@ type Job struct {
 	FinishedAt         int64
 }
 
+type LibraryPresenceBootstrapFile struct {
+	FileID         int64
+	MediaItemID    int64
+	CopyID         int64
+	Path           string
+	Size           int64
+	FileGeneration string
+}
+
+type LibraryPresenceObservation struct {
+	MediaItemID         int64
+	CopyID              int64
+	ItemRevision        int64
+	PresenceFingerprint string
+	SharedRevision      int64
+	RootID              int64
+	RootPath            string
+	RootIdentity        string
+	RootGeneration      int64
+	ScopePath           string
+	CheckedAt           int64
+	Valid               int64
+	PresentFileIds      string
+}
+
+type LibraryPresenceRoot struct {
+	RootID     int64
+	RootPath   string
+	Identity   string
+	Generation int64
+}
+
 type LibraryReviewFlag struct {
 	ID             int64
 	MediaItemID    int64

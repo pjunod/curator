@@ -98,7 +98,7 @@ func newLibraryServer(t *testing.T, provider ports.MetadataProvider) (http.Handl
 
 	srv := New(Deps{
 		Bus: b, Health: health.NewRegistry(nil), Scheduler: sched,
-		DB: fakeDB{v: 2}, Library: lib, Settings: db,
+		DB: fakeDB{v: 2}, Library: lib, Settings: db, Store: db,
 		Version: "test", DataDir: t.TempDir(),
 	})
 	return srv.Handler(), db

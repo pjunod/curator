@@ -1,8 +1,9 @@
+import { AvailabilityBadge } from '../AvailabilityBadge'
 import { SERIES_MONITOR_MODES, monitorLabel, type SeriesMonitorMode } from '../monitoring'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { MouseEvent } from 'react'
 import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Link, useNavigate, useParams, useSearch } from '@tanstack/react-router'
+import { Link, useNavigate, useParams, useSearch, useLocation } from '@tanstack/react-router'
 import {
   ACTIVE_DOWNLOAD_STATES,
   addLibraryAlias,
@@ -109,6 +110,7 @@ function IdentityPanel({ item }: { item: MediaItemDetail }) {
   }
   const aliases = item.aliases ?? []
   const [aliasesOpen, setAliasesOpen] = useState(() => aliases.length <= 3)
+  const aliasUserToggle = useRef(false)
   const sources = item.identitySources ?? []
   const add = useMutation({
     mutationFn: () => addLibraryAlias(item.id, title.trim(), searchable),
@@ -153,8 +155,12 @@ function IdentityPanel({ item }: { item: MediaItemDetail }) {
         <div>{sources.length > 0 ? sources.map((s) => `${s.source}: ${s.fetchedAt ? new Date(s.fetchedAt).toLocaleString() : s.lastError ? `failed — ${s.lastError}` : 'pending'}`).join(' · ') : <span className="muted">identity enrichment pending</span>}</div>
       </div>
       {aliases.length > 0 && (
-        <details open={aliasesOpen} onToggle={(event) => setAliasesOpen(event.currentTarget.open)}>
-          <summary>Alternate names ({aliases.length})</summary>
+        <details open={aliasesOpen} onToggle={(event) => {
+          const node=event.currentTarget;setAliasesOpen(node.open)
+          if(aliasUserToggle.current&&node.open)requestAnimationFrame(()=>node.scrollIntoView({block:'start',behavior:'instant'}))
+          aliasUserToggle.current=false
+        }}>
+          <summary onClick={()=>{aliasUserToggle.current=true}}>Alternate names ({aliases.length})</summary>
           <ul className="result-list">
             {aliases.map((alias) => (
               <li key={alias.id} className="result-note">
@@ -1215,6 +1221,7 @@ function FilesPanel({ item: m, onChanged }: { item: MediaItemDetail; onChanged: 
 
 export function MediaDetailPage() {
   const { id } = useParams({ from: '/library/$id' })
+  const location=useLocation()
   const search = useSearch({ from: '/library/$id' })
   const navigate = useNavigate()
   const qc = useQueryClient()
@@ -1240,6 +1247,17 @@ export function MediaDetailPage() {
     queryKey: ['library-item', id],
     queryFn: () => getLibraryItem(Number(id)),
   })
+  const seasonMatch=/^#?season-(\d+)$/.exec(location.hash)
+  const requestedSeason=seasonMatch?Number(seasonMatch[1]):undefined
+  const seasonReady=requestedSeason!==undefined&&item.data?.seasons.some(season=>season.number===requestedSeason)
+  useLayoutEffect(()=>{
+    if(!seasonReady||requestedSeason===undefined)return
+    setOpenSeasons(previous=>({...previous,[requestedSeason]:true}))
+    const node=document.getElementById(`season-${requestedSeason}`)
+    const disclosure=node?.closest('details');if(disclosure)disclosure.open=true
+    const frame=requestAnimationFrame(()=>{node?.scrollIntoView({block:'start'});node?.querySelector<HTMLButtonElement>('.season-toggle')?.focus({preventScroll:true})})
+    return()=>cancelAnimationFrame(frame)
+  },[id,location.hash,seasonReady,requestedSeason])
   const profiles = useQuery({ queryKey: ['profiles'], queryFn: getProfiles })
   const queue = useQuery({ queryKey: ['queue'], queryFn: getQueue, refetchInterval: 15_000 })
 
@@ -1472,6 +1490,8 @@ export function MediaDetailPage() {
             {m.runtime > 0 && <span>{m.runtime} min</span>}
             {m.genres.length > 0 && <span>{m.genres.join(', ')}</span>}
           </div>
+          <AvailabilityBadge value={m.availability} checked />
+          <p className="muted small">Availability covers the primary copy and known aired regular episodes.</p>
           <p className="detail-overview">{m.overview}</p>
 
           <div className="fact-grid">
@@ -1711,7 +1731,7 @@ export function MediaDetailPage() {
               // each episode's own flag (a re-acquired episode of a flagged season is wanted).
               const { episodes: episodesOffloaded, fully: seasonOffloaded } = seasonOffload(s)
               return (
-                <div key={s.number} className="season">
+                <div key={s.number} className="season" id={`season-${s.number}`} style={{scrollMarginTop:100}}>
                   <div className="season-head">
                     <input
                       type="checkbox"

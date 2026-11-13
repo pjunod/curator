@@ -633,6 +633,7 @@ func serve(ctx context.Context, cfg config.Config, log *slog.Logger, listener ne
 		Acquisition:         acq,
 		Pipeline:            pipe,
 		Discover:            browse,
+		LibraryDiscovery:    discover.NewLibrary(db, meta),
 		Recommendations:     recommendations,
 		RecommendationModel: encoder,
 		Store:               db,

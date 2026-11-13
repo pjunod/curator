@@ -1,3 +1,6 @@
+import { LibraryVolumeReview } from '../LibraryVolumeReview'
+import { ActionDialog, focusActionTrigger } from '../ActionDialog'
+import { useRef } from 'react'
 import { CompletedFolderSettings } from '../CompletedFolders'
 import { DiscoverySettings } from '../DiscoverySettings'
 import { useEffect, useState } from 'react'
@@ -30,6 +33,8 @@ import { MissingFolders } from '../MissingFolders'
 import { DiskScanControl } from '../DiskScan'
 
 export function SettingsPage() {
+  const [volume,setVolume]=useState<number|null>(null)
+  const volumeOpener=useRef<HTMLElement|null>(null)
   const [settingsTab, setSettingsTab] = useState<'general' | 'connections'>('general')
   const location = useLocation()
   useEffect(() => { setSettingsTab(['indexers', 'downloadclients', 'notifications'].includes(location.hash.replace(/^#/, '')) ? 'connections' : 'general') }, [location.hash])
@@ -133,6 +138,7 @@ export function SettingsPage() {
 
   return (
     <>
+      {volume!==null&&<ActionDialog title="Review library volume" returnFocus={volumeOpener} onClose={()=>setVolume(null)}><LibraryVolumeReview id={volume}/></ActionDialog>}
       <header className="page-head">
         <h1>Settings</h1>
       </header>
@@ -234,6 +240,7 @@ export function SettingsPage() {
           against the library, and anything it finds that no item claims is listed below as a
           candidate to match.
         </p>
+        <p className="muted small">Registering a root trusts its current volume. Review its volume binding after an intentional replacement; an unavailable mount is not an empty library.</p>
         <table>
           <thead>
             <tr>
@@ -298,7 +305,7 @@ export function SettingsPage() {
                     <span className="pill pill-error">unreachable</span>
                   )}
                 </td>
-                <td>
+                <td><button onClick={event=>{focusActionTrigger(event);volumeOpener.current=event.currentTarget;setVolume(rf.id)}}>Review volume</button>
                   <button onClick={() => delRoot.mutate(rf.id)}>Remove</button>
                 </td>
               </tr>

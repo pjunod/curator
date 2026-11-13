@@ -5,7 +5,6 @@ import (
 	"net/http"
 
 	apigen "github.com/pjunod/monarr/internal/api/gen"
-	"github.com/pjunod/monarr/internal/domain"
 	"github.com/pjunod/monarr/internal/ports"
 )
 
@@ -60,24 +59,8 @@ func (s *Server) DiscoverItems(w http.ResponseWriter, r *http.Request, params ap
 		return
 	}
 
-	// "Already in the library" is answered per kind, and a row is never
-	// mixed, so at most one lookup happens here however long the row is.
-	// Best-effort: an unreadable library marks nothing rather than failing
-	// the row — the cost of getting this wrong is an Add button that says
-	// Add for something already added, and the add itself still refuses.
-	known := map[domain.MediaKind]map[int64]struct{}{}
 	out := make([]apigen.SearchResult, 0, len(results))
 	for _, res := range results {
-		set, ok := known[res.Kind]
-		if !ok {
-			set, err = s.deps.Library.KnownTMDBIDs(r.Context(), res.Kind)
-			if err != nil {
-				s.deps.Log.Debug("discover: library unreadable, row is unmarked", "err", err)
-				set = map[int64]struct{}{}
-			}
-			known[res.Kind] = set
-		}
-		_, added := set[res.TMDBID]
 		sr := apigen.SearchResult{
 			Kind:       apigen.MediaKind(res.Kind),
 			TmdbId:     res.TMDBID,
@@ -85,7 +68,7 @@ func (s *Server) DiscoverItems(w http.ResponseWriter, r *http.Request, params ap
 			Year:       res.Year,
 			Overview:   res.Overview,
 			PosterPath: res.PosterPath,
-			InLibrary:  added,
+			InLibrary:  false,
 		}
 		sr.Source = optStr(res.Source)
 		if res.TVDBID != 0 {
@@ -94,5 +77,7 @@ func (s *Server) DiscoverItems(w http.ResponseWriter, r *http.Request, params ap
 		}
 		out = append(out, sr)
 	}
+	s.enrichAvailability(r.Context(), out)
+	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusOK, out)
 }

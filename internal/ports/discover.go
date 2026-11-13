@@ -62,3 +62,19 @@ type DiscoverProvider interface {
 	// An unpublished list id returns ErrUnknownList.
 	Discover(ctx context.Context, listID string, page int) ([]SearchResult, error)
 }
+
+// LibraryDiscoverySource is kind-aware. Movie IDs must never enter TV endpoints.
+// Each operation is bounded to one recommendation page or one collection.
+type LibraryDiscoverySource interface {
+	Related(context.Context, domain.MediaKind, int64) ([]SearchResult, error)
+	MovieCollection(context.Context, int64) (MovieCollection, error)
+}
+type MovieCollection struct {
+	ID    int64
+	Name  string
+	Items []SearchResult
+}
+type LibrarySeed struct {
+	LibraryItemID int64
+	Item          SearchResult
+}

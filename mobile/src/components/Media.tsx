@@ -1,3 +1,4 @@
+import { availabilityLabel } from '../availability'
 import { Image, Pressable, StyleSheet, Text, View } from 'react-native'
 import { completeness, posterUrl } from '../format'
 import type { ItemSize } from '../preferences'
@@ -37,7 +38,8 @@ export function LibraryCard({ item, width, itemSize, onPress }: { item: MediaIte
             ].filter(Boolean).join(' · ')
           : item.year || item.kind} {!item.monitored ? ' · unmonitored' : ''}
       </Text>
-      <Badge label={state.label} tone={state.tone} />
+      <Badge label={`Recorded files · ${state.label}`} tone="neutral" />
+      {item.kind!=='book'?<Badge label={availabilityLabel(item.availability)} tone={item.availability?.presence==='present'?'ok':'neutral'} />:null}
       {item.offloaded ? <Badge label={item.kind === 'series' ? `${item.offloadedEpisodes ?? 0} offloaded` : 'Offloaded'} tone="warning" /> : null}
     </Pressable>
   )
@@ -65,13 +67,13 @@ export function SearchCard({ item, itemSize, onAdd, onPreview, bookType, adding 
         {item.kind === 'book' && bookType && (item.bookTypes ?? []).includes(bookType) ? (
           <Badge label={`${bookType === 'audiobook' ? 'Audiobook' : 'Ebook'} in library`} tone="ok" />
         ) : item.inLibrary && item.kind !== 'book' ? (
-          <Badge label="In library" tone="ok" />
+          <Badge label={item.availability?availabilityLabel(item.availability):"In library"} tone={item.availability?.presence==='present'?'ok':'neutral'} />
         ) : (
           <Button
             compact
-            label={adding ? 'Adding…' : item.kind === 'book' && bookType ? `Add ${bookType}` : 'Add'}
+            label={item.availability&&item.availability.catalog!=='absent' ? 'Review library check' : adding ? 'Adding…' : item.kind === 'book' && bookType ? `Add ${bookType}` : 'Add'}
             disabled={adding}
-            onPress={onAdd}
+            onPress={item.availability&&item.availability.catalog!=='absent'?onPreview:onAdd}
           />
         )}
       </View>
