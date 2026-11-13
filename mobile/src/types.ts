@@ -54,6 +54,9 @@ export interface MediaItemSummary {
   bookType?: BookType
   bookTypes?: BookType[]
   bookEditions?: BookEditionSummary[]
+  /** Offloaded (ADR 0028): files deleted on purpose, title kept. A show: any episode offloaded. */
+  offloaded?: boolean
+  offloadedEpisodes?: number
   posterPath: string
   monitored: boolean
   path: string
@@ -83,12 +86,14 @@ export interface EpisodeInfo {
   title: string
   airDate: string
   monitored: boolean
+  offloaded?: boolean
   hasFile: boolean
 }
 
 export interface SeasonInfo {
   number: number
   monitored: boolean
+  offloaded?: boolean
   episodes: EpisodeInfo[]
 }
 
@@ -232,7 +237,7 @@ export interface AddMediaRequest {
   qualityProfileId?: number
   downloadPriority?: number
   monitored?: boolean
-  monitor?: 'all' | 'latest' | 'none'
+  monitor?: 'all' | 'latest' | 'first_season' | 'none'
   searchNow?: boolean
 }
 
@@ -588,7 +593,64 @@ export interface ItemStatus {
   attempts?: { downloadId: number; release: string; indexer?: string; at: number; outcome: string; reason?: string }[]
   seasons?: StatusSeason[]; episodes?: StatusEpisode[]
   rematch?: StatusRematch
+  offload?: StatusOffload
 }
+export interface StatusOffload {
+  operationId: string
+  state: OffloadState
+  scope: OffloadScope
+  label: string
+  headline: string
+  filesDone: number
+  filesTotal: number
+  bytesTotal: number
+  bytesFreed: number
+  failed?: string[]
+  error?: string
+  cinemaLine?: string
+  ended: boolean
+  stoppable: boolean
+}
+// Offload (ADR 0028): free the space, keep the title.
+export type OffloadScope = 'item' | 'season' | 'episode'
+export type OffloadState = 'deleting' | 'waiting' | 'retrying' | 'stopping' | 'complete' | 'cancelled' | 'failed'
+export interface OffloadRequest { scope: OffloadScope; season?: number; episodeId?: number; requestId?: string; fingerprint?: string }
+export interface OffloadFile { path: string; kind: 'media' | 'sidecar'; bytes: number; shared?: boolean; episodes?: string[] }
+export interface OffloadPreview {
+  item: { id: number; kind: string; title: string; year?: number }
+  scope: OffloadScope
+  label: string
+  files: OffloadFile[]
+  bytes: number
+  freed: number
+  freeBefore: number
+  freeAfter: number
+  root?: string
+  episodes?: string[]
+  widened?: string[]
+  cinema?: string
+  cinemaWarning?: boolean
+  blocked?: { reason: string; ref?: string; message: string; retry: boolean }
+  fingerprint: string
+  summary: string
+}
+export interface OffloadOperation {
+  operationId: string
+  requestId: string
+  state: OffloadState
+  itemId: number
+  scope: OffloadScope
+  label?: string
+  filesTotal: number
+  filesDone: number
+  failed?: string[]
+  bytesTotal: number
+  bytesFreed: number
+  lastError?: string
+  stoppable: boolean
+  cinemaLine?: string
+}
+export interface ReacquireResult { mediaItemId: number; state: 'searching' | 'downloading' | 'importing' | 'on_disk' | 'not_offloaded' | 'offloading' | 'offloaded'; cleared: boolean; message?: string }
 export interface StatusRematch {
   operationId: string
   state: 'planned' | 'moving' | 'moved' | 'committed' | 'cancel_pending' | 'complete' | 'cancelled' | 'failed'

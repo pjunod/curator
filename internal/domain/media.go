@@ -136,10 +136,15 @@ type MediaItem struct {
 	Source string
 
 	// Monitor is the persistent series policy; child flags remain user overrides.
-	Monitor          string
-	MonitorSince     string
-	MonitorSeason    int
-	Monitored        bool
+	Monitor       string
+	MonitorSince  string
+	MonitorSeason int
+	Monitored     bool
+	// OffloadedAt (unix ms, 0 = not offloaded) is a movie's Offload state
+	// (ADR 0028). It is not `Monitored`: that stays as the person set it, and
+	// Offloaded folds into the one Mon computation. Series keep it per season
+	// and episode.
+	OffloadedAt      int64
 	QualityProfileID int64
 	// DownloadPriority is the effective value after profile inheritance.
 	// DownloadPriorityOverride is non-nil only when this item replaces the
@@ -161,6 +166,11 @@ type MediaItem struct {
 	// file count for movies/books.
 	EpisodeCount     int
 	EpisodeFileCount int
+	// OffloadedEpisodes counts the show's offloaded episodes (list views only).
+	OffloadedEpisodes int
+	// OffloadedSeasons counts seasons flagged offloaded, including ones with no
+	// episode rows (list views only).
+	OffloadedSeasons int
 	FileCount        int
 	// Quality is the WEAKEST quality among the primary copy's files, and
 	// Upgrade is what the item's profile makes of it. The weakest rather
@@ -218,7 +228,9 @@ type Season struct {
 	ID        int64
 	Number    int
 	Monitored bool
-	Episodes  []Episode
+	// OffloadedAt: the whole season is offloaded (ADR 0028); 0 = not.
+	OffloadedAt int64
+	Episodes    []Episode
 }
 
 // Episode is one wanted unit of a series.
@@ -230,8 +242,36 @@ type Episode struct {
 	Title         string
 	AirDate       string // ISO date, "" if unknown
 	Monitored     bool
-	HasFile       bool
+	// OffloadedAt: this episode's files were offloaded (ADR 0028); 0 = not.
+	OffloadedAt int64
+	HasFile     bool
 }
+
+// Offloaded reports whether the episode is offloaded, on its own or through
+// its season.
+func (e Episode) Offloaded() bool { return e.OffloadedAt != 0 }
+
+// Offloaded reports whether the season flag is set. The flag only means "new
+// episodes inherit it" and "a season pack is not eligible"; whether an
+// episode is wanted depends on its own flag (see FullyOffloaded).
+func (s Season) Offloaded() bool { return s.OffloadedAt != 0 }
+
+// FullyOffloaded reports whether the season has episodes and every one of
+// them is offloaded: nothing in it is wanted.
+func (s Season) FullyOffloaded() bool {
+	if len(s.Episodes) == 0 {
+		return s.Offloaded()
+	}
+	for _, e := range s.Episodes {
+		if !e.Offloaded() {
+			return false
+		}
+	}
+	return true
+}
+
+// Offloaded reports whether a movie is offloaded.
+func (m MediaItem) Offloaded() bool { return m.OffloadedAt != 0 }
 
 // RootKind is what a root folder holds. It is MediaKind plus KindMixed,
 // which is a property of folders and never of items — hence a distinct type

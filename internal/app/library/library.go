@@ -26,7 +26,10 @@ import (
 
 // Errors surfaced to the API layer.
 var (
-	ErrAlreadyExists   = errors.New("item already in library")
+	ErrAlreadyExists = errors.New("item already in library")
+	// ErrOffloaded refuses to monitor an offloaded title (ADR 0028): Offload is
+	// its own state, and only Re-acquire brings it back.
+	ErrOffloaded       = errors.New("offloaded")
 	ErrUnsupportedKind = errors.New("kind not supported yet")
 	ErrNotFound        = sqlite.ErrNotFound
 	// ErrRootKindMismatch is returned when an item is placed in a root
@@ -858,6 +861,9 @@ func (s *Service) UpdateItem(ctx context.Context, id int64, req UpdateRequest) (
 		applyMonitorPreset(&item, *req.Monitor)
 	}
 	if req.Monitored != nil {
+		if *req.Monitored && item.Offloaded() {
+			return domain.MediaItem{}, fmt.Errorf("%w: %s is offloaded; Re-acquire it to download it again", ErrOffloaded, item.Title)
+		}
 		item.Monitored = *req.Monitored
 	}
 	if req.QualityProfileID != nil && *req.QualityProfileID != 0 {
@@ -980,13 +986,16 @@ func (s *Service) RefreshItem(ctx context.Context, id int64) (domain.MediaItem, 
 	// and NEW episodes appearing in them inherit it (existing episodes keep
 	// their own flag via the upsert). Brand-new seasons follow the series.
 	storedSeason := map[int]bool{}
+	wholeShowOffloaded := stored.Offloaded() // the stored item-scope intent, never inferred
 	for _, s := range stored.Seasons {
 		storedSeason[s.Number] = s.Monitored
 	}
 	for i := range fresh.Seasons {
 		mon, known := storedSeason[fresh.Seasons[i].Number]
 		if !known {
-			mon = monitorNewSeason(stored, fresh.Seasons[i].Number)
+			// A whole-show Offload (ADR 0028): a season found later arrives
+			// unmonitored, and not offloaded: it was never on disk.
+			mon = monitorNewSeason(stored, fresh.Seasons[i].Number) && !wholeShowOffloaded
 		}
 		fresh.Seasons[i].Monitored = mon
 		for j := range fresh.Seasons[i].Episodes {
@@ -1128,6 +1137,17 @@ func (s *Service) DeleteCopy(ctx context.Context, itemID, copyID int64) (domain.
 // SetSeasonMonitored flips a season's monitored flag (cascading to its
 // episodes) and returns the refreshed item.
 func (s *Service) SetSeasonMonitored(ctx context.Context, itemID int64, season int, monitored bool) (domain.MediaItem, error) {
+	if monitored {
+		item, err := s.db.GetMediaItemFull(ctx, itemID)
+		if err != nil {
+			return domain.MediaItem{}, err
+		}
+		for _, sn := range item.Seasons {
+			if sn.Number == season && sn.FullyOffloaded() {
+				return domain.MediaItem{}, fmt.Errorf("%w: season %d is offloaded; Re-acquire it to download it again", ErrOffloaded, season)
+			}
+		}
+	}
 	if err := s.db.SetSeasonMonitored(ctx, itemID, season, monitored); err != nil {
 		return domain.MediaItem{}, err
 	}
@@ -1138,6 +1158,19 @@ func (s *Service) SetSeasonMonitored(ctx context.Context, itemID int64, season i
 // SetEpisodeMonitored flips one episode's monitored flag and returns the
 // refreshed item.
 func (s *Service) SetEpisodeMonitored(ctx context.Context, itemID, episodeID int64, monitored bool) (domain.MediaItem, error) {
+	if monitored {
+		item, err := s.db.GetMediaItemFull(ctx, itemID)
+		if err != nil {
+			return domain.MediaItem{}, err
+		}
+		for _, sn := range item.Seasons {
+			for _, e := range sn.Episodes {
+				if e.ID == episodeID && e.Offloaded() {
+					return domain.MediaItem{}, fmt.Errorf("%w: that episode is offloaded; Re-acquire it to download it again", ErrOffloaded)
+				}
+			}
+		}
+	}
 	if err := s.db.SetEpisodeMonitored(ctx, itemID, episodeID, monitored); err != nil {
 		return domain.MediaItem{}, err
 	}

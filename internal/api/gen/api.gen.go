@@ -145,22 +145,22 @@ func (e DeliveryStatus) Valid() bool {
 
 // Defines values for DeploymentDrainStatusPhase.
 const (
-	Accepting DeploymentDrainStatusPhase = "accepting"
-	Drained   DeploymentDrainStatusPhase = "drained"
-	Draining  DeploymentDrainStatusPhase = "draining"
-	Stopping  DeploymentDrainStatusPhase = "stopping"
+	DeploymentDrainStatusPhaseAccepting DeploymentDrainStatusPhase = "accepting"
+	DeploymentDrainStatusPhaseDrained   DeploymentDrainStatusPhase = "drained"
+	DeploymentDrainStatusPhaseDraining  DeploymentDrainStatusPhase = "draining"
+	DeploymentDrainStatusPhaseStopping  DeploymentDrainStatusPhase = "stopping"
 )
 
 // Valid indicates whether the value is a known member of the DeploymentDrainStatusPhase enum.
 func (e DeploymentDrainStatusPhase) Valid() bool {
 	switch e {
-	case Accepting:
+	case DeploymentDrainStatusPhaseAccepting:
 		return true
-	case Drained:
+	case DeploymentDrainStatusPhaseDrained:
 		return true
-	case Draining:
+	case DeploymentDrainStatusPhaseDraining:
 		return true
-	case Stopping:
+	case DeploymentDrainStatusPhaseStopping:
 		return true
 	default:
 		return false
@@ -674,6 +674,150 @@ func (e NotifierInputType) Valid() bool {
 	}
 }
 
+// Defines values for OffloadBlockedReason.
+const (
+	OffloadBlockedReasonDownload    OffloadBlockedReason = "download"
+	OffloadBlockedReasonImport      OffloadBlockedReason = "import"
+	OffloadBlockedReasonOffload     OffloadBlockedReason = "offload"
+	OffloadBlockedReasonRematch     OffloadBlockedReason = "rematch"
+	OffloadBlockedReasonReplacement OffloadBlockedReason = "replacement"
+	OffloadBlockedReasonUnmounted   OffloadBlockedReason = "unmounted"
+)
+
+// Valid indicates whether the value is a known member of the OffloadBlockedReason enum.
+func (e OffloadBlockedReason) Valid() bool {
+	switch e {
+	case OffloadBlockedReasonDownload:
+		return true
+	case OffloadBlockedReasonImport:
+		return true
+	case OffloadBlockedReasonOffload:
+		return true
+	case OffloadBlockedReasonRematch:
+		return true
+	case OffloadBlockedReasonReplacement:
+		return true
+	case OffloadBlockedReasonUnmounted:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for OffloadFileKind.
+const (
+	Media   OffloadFileKind = "media"
+	Sidecar OffloadFileKind = "sidecar"
+)
+
+// Valid indicates whether the value is a known member of the OffloadFileKind enum.
+func (e OffloadFileKind) Valid() bool {
+	switch e {
+	case Media:
+		return true
+	case Sidecar:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for OffloadOperationScope.
+const (
+	OffloadOperationScopeEpisode OffloadOperationScope = "episode"
+	OffloadOperationScopeItem    OffloadOperationScope = "item"
+	OffloadOperationScopeSeason  OffloadOperationScope = "season"
+)
+
+// Valid indicates whether the value is a known member of the OffloadOperationScope enum.
+func (e OffloadOperationScope) Valid() bool {
+	switch e {
+	case OffloadOperationScopeEpisode:
+		return true
+	case OffloadOperationScopeItem:
+		return true
+	case OffloadOperationScopeSeason:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for OffloadOperationState.
+const (
+	OffloadOperationStateCancelled OffloadOperationState = "cancelled"
+	OffloadOperationStateComplete  OffloadOperationState = "complete"
+	OffloadOperationStateDeleting  OffloadOperationState = "deleting"
+	OffloadOperationStateFailed    OffloadOperationState = "failed"
+	OffloadOperationStateRetrying  OffloadOperationState = "retrying"
+	OffloadOperationStateStopping  OffloadOperationState = "stopping"
+	OffloadOperationStateWaiting   OffloadOperationState = "waiting"
+)
+
+// Valid indicates whether the value is a known member of the OffloadOperationState enum.
+func (e OffloadOperationState) Valid() bool {
+	switch e {
+	case OffloadOperationStateCancelled:
+		return true
+	case OffloadOperationStateComplete:
+		return true
+	case OffloadOperationStateDeleting:
+		return true
+	case OffloadOperationStateFailed:
+		return true
+	case OffloadOperationStateRetrying:
+		return true
+	case OffloadOperationStateStopping:
+		return true
+	case OffloadOperationStateWaiting:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for OffloadPreviewScope.
+const (
+	OffloadPreviewScopeEpisode OffloadPreviewScope = "episode"
+	OffloadPreviewScopeItem    OffloadPreviewScope = "item"
+	OffloadPreviewScopeSeason  OffloadPreviewScope = "season"
+)
+
+// Valid indicates whether the value is a known member of the OffloadPreviewScope enum.
+func (e OffloadPreviewScope) Valid() bool {
+	switch e {
+	case OffloadPreviewScopeEpisode:
+		return true
+	case OffloadPreviewScopeItem:
+		return true
+	case OffloadPreviewScopeSeason:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for OffloadRequestScope.
+const (
+	OffloadRequestScopeEpisode OffloadRequestScope = "episode"
+	OffloadRequestScopeItem    OffloadRequestScope = "item"
+	OffloadRequestScopeSeason  OffloadRequestScope = "season"
+)
+
+// Valid indicates whether the value is a known member of the OffloadRequestScope enum.
+func (e OffloadRequestScope) Valid() bool {
+	switch e {
+	case OffloadRequestScopeEpisode:
+		return true
+	case OffloadRequestScopeItem:
+		return true
+	case OffloadRequestScopeSeason:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for PipelineTimingKind.
 const (
 	FailureToNextGrab     PipelineTimingKind = "failure_to_next_grab"
@@ -699,6 +843,8 @@ func (e PipelineTimingKind) Valid() bool {
 const (
 	PlurxWatchedEventKindEpisode PlurxWatchedEventKind = "episode"
 	PlurxWatchedEventKindMovie   PlurxWatchedEventKind = "movie"
+	PlurxWatchedEventKindSeason  PlurxWatchedEventKind = "season"
+	PlurxWatchedEventKindShow    PlurxWatchedEventKind = "show"
 )
 
 // Valid indicates whether the value is a known member of the PlurxWatchedEventKind enum.
@@ -707,6 +853,10 @@ func (e PlurxWatchedEventKind) Valid() bool {
 	case PlurxWatchedEventKindEpisode:
 		return true
 	case PlurxWatchedEventKindMovie:
+		return true
+	case PlurxWatchedEventKindSeason:
+		return true
+	case PlurxWatchedEventKindShow:
 		return true
 	default:
 		return false
@@ -791,6 +941,39 @@ func (e QueuePublicationCleanupState) Valid() bool {
 	case QueuePublicationCleanupStateQueued:
 		return true
 	case QueuePublicationCleanupStateRunning:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ReacquireResultState.
+const (
+	ReacquireResultStateDownloading  ReacquireResultState = "downloading"
+	ReacquireResultStateImporting    ReacquireResultState = "importing"
+	ReacquireResultStateNotOffloaded ReacquireResultState = "not_offloaded"
+	ReacquireResultStateOffloaded    ReacquireResultState = "offloaded"
+	ReacquireResultStateOffloading   ReacquireResultState = "offloading"
+	ReacquireResultStateOnDisk       ReacquireResultState = "on_disk"
+	ReacquireResultStateSearching    ReacquireResultState = "searching"
+)
+
+// Valid indicates whether the value is a known member of the ReacquireResultState enum.
+func (e ReacquireResultState) Valid() bool {
+	switch e {
+	case ReacquireResultStateDownloading:
+		return true
+	case ReacquireResultStateImporting:
+		return true
+	case ReacquireResultStateNotOffloaded:
+		return true
+	case ReacquireResultStateOffloaded:
+		return true
+	case ReacquireResultStateOffloading:
+		return true
+	case ReacquireResultStateOnDisk:
+		return true
+	case ReacquireResultStateSearching:
 		return true
 	default:
 		return false
@@ -1020,6 +1203,7 @@ func (e RecommendationStatusModelState) Valid() bool {
 const (
 	RematchBlockedReasonDownload    RematchBlockedReason = "download"
 	RematchBlockedReasonImport      RematchBlockedReason = "import"
+	RematchBlockedReasonOffload     RematchBlockedReason = "offload"
 	RematchBlockedReasonRematch     RematchBlockedReason = "rematch"
 	RematchBlockedReasonReplacement RematchBlockedReason = "replacement"
 )
@@ -1030,6 +1214,8 @@ func (e RematchBlockedReason) Valid() bool {
 	case RematchBlockedReasonDownload:
 		return true
 	case RematchBlockedReasonImport:
+		return true
+	case RematchBlockedReasonOffload:
 		return true
 	case RematchBlockedReasonRematch:
 		return true
@@ -1204,17 +1390,20 @@ func (e ScanStatusState) Valid() bool {
 
 // Defines values for SeriesMonitorMode.
 const (
-	SeriesMonitorModeAll        SeriesMonitorMode = "all"
-	SeriesMonitorModeFuture     SeriesMonitorMode = "future"
-	SeriesMonitorModeLatest     SeriesMonitorMode = "latest"
-	SeriesMonitorModeNewSeasons SeriesMonitorMode = "new_seasons"
-	SeriesMonitorModeNone       SeriesMonitorMode = "none"
+	SeriesMonitorModeAll         SeriesMonitorMode = "all"
+	SeriesMonitorModeFirstSeason SeriesMonitorMode = "first_season"
+	SeriesMonitorModeFuture      SeriesMonitorMode = "future"
+	SeriesMonitorModeLatest      SeriesMonitorMode = "latest"
+	SeriesMonitorModeNewSeasons  SeriesMonitorMode = "new_seasons"
+	SeriesMonitorModeNone        SeriesMonitorMode = "none"
 )
 
 // Valid indicates whether the value is a known member of the SeriesMonitorMode enum.
 func (e SeriesMonitorMode) Valid() bool {
 	switch e {
 	case SeriesMonitorModeAll:
+		return true
+	case SeriesMonitorModeFirstSeason:
 		return true
 	case SeriesMonitorModeFuture:
 		return true
@@ -1250,6 +1439,60 @@ func (e StatusHeadlineState) Valid() bool {
 	case StatusHeadlineStateTodo:
 		return true
 	case StatusHeadlineStateWaiting:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for StatusOffloadScope.
+const (
+	StatusOffloadScopeEpisode StatusOffloadScope = "episode"
+	StatusOffloadScopeItem    StatusOffloadScope = "item"
+	StatusOffloadScopeSeason  StatusOffloadScope = "season"
+)
+
+// Valid indicates whether the value is a known member of the StatusOffloadScope enum.
+func (e StatusOffloadScope) Valid() bool {
+	switch e {
+	case StatusOffloadScopeEpisode:
+		return true
+	case StatusOffloadScopeItem:
+		return true
+	case StatusOffloadScopeSeason:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for StatusOffloadState.
+const (
+	StatusOffloadStateCancelled StatusOffloadState = "cancelled"
+	StatusOffloadStateComplete  StatusOffloadState = "complete"
+	StatusOffloadStateDeleting  StatusOffloadState = "deleting"
+	StatusOffloadStateFailed    StatusOffloadState = "failed"
+	StatusOffloadStateRetrying  StatusOffloadState = "retrying"
+	StatusOffloadStateStopping  StatusOffloadState = "stopping"
+	StatusOffloadStateWaiting   StatusOffloadState = "waiting"
+)
+
+// Valid indicates whether the value is a known member of the StatusOffloadState enum.
+func (e StatusOffloadState) Valid() bool {
+	switch e {
+	case StatusOffloadStateCancelled:
+		return true
+	case StatusOffloadStateComplete:
+		return true
+	case StatusOffloadStateDeleting:
+		return true
+	case StatusOffloadStateFailed:
+		return true
+	case StatusOffloadStateRetrying:
+		return true
+	case StatusOffloadStateStopping:
+		return true
+	case StatusOffloadStateWaiting:
 		return true
 	default:
 		return false
@@ -1426,19 +1669,19 @@ func (e TitleAliasRole) Valid() bool {
 
 // Defines values for TitleAliasScope.
 const (
-	Season               TitleAliasScope = "season"
-	UnsupportedNumbering TitleAliasScope = "unsupported_numbering"
-	Work                 TitleAliasScope = "work"
+	TitleAliasScopeSeason               TitleAliasScope = "season"
+	TitleAliasScopeUnsupportedNumbering TitleAliasScope = "unsupported_numbering"
+	TitleAliasScopeWork                 TitleAliasScope = "work"
 )
 
 // Valid indicates whether the value is a known member of the TitleAliasScope enum.
 func (e TitleAliasScope) Valid() bool {
 	switch e {
-	case Season:
+	case TitleAliasScopeSeason:
 		return true
-	case UnsupportedNumbering:
+	case TitleAliasScopeUnsupportedNumbering:
 		return true
-	case Work:
+	case TitleAliasScopeWork:
 		return true
 	default:
 		return false
@@ -1745,6 +1988,42 @@ func (e ListQueueParamsFilter) Valid() bool {
 	}
 }
 
+// Defines values for PlurxWebhook200JSONResponseBodyState.
+const (
+	PlurxWebhook200JSONResponseBodyStateDownloading  PlurxWebhook200JSONResponseBodyState = "downloading"
+	PlurxWebhook200JSONResponseBodyStateImporting    PlurxWebhook200JSONResponseBodyState = "importing"
+	PlurxWebhook200JSONResponseBodyStateNotFound     PlurxWebhook200JSONResponseBodyState = "not_found"
+	PlurxWebhook200JSONResponseBodyStateNotOffloaded PlurxWebhook200JSONResponseBodyState = "not_offloaded"
+	PlurxWebhook200JSONResponseBodyStateOffloaded    PlurxWebhook200JSONResponseBodyState = "offloaded"
+	PlurxWebhook200JSONResponseBodyStateOffloading   PlurxWebhook200JSONResponseBodyState = "offloading"
+	PlurxWebhook200JSONResponseBodyStateOnDisk       PlurxWebhook200JSONResponseBodyState = "on_disk"
+	PlurxWebhook200JSONResponseBodyStateSearching    PlurxWebhook200JSONResponseBodyState = "searching"
+)
+
+// Valid indicates whether the value is a known member of the PlurxWebhook200JSONResponseBodyState enum.
+func (e PlurxWebhook200JSONResponseBodyState) Valid() bool {
+	switch e {
+	case PlurxWebhook200JSONResponseBodyStateDownloading:
+		return true
+	case PlurxWebhook200JSONResponseBodyStateImporting:
+		return true
+	case PlurxWebhook200JSONResponseBodyStateNotFound:
+		return true
+	case PlurxWebhook200JSONResponseBodyStateNotOffloaded:
+		return true
+	case PlurxWebhook200JSONResponseBodyStateOffloaded:
+		return true
+	case PlurxWebhook200JSONResponseBodyStateOffloading:
+		return true
+	case PlurxWebhook200JSONResponseBodyStateOnDisk:
+		return true
+	case PlurxWebhook200JSONResponseBodyStateSearching:
+		return true
+	default:
+		return false
+	}
+}
+
 // AddAliasRequest defines model for AddAliasRequest.
 type AddAliasRequest struct {
 	Searchable *bool  `json:"searchable,omitempty"`
@@ -1766,7 +2045,7 @@ type AddMediaRequest struct {
 	ImdbId *string   `json:"imdbId,omitempty"`
 	Kind   MediaKind `json:"kind"`
 
-	// Monitor Persistent series policy. Applying a mode resets existing selections. All selects everything; latest selects the latest and later seasons; future selects episodes airing today or later; new_seasons selects seasons after the last season started before today; none clears selections. Specials start unmonitored. Refresh preserves manual selections.
+	// Monitor Persistent series policy. Applying a mode resets existing selections. All selects everything; latest selects the latest and later seasons; future selects episodes airing today or later; new_seasons selects seasons after the last season started before today; first_season selects only the lowest regular season (season 1 when none is known yet) and later seasons arrive unmonitored, ready to monitor or Re-acquire; none clears selections. Specials start unmonitored. Refresh preserves manual selections.
 	Monitor   *SeriesMonitorMode `json:"monitor,omitempty"`
 	Monitored *bool              `json:"monitored,omitempty"`
 
@@ -2336,8 +2615,11 @@ type EpisodeInfo struct {
 	HasFile       bool   `json:"hasFile"`
 	Id            int64  `json:"id"`
 	Monitored     bool   `json:"monitored"`
-	SeasonNumber  int    `json:"seasonNumber"`
-	Title         string `json:"title"`
+
+	// Offloaded Offloaded (ADR 0028); Re-acquire is the way back.
+	Offloaded    *bool  `json:"offloaded,omitempty"`
+	SeasonNumber int    `json:"seasonNumber"`
+	Title        string `json:"title"`
 }
 
 // EpisodeTarget defines model for EpisodeTarget.
@@ -2637,6 +2919,9 @@ type ItemStatus struct {
 	Kind        string         `json:"kind"`
 	MediaItemId int64          `json:"mediaItemId"`
 
+	// Offload The open Offload deleting this title's files (the panel's "Offloading files" block), and once it is over its final stage "Offloaded <date> · <bytes> freed" until dismissed. Stop is POST /offload/{operationId}/cancel, dismiss POST /offload/{operationId}/dismiss.
+	Offload *StatusOffload `json:"offload,omitempty"`
+
 	// Rematch The open Re-match moving files out of or into this item (the panel's "Moving files" block). Stop is POST /rematch/{operationId}/cancel.
 	Rematch *StatusRematch  `json:"rematch,omitempty"`
 	Seasons *[]StatusSeason `json:"seasons,omitempty"`
@@ -2851,12 +3136,15 @@ type MediaItemDetail struct {
 	Ids                      ExternalIds            `json:"ids"`
 	Kind                     MediaKind              `json:"kind"`
 
-	// Monitor Persistent series policy. Applying a mode resets existing selections. All selects everything; latest selects the latest and later seasons; future selects episodes airing today or later; new_seasons selects seasons after the last season started before today; none clears selections. Specials start unmonitored. Refresh preserves manual selections.
-	Monitor    *SeriesMonitorMode `json:"monitor,omitempty"`
-	Monitored  bool               `json:"monitored"`
-	Overview   string             `json:"overview"`
-	Path       string             `json:"path"`
-	PosterPath string             `json:"posterPath"`
+	// Monitor Persistent series policy. Applying a mode resets existing selections. All selects everything; latest selects the latest and later seasons; future selects episodes airing today or later; new_seasons selects seasons after the last season started before today; first_season selects only the lowest regular season (season 1 when none is known yet) and later seasons arrive unmonitored, ready to monitor or Re-acquire; none clears selections. Specials start unmonitored. Refresh preserves manual selections.
+	Monitor   *SeriesMonitorMode `json:"monitor,omitempty"`
+	Monitored bool               `json:"monitored"`
+
+	// Offloaded A movie that is offloaded (ADR 0028). Seasons and episodes carry their own.
+	Offloaded  *bool  `json:"offloaded,omitempty"`
+	Overview   string `json:"overview"`
+	Path       string `json:"path"`
+	PosterPath string `json:"posterPath"`
 
 	// Quality The weakest quality among the primary copy's files ("1080p WEB-DL"); empty when nothing is on disk or no quality was recorded. Weakest because that is what decides whether the item is still being hunted.
 	Quality          *string `json:"quality,omitempty"`
@@ -2921,12 +3209,18 @@ type MediaItemSummary struct {
 	EpisodeFileCount int `json:"episodeFileCount"`
 
 	// FileCount Files on disk for the item (movies/books completeness).
-	FileCount  int       `json:"fileCount"`
-	Id         int64     `json:"id"`
-	Kind       MediaKind `json:"kind"`
-	Monitored  bool      `json:"monitored"`
-	Path       string    `json:"path"`
-	PosterPath string    `json:"posterPath"`
+	FileCount int       `json:"fileCount"`
+	Id        int64     `json:"id"`
+	Kind      MediaKind `json:"kind"`
+	Monitored bool      `json:"monitored"`
+
+	// Offloaded Offloaded (ADR 0028): a movie whose files were deleted on purpose, or a show with any offloaded episode (see offloadedEpisodes).
+	Offloaded *bool `json:"offloaded,omitempty"`
+
+	// OffloadedEpisodes Shows only; the number of offloaded episodes.
+	OffloadedEpisodes *int   `json:"offloadedEpisodes,omitempty"`
+	Path              string `json:"path"`
+	PosterPath        string `json:"posterPath"`
 
 	// Quality The WEAKEST quality among the item's files, rendered for display ("1080p WEB-DL"); empty when nothing is on disk or no file's quality was recorded. Weakest rather than best because that is what decides whether the item is still being hunted.
 	Quality *string `json:"quality,omitempty"`
@@ -3058,6 +3352,139 @@ type NotifierTestResult struct {
 	Message *string `json:"message,omitempty"`
 }
 
+// OffloadBlocked defines model for OffloadBlocked.
+type OffloadBlocked struct {
+	Message string               `json:"message"`
+	Reason  OffloadBlockedReason `json:"reason"`
+	Ref     *string              `json:"ref,omitempty"`
+	Retry   bool                 `json:"retry"`
+}
+
+// OffloadBlockedReason defines model for OffloadBlocked.Reason.
+type OffloadBlockedReason string
+
+// OffloadConflict defines model for OffloadConflict.
+type OffloadConflict struct {
+	Blocked *OffloadBlocked `json:"blocked,omitempty"`
+	Code    *string         `json:"code,omitempty"`
+	Message string          `json:"message"`
+}
+
+// OffloadFile defines model for OffloadFile.
+type OffloadFile struct {
+	Bytes int64 `json:"bytes"`
+
+	// Episodes S01E02 labels.
+	Episodes *[]string       `json:"episodes,omitempty"`
+	Kind     OffloadFileKind `json:"kind"`
+	Path     string          `json:"path"`
+
+	// Shared Another hard link keeps the bytes allocated (a seeding copy).
+	Shared *bool `json:"shared,omitempty"`
+}
+
+// OffloadFileKind defines model for OffloadFile.Kind.
+type OffloadFileKind string
+
+// OffloadOperation defines model for OffloadOperation.
+type OffloadOperation struct {
+	BytesFreed int64 `json:"bytesFreed"`
+	BytesTotal int64 `json:"bytesTotal"`
+	Cinema     *[]struct {
+		Directory *string `json:"directory,omitempty"`
+		LastError *string `json:"lastError,omitempty"`
+		Result    *string `json:"result,omitempty"`
+		Status    *string `json:"status,omitempty"`
+		VisibleAt *int64  `json:"visibleAt,omitempty"`
+	} `json:"cinema,omitempty"`
+	CinemaLine  *string   `json:"cinemaLine,omitempty"`
+	CreatedAt   int64     `json:"createdAt"`
+	Failed      *[]string `json:"failed,omitempty"`
+	FilesDone   int       `json:"filesDone"`
+	FilesTotal  int       `json:"filesTotal"`
+	ItemId      int64     `json:"itemId"`
+	Label       *string   `json:"label,omitempty"`
+	LastError   *string   `json:"lastError,omitempty"`
+	OperationId string    `json:"operationId"`
+
+	// Plan The stored request and preview.
+	Plan      *map[string]interface{} `json:"plan,omitempty"`
+	RequestId string                  `json:"requestId"`
+	Result    *map[string]interface{} `json:"result,omitempty"`
+	Scope     OffloadOperationScope   `json:"scope"`
+
+	// State waiting = the share is not mounted (nothing is marked deleted); retrying = an unlink failed (see failed); both resume by themselves.
+	State     OffloadOperationState `json:"state"`
+	Stoppable bool                  `json:"stoppable"`
+	UpdatedAt int64                 `json:"updatedAt"`
+}
+
+// OffloadOperationScope defines model for OffloadOperation.Scope.
+type OffloadOperationScope string
+
+// OffloadOperationState waiting = the share is not mounted (nothing is marked deleted); retrying = an unlink failed (see failed); both resume by themselves.
+type OffloadOperationState string
+
+// OffloadPreview defines model for OffloadPreview.
+type OffloadPreview struct {
+	Blocked *OffloadBlocked `json:"blocked,omitempty"`
+
+	// Bytes Every byte deleted.
+	Bytes int64 `json:"bytes"`
+
+	// Cinema What Cinema will do. Advisory.
+	Cinema *string `json:"cinema,omitempty"`
+
+	// CinemaWarning True when Cinema will drop the title and its watch history (it does not advertise offload).
+	CinemaWarning *bool `json:"cinemaWarning,omitempty"`
+
+	// Episodes What becomes offloaded
+	Episodes    *[]string     `json:"episodes,omitempty"`
+	Files       []OffloadFile `json:"files"`
+	Fingerprint string        `json:"fingerprint"`
+	FreeAfter   int64         `json:"freeAfter"`
+
+	// FreeBefore Library volume free bytes; -1 unknown.
+	FreeBefore int64 `json:"freeBefore"`
+
+	// Freed What returns to the volume now (hard-linked bytes are not counted until the other link goes).
+	Freed int64 `json:"freed"`
+
+	// Item {id, kind, title, year}.
+	Item    map[string]interface{} `json:"item"`
+	Label   string                 `json:"label"`
+	Root    *string                `json:"root,omitempty"`
+	Scope   OffloadPreviewScope    `json:"scope"`
+	Summary string                 `json:"summary"`
+
+	// Widened Episodes the request did not name but a multi-episode file takes with it.
+	Widened *[]string `json:"widened,omitempty"`
+}
+
+// OffloadPreviewScope defines model for OffloadPreview.Scope.
+type OffloadPreviewScope string
+
+// OffloadRequest defines model for OffloadRequest.
+type OffloadRequest struct {
+	// EpisodeId Scope episode: the episode's id.
+	EpisodeId *int64 `json:"episodeId,omitempty"`
+
+	// Fingerprint Execution only: the preview's fingerprint; a library that changed since refuses with 409 stale.
+	Fingerprint *string `json:"fingerprint,omitempty"`
+
+	// RequestId Execution only: idempotency key.
+	RequestId *string `json:"requestId,omitempty"`
+
+	// Scope item is the whole movie or show.
+	Scope OffloadRequestScope `json:"scope"`
+
+	// Season Scope season: the season number.
+	Season *int `json:"season,omitempty"`
+}
+
+// OffloadRequestScope item is the whole movie or show.
+type OffloadRequestScope string
+
 // PathMapping defines model for PathMapping.
 type PathMapping struct {
 	// Local Same location as Monarr sees it.
@@ -3111,23 +3538,25 @@ type PlacementSuggestion struct {
 type PlurxWatchedEvent struct {
 	Episode *int `json:"episode,omitempty"`
 
-	// Event "watched" today; the field exists so the route can grow others.
-	Event  string                `json:"event"`
-	Imdb   *string               `json:"imdb,omitempty"`
+	// Event `watched` (the default), `reacquire`, or `reacquire_status`. An event this build does not know is accepted and dropped.
+	Event string  `json:"event"`
+	Imdb  *string `json:"imdb,omitempty"`
+
+	// Kind watched: movie or episode. reacquire / reacquire_status: movie, show, season or episode (ids as for watched: movie tmdb/imdb; show, season and episode use the SHOW's tmdb plus season and episode).
 	Kind   PlurxWatchedEventKind `json:"kind"`
 	Season *int                  `json:"season,omitempty"`
 
-	// Tmdb For an episode this is the SHOW's id, not the episode's.
+	// Tmdb For an episode, season or show this is the SHOW's id, not the episode's.
 	Tmdb *int64 `json:"tmdb,omitempty"`
 
 	// User The plurx username. Per the §11.1 decision the signal is per-user; this is plurx's user, not a Monarr account, and Monarr does not create one.
 	User *string `json:"user,omitempty"`
 
-	// WatchedAt Unix seconds.
-	WatchedAt int64 `json:"watched_at"`
+	// WatchedAt Unix seconds. Required for `watched`.
+	WatchedAt *int64 `json:"watched_at,omitempty"`
 }
 
-// PlurxWatchedEventKind defines model for PlurxWatchedEvent.Kind.
+// PlurxWatchedEventKind watched: movie or episode. reacquire / reacquire_status: movie, show, season or episode (ids as for watched: movie tmdb/imdb; show, season and episode use the SHOW's tmdb plus season and episode).
 type PlurxWatchedEventKind string
 
 // ProfileInput defines model for ProfileInput.
@@ -3393,6 +3822,18 @@ type Rating struct {
 	Value float32 `json:"value"`
 	Votes *int    `json:"votes,omitempty"`
 }
+
+// ReacquireResult defines model for ReacquireResult.
+type ReacquireResult struct {
+	// Cleared This call cleared offloaded.
+	Cleared     bool                 `json:"cleared"`
+	MediaItemId int64                `json:"mediaItemId"`
+	Message     *string              `json:"message,omitempty"`
+	State       ReacquireResultState `json:"state"`
+}
+
+// ReacquireResultState defines model for ReacquireResult.State.
+type ReacquireResultState string
 
 // RecommendationApplied defines model for RecommendationApplied.
 type RecommendationApplied struct {
@@ -3982,9 +4423,12 @@ type SeasonInfo struct {
 	Episodes  []EpisodeInfo `json:"episodes"`
 	Monitored bool          `json:"monitored"`
 	Number    int           `json:"number"`
+
+	// Offloaded Offloaded (ADR 0028); Re-acquire is the way back.
+	Offloaded *bool `json:"offloaded,omitempty"`
 }
 
-// SeriesMonitorMode Persistent series policy. Applying a mode resets existing selections. All selects everything; latest selects the latest and later seasons; future selects episodes airing today or later; new_seasons selects seasons after the last season started before today; none clears selections. Specials start unmonitored. Refresh preserves manual selections.
+// SeriesMonitorMode Persistent series policy. Applying a mode resets existing selections. All selects everything; latest selects the latest and later seasons; future selects episodes airing today or later; new_seasons selects seasons after the last season started before today; first_season selects only the lowest regular season (season 1 when none is known yet) and later seasons arrive unmonitored, ready to monitor or Re-acquire; none clears selections. Specials start unmonitored. Refresh preserves manual selections.
 type SeriesMonitorMode string
 
 // Settings defines model for Settings.
@@ -4130,6 +4574,40 @@ type StatusHeadline struct {
 
 // StatusHeadlineState defines model for StatusHeadline.State.
 type StatusHeadlineState string
+
+// StatusOffload The open Offload deleting this title's files (the panel's "Offloading files" block), and once it is over its final stage "Offloaded <date> · <bytes> freed" until dismissed. Stop is POST /offload/{operationId}/cancel, dismiss POST /offload/{operationId}/dismiss.
+type StatusOffload struct {
+	BytesFreed int64 `json:"bytesFreed"`
+	BytesTotal int64 `json:"bytesTotal"`
+	Cinema     *[]struct {
+		Directory *string `json:"directory,omitempty"`
+		LastError *string `json:"lastError,omitempty"`
+		Result    *string `json:"result,omitempty"`
+		Status    *string `json:"status,omitempty"`
+		VisibleAt *int64  `json:"visibleAt,omitempty"`
+	} `json:"cinema,omitempty"`
+	CinemaLine *string `json:"cinemaLine,omitempty"`
+	Ended      bool    `json:"ended"`
+
+	// Error The plain reason it is waiting or retrying.
+	Error       *string            `json:"error,omitempty"`
+	Failed      *[]string          `json:"failed,omitempty"`
+	FilesDone   int                `json:"filesDone"`
+	FilesTotal  int                `json:"filesTotal"`
+	FinishedAt  *int64             `json:"finishedAt,omitempty"`
+	Headline    string             `json:"headline"`
+	Label       string             `json:"label"`
+	OperationId string             `json:"operationId"`
+	Scope       StatusOffloadScope `json:"scope"`
+	State       StatusOffloadState `json:"state"`
+	Stoppable   bool               `json:"stoppable"`
+}
+
+// StatusOffloadScope defines model for StatusOffload.Scope.
+type StatusOffloadScope string
+
+// StatusOffloadState defines model for StatusOffload.State.
+type StatusOffloadState string
 
 // StatusRematch The open Re-match moving files out of or into this item (the panel's "Moving files" block). Stop is POST /rematch/{operationId}/cancel.
 type StatusRematch struct {
@@ -4330,7 +4808,7 @@ type UpdateMediaItemRequest struct {
 	// InheritDownloadPriority Clear the per-item override and inherit from the quality profile.
 	InheritDownloadPriority *bool `json:"inheritDownloadPriority,omitempty"`
 
-	// Monitor Persistent series policy. Applying a mode resets existing selections. All selects everything; latest selects the latest and later seasons; future selects episodes airing today or later; new_seasons selects seasons after the last season started before today; none clears selections. Specials start unmonitored. Refresh preserves manual selections.
+	// Monitor Persistent series policy. Applying a mode resets existing selections. All selects everything; latest selects the latest and later seasons; future selects episodes airing today or later; new_seasons selects seasons after the last season started before today; first_season selects only the lowest regular season (season 1 when none is known yet) and later seasons arrive unmonitored, ready to monitor or Re-acquire; none clears selections. Specials start unmonitored. Refresh preserves manual selections.
 	Monitor   *SeriesMonitorMode `json:"monitor,omitempty"`
 	Monitored *bool              `json:"monitored,omitempty"`
 
@@ -4779,6 +5257,9 @@ type ListWantedSearchResultsParams struct {
 	Offset *int `form:"offset,omitempty" json:"offset,omitempty"`
 }
 
+// PlurxWebhook200JSONResponseBodyState defines parameters for PlurxWebhook.
+type PlurxWebhook200JSONResponseBodyState string
+
 // LoginJSONRequestBody defines body for Login for application/json ContentType.
 type LoginJSONRequestBody LoginJSONBody
 
@@ -4883,6 +5364,15 @@ type StartReplacementFileObservationJSONRequestBody = ReplacementObservationRequ
 
 // ReportLibraryFileJSONRequestBody defines body for ReportLibraryFile for application/json ContentType.
 type ReportLibraryFileJSONRequestBody = LibraryFileReportRequest
+
+// StartOffloadJSONRequestBody defines body for StartOffload for application/json ContentType.
+type StartOffloadJSONRequestBody = OffloadRequest
+
+// PreviewOffloadJSONRequestBody defines body for PreviewOffload for application/json ContentType.
+type PreviewOffloadJSONRequestBody = OffloadRequest
+
+// ReacquireLibraryItemJSONRequestBody defines body for ReacquireLibraryItem for application/json ContentType.
+type ReacquireLibraryItemJSONRequestBody = OffloadRequest
 
 // StartRematchJSONRequestBody defines body for StartRematch for application/json ContentType.
 type StartRematchJSONRequestBody = RematchRequest
@@ -5213,12 +5703,24 @@ type ServerInterface interface {
 	// ReportLibraryFile Record a review flag for existing library media
 	// (POST /library/{id}/files/{fileId}/report)
 	ReportLibraryFile(w http.ResponseWriter, r *http.Request, id int64, fileId int64)
+	// GetLibraryOffload The open Offload of this title
+	// (GET /library/{id}/offload)
+	GetLibraryOffload(w http.ResponseWriter, r *http.Request, id int64)
+	// StartOffload Execute a previewed Offload (idempotent by requestId)
+	// (POST /library/{id}/offload)
+	StartOffload(w http.ResponseWriter, r *http.Request, id int64)
+	// PreviewOffload What an Offload would delete (ADR 0028); no side effects
+	// (POST /library/{id}/offload/preview)
+	PreviewOffload(w http.ResponseWriter, r *http.Request, id int64)
 	// GetLibraryPlacementSuggestion Suggest the default root and exact folder for an existing item
 	// (GET /library/{id}/placement-suggestion)
 	GetLibraryPlacementSuggestion(w http.ResponseWriter, r *http.Request, id int64)
 	// ReprobeLibraryItem Re-measure this item's files
 	// (POST /library/{id}/probe)
 	ReprobeLibraryItem(w http.ResponseWriter, r *http.Request, id int64)
+	// ReacquireLibraryItem Get an offloaded title, season or episode back (ADR 0028)
+	// (POST /library/{id}/reacquire)
+	ReacquireLibraryItem(w http.ResponseWriter, r *http.Request, id int64)
 	// RefreshLibraryItem Re-hydrate this item's metadata from its provider
 	// (POST /library/{id}/refresh)
 	RefreshLibraryItem(w http.ResponseWriter, r *http.Request, id int64)
@@ -5303,6 +5805,15 @@ type ServerInterface interface {
 	// TestNotifierByID Send a test notification using the SAVED config
 	// (POST /notifiers/{id}/test)
 	TestNotifierByID(w http.ResponseWriter, r *http.Request, id int64)
+	// GetOffload An Offload's state, files deleted, bytes freed and Cinema confirmation
+	// (GET /offload/{operationId})
+	GetOffload(w http.ResponseWriter, r *http.Request, operationId string)
+	// CancelOffload Stop an Offload; what is already deleted stays deleted
+	// (POST /offload/{operationId}/cancel)
+	CancelOffload(w http.ResponseWriter, r *http.Request, operationId string)
+	// DismissOffload Hide a finished Offload from the item page's status panel
+	// (POST /offload/{operationId}/dismiss)
+	DismissOffload(w http.ResponseWriter, r *http.Request, operationId string)
 	// ListProfiles List quality profiles
 	// (GET /profiles)
 	ListProfiles(w http.ResponseWriter, r *http.Request)
@@ -7511,6 +8022,84 @@ func (siw *ServerInterfaceWrapper) ReportLibraryFile(w http.ResponseWriter, r *h
 	handler.ServeHTTP(w, r)
 }
 
+// GetLibraryOffload operation middleware
+func (siw *ServerInterfaceWrapper) GetLibraryOffload(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetLibraryOffload(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// StartOffload operation middleware
+func (siw *ServerInterfaceWrapper) StartOffload(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.StartOffload(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PreviewOffload operation middleware
+func (siw *ServerInterfaceWrapper) PreviewOffload(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PreviewOffload(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // GetLibraryPlacementSuggestion operation middleware
 func (siw *ServerInterfaceWrapper) GetLibraryPlacementSuggestion(w http.ResponseWriter, r *http.Request) {
 
@@ -7554,6 +8143,32 @@ func (siw *ServerInterfaceWrapper) ReprobeLibraryItem(w http.ResponseWriter, r *
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.ReprobeLibraryItem(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ReacquireLibraryItem operation middleware
+func (siw *ServerInterfaceWrapper) ReacquireLibraryItem(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ReacquireLibraryItem(w, r, id)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -8365,6 +8980,84 @@ func (siw *ServerInterfaceWrapper) TestNotifierByID(w http.ResponseWriter, r *ht
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.TestNotifierByID(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetOffload operation middleware
+func (siw *ServerInterfaceWrapper) GetOffload(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "operationId" -------------
+	var operationId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "operationId", r.PathValue("operationId"), &operationId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "operationId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetOffload(w, r, operationId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CancelOffload operation middleware
+func (siw *ServerInterfaceWrapper) CancelOffload(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "operationId" -------------
+	var operationId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "operationId", r.PathValue("operationId"), &operationId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "operationId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CancelOffload(w, r, operationId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DismissOffload operation middleware
+func (siw *ServerInterfaceWrapper) DismissOffload(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "operationId" -------------
+	var operationId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "operationId", r.PathValue("operationId"), &operationId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "operationId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DismissOffload(w, r, operationId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -9693,6 +10386,13 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/rematch/{operationId}", wrapper.GetRematch)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/rematch/{operationId}/cancel", wrapper.CancelRematch)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/rematch/{operationId}/dismiss", wrapper.DismissRematch)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/library/{id}/offload/preview", wrapper.PreviewOffload)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/library/{id}/offload", wrapper.GetLibraryOffload)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/library/{id}/offload", wrapper.StartOffload)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/library/{id}/reacquire", wrapper.ReacquireLibraryItem)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/offload/{operationId}", wrapper.GetOffload)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/offload/{operationId}/cancel", wrapper.CancelOffload)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/offload/{operationId}/dismiss", wrapper.DismissOffload)
 	m.HandleFunc(http.MethodPatch+" "+options.BaseURL+"/library/{id}/seasons/{season}", wrapper.SetSeasonMonitored)
 	m.HandleFunc(http.MethodPatch+" "+options.BaseURL+"/library/{id}/episodes/{episodeId}", wrapper.SetEpisodeMonitored)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/library/{id}/refresh", wrapper.RefreshLibraryItem)

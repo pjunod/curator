@@ -53,6 +53,8 @@ func (s *Server) libraryErr(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusBadRequest, err.Error())
 	case errors.Is(err, library.ErrRootKindMismatch):
 		writeError(w, http.StatusBadRequest, err.Error())
+	case errors.Is(err, library.ErrOffloaded):
+		writeCodedError(w, http.StatusConflict, "offloaded", err.Error())
 	case errors.Is(err, library.ErrInvalidInput):
 		writeError(w, http.StatusBadRequest, err.Error())
 	case errors.Is(err, ports.ErrProviderNotConfigured):
@@ -156,21 +158,23 @@ func bookEditionsDTO(m domain.MediaItem) *[]apigen.BookEditionSummary {
 
 func summaryDTO(m domain.MediaItem) apigen.MediaItemSummary {
 	out := apigen.MediaItemSummary{
-		Id:               m.ID,
-		Kind:             apigen.MediaKind(m.Kind),
-		Title:            m.Title,
-		Year:             m.Year,
-		Author:           m.Author,
-		PosterPath:       m.PosterPath,
-		Monitored:        m.Monitored,
-		Path:             m.Path,
-		Rating:           float32(m.Rating),
-		RatingVotes:      m.RatingVotes,
-		Ratings:          ratingsDTO(m.Ratings),
-		EpisodeCount:     m.EpisodeCount,
-		EpisodeFileCount: m.EpisodeFileCount,
-		FileCount:        m.FileCount,
-		AddedAt:          m.AddedAt,
+		Id:                m.ID,
+		Kind:              apigen.MediaKind(m.Kind),
+		Title:             m.Title,
+		Year:              m.Year,
+		Author:            m.Author,
+		PosterPath:        m.PosterPath,
+		Monitored:         m.Monitored,
+		Offloaded:         offloadedFlag(m.Offloaded() || m.OffloadedEpisodes > 0 || m.OffloadedSeasons > 0),
+		OffloadedEpisodes: offloadedCount(m.OffloadedEpisodes),
+		Path:              m.Path,
+		Rating:            float32(m.Rating),
+		RatingVotes:       m.RatingVotes,
+		Ratings:           ratingsDTO(m.Ratings),
+		EpisodeCount:      m.EpisodeCount,
+		EpisodeFileCount:  m.EpisodeFileCount,
+		FileCount:         m.FileCount,
+		AddedAt:           m.AddedAt,
 	}
 	out.Source = optStr(m.Source)
 	out.BookType = bookTypeDTO(m)
@@ -237,6 +241,7 @@ func detailDTO(m domain.MediaItem) apigen.MediaItemDetail {
 		Ratings:                  ratingsDTO(m.Ratings),
 		Monitor:                  monitor,
 		Monitored:                m.Monitored,
+		Offloaded:                offloadedFlag(m.Offloaded()),
 		QualityProfileId:         m.QualityProfileID,
 		DownloadPriority:         m.DownloadPriority,
 		DownloadPriorityOverride: m.DownloadPriorityOverride,
@@ -271,6 +276,7 @@ func detailDTO(m domain.MediaItem) apigen.MediaItemDetail {
 		si := apigen.SeasonInfo{
 			Number:    season.Number,
 			Monitored: season.Monitored,
+			Offloaded: offloadedFlag(season.Offloaded()),
 			Episodes:  []apigen.EpisodeInfo{},
 		}
 		for _, e := range season.Episodes {
@@ -281,6 +287,7 @@ func detailDTO(m domain.MediaItem) apigen.MediaItemDetail {
 				Title:         e.Title,
 				AirDate:       e.AirDate,
 				Monitored:     e.Monitored,
+				Offloaded:     offloadedFlag(e.Offloaded()),
 				HasFile:       e.HasFile,
 			})
 		}
@@ -1475,4 +1482,20 @@ func (s *Server) ReprobeLibraryItem(w http.ResponseWriter, r *http.Request, id i
 		return
 	}
 	writeJSON(w, http.StatusAccepted, map[string]int{"files": n})
+}
+
+// offloadedFlag keeps the field off the wire for the (common) not-offloaded
+// row, so an old client and a new server read the same bytes.
+func offloadedFlag(v bool) *bool {
+	if !v {
+		return nil
+	}
+	return &v
+}
+
+func offloadedCount(n int) *int {
+	if n <= 0 {
+		return nil
+	}
+	return &n
 }

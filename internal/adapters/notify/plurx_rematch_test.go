@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/pjunod/monarr/internal/adapters/notify/cinematest"
+	"github.com/pjunod/monarr/internal/ports"
 )
 
 // The connection test learns Cinema's features (contract amendment 5.3);
@@ -25,5 +26,23 @@ func TestPlurxTestLearnsRemovedPathsFeature(t *testing.T) {
 	got, err := p.ProbeFeatures(context.Background())
 	if err != nil || len(got) != 0 {
 		t.Fatalf("old cinema features = %v %v, want none", got, err)
+	}
+}
+
+// A Cinema that supports neither offload nor removed paths is not told of an
+// Offload (any request would end in a full scan that drops the title): the
+// adapter answers with a lasting "not told" result, nothing is posted.
+func TestPlurxOffloadToACinemaWithNeitherFeatureIsNotToldAndSaysSo(t *testing.T) {
+	root := t.TempDir()
+	c := cinematest.New(root)
+	defer c.Close()
+	p := &Plurx{URL: c.URL(), APIKey: "plx_secret"}
+	info := &ports.ImportInfo{OffloadedPaths: []string{root + "/a.mkv"}}
+	res, err := p.scan(context.Background(), root, info, "op/x", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.NotTold != NotToldNoOffload || res.State != "done" {
+		t.Fatalf("result: %+v", res)
 	}
 }

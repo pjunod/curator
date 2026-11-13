@@ -2124,17 +2124,26 @@ func (s *Server) BulkEditLibrary(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	updated := 0
+	// An item that refuses (an offloaded title cannot be monitored: 409
+	// `offloaded`) is reported with its reason, never swallowed.
+	failed := []map[string]any{}
 	for _, id := range body.Ids {
 		if _, err := s.deps.Library.UpdateItem(r.Context(), id, library.UpdateRequest{
 			Monitored: body.Monitored, QualityProfileID: body.QualityProfileId,
 		}); err == nil {
 			updated++
+		} else {
+			code := "error"
+			if errors.Is(err, library.ErrOffloaded) {
+				code = "offloaded"
+			}
+			failed = append(failed, map[string]any{"id": id, "code": code, "reason": err.Error()})
 		}
 	}
 	if s.deps.Acquisition != nil {
 		s.deps.Acquisition.InvalidateWanted()
 	}
-	writeJSON(w, http.StatusOK, map[string]int{"updated": updated})
+	writeJSON(w, http.StatusOK, map[string]any{"updated": updated, "failed": failed})
 }
 
 // AutoSearchLibraryItem implements POST /library/{id}/autosearch: the

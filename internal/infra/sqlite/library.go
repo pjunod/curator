@@ -73,6 +73,7 @@ func itemToDomain(r sqlitegen.MediaItem) domain.MediaItem {
 		Network:          r.Network,
 		Source:           r.Source,
 		Monitored:        r.Monitored != 0,
+		OffloadedAt:      r.OffloadedAt,
 		Monitor:          r.Monitor,
 		MonitorSince:     r.MonitorSince,
 		MonitorSeason:    int(r.MonitorSeason),
@@ -346,15 +347,17 @@ func (d *DB) GetMediaItemFull(ctx context.Context, id int64) (domain.MediaItem, 
 				Title:         e.Title,
 				AirDate:       e.AirDate,
 				Monitored:     e.Monitored != 0,
+				OffloadedAt:   e.OffloadedAt,
 				HasFile:       hasFile[e.ID],
 			})
 		}
 		for _, s := range seasons {
 			item.Seasons = append(item.Seasons, domain.Season{
-				ID:        s.ID,
-				Number:    int(s.Number),
-				Monitored: s.Monitored != 0,
-				Episodes:  bySeason[s.Number],
+				ID:          s.ID,
+				Number:      int(s.Number),
+				Monitored:   s.Monitored != 0,
+				OffloadedAt: s.OffloadedAt,
+				Episodes:    bySeason[s.Number],
 			})
 		}
 		sort.Slice(item.Seasons, func(i, j int) bool { return item.Seasons[i].Number < item.Seasons[j].Number })
@@ -565,6 +568,8 @@ func (d *DB) ListMediaItems(ctx context.Context, kind domain.MediaKind) ([]domai
 			item.EpisodeCount = int(s.AiredEpisodes)
 			item.EpisodeFileCount = int(s.HaveEpisodes)
 			item.FileCount = int(s.Files)
+			item.OffloadedEpisodes = int(s.OffloadedEpisodes)
+			item.OffloadedSeasons = int(s.OffloadedSeasons)
 			item.Quality, item.QualityVerified, item.Audio = weakestRecorded(textOf(s.Qualities))
 		}
 		out = append(out, item)

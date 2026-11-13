@@ -736,6 +736,97 @@ feature, which the upgraded cinema advertises only together with `probe_only`.
 Curator 0.48.0 after it.
 Compat test exercises the real old handler, as 4.3 does.
 
+### 4.5 Offload — `offloaded_paths`, the `offload` event and Get it back
+
+Needed by curator [ADR 0028](adr/0028-offload.md). An Offload deletes a
+title's files on purpose and keeps the title. Cinema must keep the title, its
+poster and its **watch history** and grey it out, not drop it as a move does.
+
+#### Request
+
+Same shape and rules as 4.4 (operation-keyed sub-deliveries
+`op/<operation-id>/<dir-hash>`, `path` the common parent under a library
+root, max 64 paths per request then more requests, **`probe_only: true` on
+every chunk**), with `"event": "offload"` and
+`"offloaded_paths": [...]` in place of `removed_paths`. Curator writes the
+sub-deliveries in the Offload's start transaction **held**, and releases
+them when the last file has been deleted, so cinema never sees a path that
+still exists.
+
+#### Answer
+
+One entry per offloaded path: `{"path", "state": "offloaded", "item_id": N}`
+(stat says absent, cinema had it: the item is kept, marked offloaded, watch
+state untouched), `{"path", "state": "unknown"}` (absent, cinema never had
+it), `{"path", "state": "present", "reason": R}` (still exists; nothing
+changed; same reasons as 4.4), `{"path", "state": "retained", ...}` as 4.4.
+Curator treats any answered state other than `present` and `retained` as
+satisfied, and handles `present` and `retained` exactly as in 4.4.
+`503 path_unreadable` keeps its 4.4 meaning (an unmounted share is not
+"offloaded").
+
+Cinema finds the item again **by its ids** when the files come back, never by
+title, so a re-acquired title is never a duplicate. The offload marker is
+stored in a form an older cinema binary refuses to read, which is why curator
+checks the feature first.
+
+#### Capability
+
+`features` (5.3) gains `"offload"`, advertised only together with
+`probe_only` and `removed_paths`. Curator stores the features on the notifier
+at Test and re-reads them before an Offload's send. The request is always written as
+event `offload` with `offloaded_paths`; the downgrade below happens at send time from
+the features read then, never from those at Start.
+
+| Curator | Cinema | Behaviour |
+|---|---|---|
+| new | with `offload` | `offloaded_paths`, event `offload`. |
+| new | `removed_paths` only | Curator sends plain `removed_paths`; cinema will drop the title and its watch history. The Offload dialog says so beforehand (advisory, never a gate). |
+| new | neither | Nothing is sent; a full scan would prune the same way. The delivery settles with a lasting warning, `cinema not told: it supports neither offload nor removed paths; its next full scan drops the title`, and is never reported as visible ("In cinema"). |
+| old | new | Never sent. |
+
+Rollout: upgrade cinema before curator's first Offload; the Dev tab shows
+whether each cinema notifier advertises `offload` and when that was read.
+
+### 4.6 Get it back — the `reacquire` webhook event
+
+Cinema's *Get it back* calls `POST /api/v1/webhooks/plurx`:
+
+```json
+{"event":"reacquire","kind":"season","tmdb":95396,"season":2,"user":"paul"}
+```
+
+- `kind` is `movie`, `show`, `season` or `episode`. Ids as for `watched`:
+  a movie by its tmdb or imdb id; a show, season or episode by the **show's**
+  tmdb or imdb id plus `season` (season, episode) and `episode` (episode).
+  `user` is cinema's user, for the log.
+- **Ids only.** No ids is `400`; a `season` or `episode` without its numbers
+  is `400`; an unknown `kind` is `400`. A title curator does not have is `200
+  {"matched": false, "state": "not_found"}`.
+- Clears offloaded inside the scope, monitors it, cancels the Offload's
+  unconfirmed cinema requests and searches at the current profile (a season
+  pack-first). It answers at once; the search runs in the background.
+- **Idempotent.** Asking again answers where the title stands.
+- Answer: `{"matched": true, "mediaItemId": N, "state": S}` with `S` one of
+  `searching`, `downloading`, `importing`, `on_disk`, `not_offloaded`,
+  `offloading`, `offloaded`, `not_found`. While an Offload of that scope is
+  running (deleting or stopping) the answer is `offloading` with a message:
+  nothing came back yet. `offloaded` means still offloaded and the Re-acquire
+  has not started (the title was busy past a short bounded wait: ask again).
+  `not_offloaded` is the title's state when nothing in the scope is offloaded
+  and nothing else applies. The call never hangs on a held title.
+- An old curator answers without `state`; cinema treats that as "asked".
+
+This is the one event that makes curator act. It only brings files back.
+
+### 4.7 Reading curator's state — `reacquire_status`
+
+`{"event":"reacquire_status", ...}` with the same ids reads the same answer
+and changes nothing. A still-offloaded scope answers `offloaded` ("still
+offloaded"), or `offloading` while an Offload of it is running; otherwise `downloading` / `importing` while a grab for the scope
+is in flight, `on_disk` once every episode (or the movie) has a file,
+`searching` while it is wanted. Cinema passes it through.
+
 ---
 
 ## 5. Cinema
@@ -800,7 +891,7 @@ recommend preserve-and-opt-in over a silent migration.)*
 `scan:trigger`. Probe paths are accepted only when each is a configured
 library root or a descendant of one; anything else is reported as
 `outside_roots`, never `stat`ed. The answer adds `"features": [...]`
-(`removed_paths`, §4.4); an empty `probe_paths` reads the features alone.
+(`removed_paths`, §4.4; `offload`, §4.5); an empty `probe_paths` reads the features alone.
 
 ### 5.4 Not in this contract
 

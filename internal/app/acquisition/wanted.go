@@ -77,6 +77,9 @@ func (s *Service) buildWanted(ctx context.Context) ([]domain.Wantable, error) {
 		if err != nil {
 			return nil, err
 		}
+		if item.Kind == domain.KindMovie && item.Offloaded() {
+			continue // Offload (ADR 0028): the movie and every copy are not wanted
+		}
 		switch item.Kind {
 		case domain.KindMovie, domain.KindBook:
 			w, err := s.target(ctx, item, 0, 0)
@@ -172,11 +175,11 @@ func (s *Service) wantedEpisodes(item domain.MediaItem, profile quality.Profile,
 	today := time.Now().UTC().Format(time.DateOnly)
 	var out []domain.Wantable
 	for _, season := range item.Seasons {
-		if !season.Monitored {
+		if !season.Monitored || season.FullyOffloaded() {
 			continue
 		}
 		for _, e := range season.Episodes {
-			if !e.Monitored || e.AirDate == "" || e.AirDate > today {
+			if !e.Monitored || e.Offloaded() || e.AirDate == "" || e.AirDate > today {
 				continue
 			}
 			st := states[e.ID]

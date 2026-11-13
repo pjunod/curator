@@ -30,3 +30,14 @@ search for new seasons, including the reported South Park season 29 case.
 The pinned sqlc generator requires Go 1.26 or newer; code generation uses
 automatic toolchain selection. Application verification remains on the
 repository toolchain. Migration 0036 follows current main migration 0035.
+
+## 0.49.0 — First season only
+
+New mode `first_season` (`SeriesMonitorMode`, web and mobile pickers):
+`MonitorSeason` is the lowest season above 0 (1 if none yet) and
+`monitorNewSeason` returns `number == MonitorSeason`, so a later season
+arrives unmonitored. Its action is **Monitor and search** (tick, then Auto
+search), not Re-acquire, which is only for Offloaded rows
+([ADR 0028](adr/0028-offload.md)). Tests: `library/offload_test.go`
+(`TestFirstSeasonMonitorMode`), `api/offload_test.go`, e2e
+`item-offload.spec.ts`.

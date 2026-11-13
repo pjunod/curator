@@ -9,7 +9,7 @@ import (
 
 func validateMonitor(mode string) error {
 	switch mode {
-	case "", "all", "latest", "future", "new_seasons", "none":
+	case "", "all", "latest", "future", "new_seasons", "first_season", "none":
 		return nil
 	default:
 		return fmt.Errorf("%w: unknown monitoring mode %q", ErrInvalidInput, mode)
@@ -27,6 +27,20 @@ func applyMonitorPreset(item *domain.MediaItem, mode string) {
 	}
 	item.Monitor, item.MonitorSince = mode, time.Now().UTC().Format(time.DateOnly)
 	item.MonitorSeason = 0
+	if mode == "first_season" {
+		// First season only (ADR 0028): the lowest real season, or season 1
+		// when none is known yet. Later seasons arrive unmonitored.
+		item.MonitorSeason = 1
+		lowest := 0
+		for _, season := range item.Seasons {
+			if season.Number > 0 && (lowest == 0 || season.Number < lowest) {
+				lowest = season.Number
+			}
+		}
+		if lowest > 0 {
+			item.MonitorSeason = lowest
+		}
+	}
 	for _, season := range item.Seasons {
 		if mode == "latest" && season.Number > item.MonitorSeason {
 			item.MonitorSeason = season.Number
@@ -51,6 +65,9 @@ func applyMonitorPreset(item *domain.MediaItem, mode string) {
 func monitorNewSeason(item domain.MediaItem, number int) bool {
 	if number == 0 || item.Monitor == "none" {
 		return false
+	}
+	if item.Monitor == "first_season" {
+		return number == item.MonitorSeason
 	}
 	if item.Monitor == "latest" || item.Monitor == "new_seasons" {
 		return number >= item.MonitorSeason

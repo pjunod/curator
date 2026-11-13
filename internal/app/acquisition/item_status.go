@@ -167,6 +167,9 @@ type ItemStatus struct {
 	Episodes    []StatusEpisode `json:"episodes,omitempty"`
 	// Rematch is the open Re-match moving files out of or into this item.
 	Rematch *StatusRematch `json:"rematch,omitempty"`
+	// Offload is the open Offload deleting this title's files, or the final
+	// "Offloaded <date> · <bytes> freed" stage until it is dismissed.
+	Offload *StatusOffload `json:"offload,omitempty"`
 }
 
 // statusFacts is everything one item's projection reads, once, and the
@@ -187,6 +190,7 @@ type statusFacts struct {
 	epFiles    map[int64][]domain.MediaFile
 	files      []domain.MediaFile // primary-copy files
 	rematch    *rematchFacts      // the open Re-match touching this item, if any
+	offload    *OffloadStatus     // the open (or newest undismissed) Offload of this item
 }
 
 // ItemStatus projects where an item stands. For a series, season < 0 returns
@@ -252,6 +256,9 @@ func (s *Service) statusFacts(ctx context.Context, itemID int64, season int) (st
 		return f, err
 	}
 	if f.rematch, err = s.rematchFacts(ctx, itemID, f.item); err != nil {
+		return f, err
+	}
+	if f.offload, err = s.offloadFacts(ctx, itemID); err != nil {
 		return f, err
 	}
 	return f, nil
@@ -333,6 +340,7 @@ func (f statusFacts) project(season int) ItemStatus {
 	f.index()
 	out := ItemStatus{MediaItemID: f.item.ID, Kind: string(f.item.Kind), GeneratedAt: f.now.UnixMilli()}
 	out.Rematch = f.rematchBlock()
+	out.Offload = f.offloadBlock()
 	if f.item.Kind != domain.KindSeries {
 		cands := make([]*sqlite.Download, 0, len(f.downloads))
 		for i := range f.downloads {
@@ -354,7 +362,7 @@ func (f statusFacts) project(season int) ItemStatus {
 			}
 			out.Attempts = append(out.Attempts, attemptOf(*a))
 		}
-		out.Active, out.Done = out.Active || out.Rematch.running(), out.Done && !out.Rematch.running()
+		out.Active, out.Done = out.Active || out.Rematch.running() || out.Offload.running(), out.Done && !out.Rematch.running() && !out.Offload.running()
 		return out
 	}
 	for _, sn := range f.item.Seasons {
@@ -373,7 +381,7 @@ func (f statusFacts) project(season int) ItemStatus {
 		out.Headline = seriesHeadline(out.Seasons)
 	}
 	out.Done = out.Headline.State == StatusDone
-	out.Active, out.Done = out.Active || out.Rematch.running(), out.Done && !out.Rematch.running()
+	out.Active, out.Done = out.Active || out.Rematch.running() || out.Offload.running(), out.Done && !out.Rematch.running() && !out.Offload.running()
 	return out
 }
 
@@ -986,7 +994,7 @@ func attemptOf(dl sqlite.Download) StatusAttempt {
 // counted reports whether an episode is part of a season's summary: it is
 // monitored and has aired, or there is a file for it anyway.
 func counted(e domain.Episode, files int, today string) bool {
-	return files > 0 || (e.Monitored && e.AirDate != "" && e.AirDate <= today)
+	return files > 0 || (e.Monitored && !e.Offloaded() && e.AirDate != "" && e.AirDate <= today)
 }
 
 func (f statusFacts) episode(e domain.Episode) (StatusEpisode, *sqlite.Download) {

@@ -113,14 +113,21 @@ SELECT * FROM media_items WHERE kind = ? ORDER BY sort_title, year;
 SELECT
     m.id,
     (SELECT COUNT(*) FROM episodes e
-      WHERE e.media_item_id = m.id AND e.monitored = 1
+      WHERE e.media_item_id = m.id AND e.monitored = 1 AND e.offloaded_at = 0
         AND e.air_date != '' AND e.air_date <= sqlc.arg(today)) AS aired_episodes,
     (SELECT COUNT(DISTINCT mfe.episode_id)
        FROM media_file_episodes mfe
        JOIN episodes e2 ON e2.id = mfe.episode_id
-      WHERE e2.media_item_id = m.id AND e2.monitored = 1
+      WHERE e2.media_item_id = m.id AND e2.monitored = 1 AND e2.offloaded_at = 0
         AND e2.air_date != '' AND e2.air_date <= sqlc.arg(today)) AS have_episodes,
     (SELECT COUNT(*) FROM media_files f WHERE f.media_item_id = m.id) AS files,
+    -- Offloaded episodes (ADR 0028): the library's Offloaded filter and pill.
+    (SELECT COUNT(*) FROM episodes e3
+      WHERE e3.media_item_id = m.id AND e3.offloaded_at > 0) AS offloaded_episodes,
+    -- A season flagged offloaded with no episode rows (none known yet) still
+    -- makes the show an Offloaded one.
+    (SELECT COUNT(*) FROM seasons sn
+      WHERE sn.media_item_id = m.id AND sn.offloaded_at > 0) AS offloaded_seasons,
     -- Every file's recorded quality, comma-joined. Ranking happens in Go
     -- (quality.Rank), which SQLite cannot do, and the list view needs the
     -- weakest one: that is what decides whether an item is still being

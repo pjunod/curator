@@ -42,8 +42,21 @@ func TestServerWiresRecommendationLifecycleAndShutsDown(t *testing.T) {
 	})
 	url := "http://127.0.0.1:" + strconv.Itoa(port) + "/api/v1/metadata/recommendations/status"
 	client := &http.Client{Timeout: time.Second}
-	deadline := time.Now().Add(10 * time.Second)
+	// Startup runs every migration first: well under a second normally, but
+	// near ten under the race detector on a busy runner. What this test proves
+	// is the wiring, so it waits until the server answers or exits, bounded by
+	// the test binary's own deadline rather than a fixed wall-clock guess.
+	deadline := time.Now().Add(2 * time.Minute)
+	if d, ok := t.Deadline(); ok && d.Add(-20*time.Second).Before(deadline) {
+		deadline = d.Add(-20 * time.Second)
+	}
 	for {
+		select {
+		case err := <-finished:
+			finished <- err
+			t.Fatalf("server exited before answering: %v", err)
+		default:
+		}
 		response, err := client.Get(url)
 		if err == nil {
 			var payload map[string]any

@@ -800,7 +800,26 @@ old entry stays until its next scan`. Not a failure; nothing retries. Chat
 notifiers get one `moved` message. `GET /api/v1/rematch/{id}` lists the
 operation's sub-deliveries with their results.
 
-## 7. plurx watch webhook — the only inbound push Monarr accepts
+### Offload (0.49.0)
+
+An Offload ([ADR 0028](adr/0028-offload.md), contract §4.5) writes the same
+operation-keyed sub-deliveries as a move (`op/<operation-id>/<dir-hash>`, one
+per notifier per library root, every chunk `probe_only`) with
+`"event":"offload"` and `"offloaded_paths":[…]`. They are written **held** in
+the Offload's start transaction and released when its last file is deleted,
+so Cinema never reads `present` for a file that has not been deleted yet.
+Cinema keeps the title and its watch history, greys it out, and answers each
+path `offloaded`, `unknown` or `present`.
+
+Curator sends it only when the notifier's stored features include `offload`
+(read at **Test**, re-read before the send). Without it: a Cinema with
+`removed_paths` gets plain `removed_paths` (it will drop the title and its
+watch history; the Offload dialog says so beforehand), a Cinema with neither
+gets nothing. The Developer tab shows, per Cinema notifier, whether `removed
+paths` and `offload` are advertised and when that was read. It is advice;
+nothing is switched off by it.
+
+## 7. plurx webhook — the only inbound push Monarr accepts
 
 **What it does.** plurx tells Monarr what was watched, and by whom. Monarr
 **records and displays it**, and uses it to order upgrade work toward actively
@@ -823,12 +842,41 @@ Three properties are deliberate:
   have returns **200 with `matched: false`**, not a 404 — plurx's outbox
   retries failures, and there is nothing to retry about a film Monarr was never
   asked to manage.
-- **Nothing here deletes anything.** No cleanup policy, no unmonitoring, no
-  auto-delete path exists in the code at all. Recorded, shown, and read by the
-  upgrade ordering.
+- **One acting event.** `watched` is recorded, shown, and read by the upgrade
+  ordering; it deletes nothing. The single event that makes Monarr act is
+  `reacquire` (below): an admin in plurx asked for an offloaded title back.
+  It only ever brings files back; no cleanup policy, no unmonitoring and no
+  auto-delete path exists, and Offload is started from Monarr's own UI.
 
 For an episode, `tmdb` is the **show's** id — an episode's own id does not
 identify the series it belongs to.
+
+### `reacquire` and `reacquire_status` (0.49.0)
+
+```json
+{"event":"reacquire","kind":"season","tmdb":95396,"season":2,"user":"paul"}
+```
+
+`kind` is `movie`, `show`, `season` or `episode`; ids as above (a movie by
+its tmdb or imdb id; the rest by the **show's** id plus `season` and
+`episode`); `user` is plurx's user, for the log. It clears *offloaded* inside
+the scope, monitors it, cancels the Offload's unconfirmed Cinema requests and
+searches at the current profile (a season pack-first), answering at once:
+
+```json
+{"matched":true,"mediaItemId":812,"state":"searching"}
+```
+
+`state` is `searching`, `downloading`, `importing`, `on_disk`, `not_offloaded`
+(nothing in the scope is offloaded), `offloading` (an Offload of it is
+running), `offloaded` (still offloaded; Re-acquire not started, ask again) or
+`not_found` (with
+`matched:false`: no such title, season or episode). No ids, a `season` or
+`episode` without its numbers, or an unknown kind is a 400. It is idempotent:
+asking again answers where the title stands. `reacquire_status` with the same
+body reads that answer and changes nothing. A curator older than 0.49.0
+answers without `state`.
+
 
 **Where you see it.** System → **Connections**, kind `calls Monarr`, name
 `plurx`, state `calling` — detail `last called /api/v1/webhooks/plurx (N since

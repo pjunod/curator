@@ -8,7 +8,9 @@ import {
   getItemStatus,
   importQueueItem,
   cancelAndBlocklist,
+  cancelOffload,
   cancelRematch,
+  dismissOffload,
   dismissRematch,
   retryDelivery,
   type ItemStatus,
@@ -16,6 +18,7 @@ import {
   type StatusAttempt,
   type StatusDownload,
   type StatusEpisode,
+  type StatusOffload,
   type StatusRematch,
   type StatusSeason,
   type StatusStage,
@@ -80,6 +83,10 @@ export function ItemStatusPanel({ itemId, kind, onInteractiveSearch }: {
       {!s && !status.isError && <p className="muted">Loading…</p>}
       {(s?.rematch || (stopNotice.message && noticeBelongsTo(stopNotice.op, s?.rematch?.operationId))) && (
         <MovingFiles itemId={itemId} r={s?.rematch} notice={noticeBelongsTo(stopNotice.op, s?.rematch?.operationId) ? stopNotice : { ...stopNotice, message: '' }}
+          say={(message, warning = false, op = '') => setStopNotice((n) => ({ message, warning, revision: n.revision + 1, op }))} />
+      )}
+      {(s?.offload || (stopNotice.message && noticeBelongsTo(stopNotice.op, s?.offload?.operationId))) && (
+        <OffloadingFiles itemId={itemId} o={s?.offload} notice={noticeBelongsTo(stopNotice.op, s?.offload?.operationId) ? stopNotice : { ...stopNotice, message: '' }}
           say={(message, warning = false, op = '') => setStopNotice((n) => ({ message, warning, revision: n.revision + 1, op }))} />
       )}
       {s && s.done && collapsed ? (
@@ -174,6 +181,68 @@ function MovingFiles({ itemId, r, notice, say }: {
             <div className="item-status-actions">
               <button type="button" className="btn-danger" disabled={stop.isPending} onClickCapture={focusActionTrigger}
                 onClick={() => stop.mutate()}>
+                {stop.isPending ? 'Stopping…' : 'Stop'}
+              </button>
+            </div>
+          )}
+        </>
+      )}
+      {notice.message && <ActionNotice warning={notice.warning} revision={notice.revision}>{notice.message}</ActionNotice>}
+    </div>
+  )
+}
+
+/**
+ * The Offload (ADR 0028): what it is deleting and how far it is, Stop while it
+ * runs, and once it is over the final stage "Offloaded <date> · <bytes> freed".
+ */
+function OffloadingFiles({ itemId, o, notice, say }: {
+  itemId: number
+  o?: StatusOffload
+  notice: { message: string; warning: boolean; revision: number }
+  say: (message: string, warning?: boolean, op?: string) => void
+}) {
+  const qc = useQueryClient()
+  const refresh = () => {
+    void qc.invalidateQueries({ queryKey: ['item-status', itemId] })
+    void qc.invalidateQueries({ queryKey: ['library-item', String(itemId)] })
+  }
+  const stop = useMutation({
+    mutationFn: () => cancelOffload(o!.operationId),
+    onSuccess: () => { say('Stopped. What is already deleted stays deleted; the rest stays on disk.', false, o!.operationId); refresh() },
+    onError: (e) => say(`✕ ${(e as Error).message}`, true, o?.operationId),
+  })
+  const dismiss = useMutation({
+    mutationFn: () => dismissOffload(o!.operationId),
+    onSuccess: () => { say('Dismissed.', false, o!.operationId); refresh() },
+    onError: (e) => say(`✕ ${(e as Error).message}`, true, o?.operationId),
+  })
+  return (
+    <div className="item-moving" data-testid="item-offloading">
+      {o && (
+        <>
+          <h3>{o.ended ? 'Offload' : 'Offloading files'}</h3>
+          <div className="item-moving-head"><b>{o.headline}</b></div>
+          {!o.ended && (
+            <div className="item-numbers">
+              <span>{o.filesDone} of {o.filesTotal} files</span>
+              {o.bytesTotal > 0 && <span>{fmtBytes(o.bytesTotal)} to free</span>}
+            </div>
+          )}
+          {!o.ended && o.filesTotal > 0 && <progress max={o.filesTotal} value={o.filesDone} aria-label="Files deleted" />}
+          {(o.failed ?? []).map((f) => <p key={f} className="warning-text small mono">{f}</p>)}
+          {o.error && <p className="warning-text small">{o.error}</p>}
+          {o.cinemaLine && <p className="muted small">{o.cinemaLine}</p>}
+          {o.ended && (
+            <div className="item-status-actions">
+              <button type="button" disabled={dismiss.isPending} onClickCapture={focusActionTrigger} onClick={() => dismiss.mutate()}>
+                {dismiss.isPending ? 'Dismissing…' : 'Dismiss'}
+              </button>
+            </div>
+          )}
+          {o.stoppable && (
+            <div className="item-status-actions">
+              <button type="button" className="btn-danger" disabled={stop.isPending} onClickCapture={focusActionTrigger} onClick={() => stop.mutate()}>
                 {stop.isPending ? 'Stopping…' : 'Stop'}
               </button>
             </div>

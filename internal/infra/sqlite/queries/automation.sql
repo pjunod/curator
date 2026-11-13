@@ -114,14 +114,16 @@ SELECT * FROM notifier_deliveries
 UPDATE notifier_deliveries
    SET status = 'pending', attempts = 0, result = '', next_at = ?, updated_at = ?,
        attempt = attempt + 1, remote_request_id = '', remote_state = '', waiting_on = '', file_results_json = '[]'
- WHERE id = ? AND notifier_id = ? AND status = 'failed'
+ WHERE id = ? AND notifier_id = ? AND status = 'failed' AND last_error NOT LIKE 'cancelled%'
 RETURNING *;
 
+-- A delivery cancelled by Re-acquire or Stop (last_error 'cancelled: ...') is
+-- never revived: its files are on disk again, or never left.
 -- name: RetryFailedDeliveries :execrows
 UPDATE notifier_deliveries
    SET status = 'pending', attempts = 0, result = '', next_at = ?, updated_at = ?,
        attempt = attempt + 1, remote_request_id = '', remote_state = '', waiting_on = '', file_results_json = '[]'
- WHERE notifier_id = ? AND status = 'failed';
+ WHERE notifier_id = ? AND status = 'failed' AND last_error NOT LIKE 'cancelled%';
 
 -- name: DeleteDeliveriesForNotifier :exec
 DELETE FROM notifier_deliveries WHERE notifier_id = ?;

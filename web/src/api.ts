@@ -71,6 +71,10 @@ export interface MediaItemSummary {
   bookEditions?: BookEditionSummary[]
   posterPath: string
   monitored: boolean
+  /** Offloaded (ADR 0028): a movie whose files were deleted on purpose, or a show with an offloaded episode. */
+  offloaded?: boolean
+  /** Shows only: how many episodes are offloaded. */
+  offloadedEpisodes?: number
   path: string
   rating: number // provider scale: TMDB /10, Open Library /5
   ratingVotes: number // 0 = no rating known
@@ -143,12 +147,14 @@ export interface EpisodeInfo {
   title: string
   airDate: string
   monitored: boolean
+  offloaded?: boolean
   hasFile: boolean
 }
 
 export interface SeasonInfo {
   number: number
   monitored: boolean
+  offloaded?: boolean
   episodes: EpisodeInfo[]
 }
 
@@ -1665,7 +1671,7 @@ export const bulkEditLibrary = (req: {
   ids: number[]
   monitored?: boolean
   qualityProfileId?: number
-}) => send<{ updated: number }>('POST', '/library/bulk', req)
+}) => send<{ updated: number; failed?: { id: number; code: string; reason: string }[] }>('POST', '/library/bulk', req)
 export const login = (username: string, password: string) =>
   send('POST', '/auth/login', { username, password })
 export const logout = () => send('POST', '/auth/logout')
@@ -2108,6 +2114,69 @@ export const getLibraryRematch = (itemId: number) => send<RematchOperation | und
 export const getRematch = (operationId: string) => get<RematchOperation>(`/rematch/${encodeURIComponent(operationId)}`)
 export const dismissRematch = (operationId: string) => send<void>('POST', `/rematch/${encodeURIComponent(operationId)}/dismiss`)
 export const cancelRematch = (operationId: string) => send<void>('POST', `/rematch/${encodeURIComponent(operationId)}/cancel`)
+// Offload (ADR 0028): free the space, keep the title.
+export type OffloadScope = 'item' | 'season' | 'episode'
+export type OffloadState = 'deleting' | 'waiting' | 'retrying' | 'stopping' | 'complete' | 'cancelled' | 'failed'
+export interface OffloadRequest {
+  scope: OffloadScope
+  season?: number
+  episodeId?: number
+  requestId?: string
+  fingerprint?: string
+}
+export interface OffloadFile { path: string; kind: 'media' | 'sidecar'; bytes: number; shared?: boolean; episodes?: string[] }
+export interface OffloadBlocked { reason: string; ref?: string; message: string; retry: boolean }
+export interface OffloadPreview {
+  item: { id: number; kind: string; title: string; year?: number }
+  scope: OffloadScope
+  label: string
+  files: OffloadFile[]
+  bytes: number
+  freed: number
+  /** Library volume free bytes before and after; -1 = unknown. */
+  freeBefore: number
+  freeAfter: number
+  root?: string
+  episodes?: string[]
+  /** Episodes the request did not name but a multi-episode file takes with it. */
+  widened?: string[]
+  cinema?: string
+  /** Cinema will drop the title and its watch history (it does not advertise offload). Advisory. */
+  cinemaWarning?: boolean
+  blocked?: OffloadBlocked
+  fingerprint: string
+  summary: string
+}
+export interface OffloadOperation {
+  operationId: string
+  requestId: string
+  state: OffloadState
+  itemId: number
+  scope: OffloadScope
+  label?: string
+  filesTotal: number
+  filesDone: number
+  failed?: string[]
+  bytesTotal: number
+  bytesFreed: number
+  lastError?: string
+  stoppable: boolean
+  cinemaLine?: string
+  cinema?: { directory: string; status: string; result?: string; lastError?: string; visibleAt?: number }[]
+}
+export interface ReacquireResult { mediaItemId: number; state: 'searching' | 'downloading' | 'importing' | 'on_disk' | 'not_offloaded' | 'offloading' | 'offloaded'; cleared: boolean; message?: string }
+export const previewOffload = (itemId: number, req: OffloadRequest) =>
+  send<OffloadPreview>('POST', `/library/${itemId}/offload/preview`, req)
+export const startOffload = (itemId: number, req: OffloadRequest) =>
+  send<OffloadOperation>('POST', `/library/${itemId}/offload`, req)
+/** The open (or newest undismissed) Offload for an item; null when there is none (204). */
+export const getLibraryOffload = (itemId: number) => send<OffloadOperation | undefined>('GET', `/library/${itemId}/offload`).then((op) => op ?? null)
+export const getOffload = (operationId: string) => get<OffloadOperation>(`/offload/${encodeURIComponent(operationId)}`)
+export const cancelOffload = (operationId: string) => send<void>('POST', `/offload/${encodeURIComponent(operationId)}/cancel`)
+export const dismissOffload = (operationId: string) => send<void>('POST', `/offload/${encodeURIComponent(operationId)}/dismiss`)
+export const reacquire = (itemId: number, req: OffloadRequest) => send<ReacquireResult>('POST', `/library/${itemId}/reacquire`, req)
+export const OFFLOAD_RUNNING = new Set<OffloadState>(['deleting', 'waiting', 'retrying', 'stopping'])
+
 // ---- item status panel (0.46.0) ----
 
 export type StatusState = 'done' | 'active' | 'waiting' | 'failed' | 'todo'
@@ -2203,6 +2272,26 @@ export interface ItemStatus {
   seasons?: StatusSeason[]
   episodes?: StatusEpisode[]
   rematch?: StatusRematch
+  offload?: StatusOffload
+}
+export interface StatusOffload {
+  operationId: string
+  state: OffloadState
+  scope: OffloadScope
+  label: string
+  /** The stage in words; once over: "Offloaded <date> · <bytes> freed". */
+  headline: string
+  filesDone: number
+  filesTotal: number
+  bytesTotal: number
+  bytesFreed: number
+  failed?: string[]
+  error?: string
+  cinemaLine?: string
+  cinema?: { directory: string; status: string; result?: string; lastError?: string; visibleAt?: number }[]
+  ended: boolean
+  stoppable: boolean
+  finishedAt?: number
 }
 export interface StatusRematch {
   operationId: string

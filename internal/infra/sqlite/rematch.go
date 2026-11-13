@@ -246,7 +246,24 @@ func (d *DB) OpenRematchScope(ctx context.Context) (map[int64]bool, []string, er
 			folders = append(folders, folder)
 		}
 	}
-	return items, folders, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, nil, err
+	}
+	// An Offload mid-delete owns its title the same way (ADR 0028): a scan
+	// neither prunes the rows of files being deleted nor adopts what is left.
+	off, err := d.R.QueryContext(ctx, `SELECT media_item_id FROM offload_operations WHERE state IN ('deleting','waiting','retrying','stopping')`)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer func() { _ = off.Close() }()
+	for off.Next() {
+		var id int64
+		if err := off.Scan(&id); err != nil {
+			return nil, nil, err
+		}
+		items[id] = true
+	}
+	return items, folders, off.Err()
 }
 
 // OpenRematchForItem is the newest operation not yet finished that moves
@@ -313,7 +330,7 @@ func (d *DB) MediaItemOrigin(ctx context.Context, itemID int64) (string, error) 
 // RematchBlocker is work in flight that a Re-match must not race.
 type RematchBlocker struct {
 	ItemID int64
-	Reason string // download | import | replacement | rematch
+	Reason string // download | import | replacement | rematch | offload
 	Ref    string
 	State  string
 }
@@ -335,7 +352,10 @@ func (d *DB) RematchBlockers(ctx context.Context, itemIDs ...int64) ([]RematchBl
 			 WHERE media_item_id=? AND state NOT IN ('complete','cancelled','failed')
 			UNION ALL
 			SELECT 'rematch', operation_id, state FROM rematch_operations
-			 WHERE (source_item_id=? OR target_item_id=?) AND state NOT IN ('complete','cancelled','failed')`, id, id, id, id, id)
+			 WHERE (source_item_id=? OR target_item_id=?) AND state NOT IN ('complete','cancelled','failed')
+			UNION ALL
+			SELECT 'offload', operation_id, state FROM offload_operations
+			 WHERE media_item_id=? AND state IN ('deleting','waiting','retrying','stopping')`, id, id, id, id, id, id)
 		if err != nil {
 			return nil, err
 		}

@@ -36,6 +36,7 @@ type Request struct {
 	Path          string
 	Expected      []ports.ExpectedFile
 	Removed       []string // removed_paths (contract amendment), "" event when absent
+	Offloaded     []string // offloaded_paths (Offload, ADR 0028)
 	Event         string
 	ProbeOnly     bool   // probe_only
 	State         string // queued | running | done | failed
@@ -61,6 +62,9 @@ type Cinema struct {
 	// Without it the fake is a v2 Cinema that ignores removed_paths.
 	RemovedPaths bool
 	Unknown      map[string]bool
+	// Offload is the offload amendment: the probe also answers "offload" and
+	// a request's offloaded paths are answered offloaded (absent) or present.
+	Offload bool
 	// Retained answers a removed path retained with the given code; PresentReason
 	// is the reason a still-present path carries.
 	Retained      map[string]string
@@ -189,14 +193,15 @@ func (c *Cinema) Forget() {
 }
 
 type body struct {
-	Path          *string              `json:"path"`
-	RequestKey    string               `json:"request_key"`
-	ExpectedFiles []ports.ExpectedFile `json:"expected_files"`
-	WaitMs        int                  `json:"wait_ms"`
-	ProbePaths    []string             `json:"probe_paths"`
-	RemovedPaths  []string             `json:"removed_paths"`
-	Event         string               `json:"event"`
-	ProbeOnly     bool                 `json:"probe_only"`
+	Path           *string              `json:"path"`
+	RequestKey     string               `json:"request_key"`
+	ExpectedFiles  []ports.ExpectedFile `json:"expected_files"`
+	WaitMs         int                  `json:"wait_ms"`
+	ProbePaths     []string             `json:"probe_paths"`
+	RemovedPaths   []string             `json:"removed_paths"`
+	OffloadedPaths []string             `json:"offloaded_paths"`
+	Event          string               `json:"event"`
+	ProbeOnly      bool                 `json:"probe_only"`
 }
 
 func (c *Cinema) serve(w http.ResponseWriter, r *http.Request) {
@@ -303,7 +308,7 @@ func (c *Cinema) scan(w http.ResponseWriter, r *http.Request) {
 	}
 	c.nextID++
 	req := &Request{ID: fmt.Sprintf("sr-%d", c.nextID), Key: key, Path: path, Expected: b.ExpectedFiles, State: "queued",
-		Removed: b.RemovedPaths, Event: b.Event, ProbeOnly: b.ProbeOnly, done: make(chan struct{})}
+		Removed: b.RemovedPaths, Offloaded: b.OffloadedPaths, Event: b.Event, ProbeOnly: b.ProbeOnly, done: make(chan struct{})}
 	c.requests = append(c.requests, req)
 	if key != "" {
 		c.byKey[key] = req
@@ -423,6 +428,15 @@ func (c *Cinema) finish(req *Request) {
 		req.Files = append(req.Files, ports.PlacedReport{Path: e.Path, State: "placed", ItemID: c.itemID(e.Path),
 			Bytes: fi.Size(), MtimeNs: fi.ModTime().UnixNano()})
 	}
+	if c.Offload {
+		for _, p := range req.Offloaded {
+			if _, err := os.Stat(p); err == nil {
+				req.Files = append(req.Files, ports.PlacedReport{Path: p, State: "present", Reason: c.PresentReason})
+			} else {
+				req.Files = append(req.Files, ports.PlacedReport{Path: p, State: "offloaded", ItemID: c.itemID(p)})
+			}
+		}
+	}
 	if !c.RemovedPaths {
 		return
 	}
@@ -526,8 +540,15 @@ func (c *Cinema) probe(paths []string) map[string]any {
 		}
 	}
 	out := map[string]any{"roots": c.Roots, "visible": visible, "missing": missing, "outside_roots": outside}
+	var features []string
 	if c.RemovedPaths {
-		out["features"] = []string{"removed_paths"}
+		features = append(features, "removed_paths")
+	}
+	if c.Offload {
+		features = append(features, "offload")
+	}
+	if features != nil {
+		out["features"] = features
 	}
 	return out
 }

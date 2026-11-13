@@ -908,6 +908,8 @@ func rematchBlockedText(b sqlite.RematchBlocker, source, target domain.MediaItem
 			return fmt.Sprintf("%s has a replacement %s (%s); it holds the title until it completes or fails, and a replacement cannot be cancelled — wait for it, or move the files once it is done", title, strings.ReplaceAll(b.State, "_", " "), b.Ref)
 		}
 		return fmt.Sprintf("%s has a replacement in progress (%s); wait for it to finish", title, b.State)
+	case "offload":
+		return fmt.Sprintf("%s is being offloaded (%s); wait for it to finish, or Stop it", title, b.State)
 	default:
 		return fmt.Sprintf("%s has another re-match in progress; wait for it to finish", title)
 	}
@@ -1257,6 +1259,7 @@ func (s *Service) startRematchWorker(ctx context.Context) {
 		defer tick.Stop()
 		for {
 			s.driveRematches(ctx)
+			s.driveOffloads(ctx)
 			select {
 			case <-ctx.Done():
 				return

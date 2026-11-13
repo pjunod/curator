@@ -273,7 +273,7 @@ function AddDialog(props: {
   const [rootId, setRootId] = useState<number | undefined>(undefined)
   const [profileId, setProfileId] = useState<number | ''>('')
   const [monitored, setMonitored] = useState(true)
-  const [monitor, setMonitor] = useState<'all' | 'latest' | 'none'>('all')
+  const [monitor, setMonitor] = useState<'all' | 'latest' | 'first_season' | 'none'>('all')
   const [searchNow, setSearchNow] = useState(true)
 
   // Same rule as the Add page: a root folder declares which kind it holds
@@ -397,6 +397,7 @@ function AddDialog(props: {
                     >
                       <option value="all">all</option>
                       <option value="latest">latest only</option>
+                      <option value="first_season">first season only</option>
                       <option value="none">none</option>
                     </select>
                   </label>

@@ -38,6 +38,7 @@ export function LibraryCard({ item, width, itemSize, onPress }: { item: MediaIte
           : item.year || item.kind} {!item.monitored ? ' · unmonitored' : ''}
       </Text>
       <Badge label={state.label} tone={state.tone} />
+      {item.offloaded ? <Badge label={item.kind === 'series' ? `${item.offloadedEpisodes ?? 0} offloaded` : 'Offloaded'} tone="warning" /> : null}
     </Pressable>
   )
 }

@@ -113,7 +113,7 @@ func (p *Plurx) SendScan(ctx context.Context, n ports.Notification) (ports.Notif
 		return ports.NotifyResult{}, &ports.NotifyError{Retry: ports.RetryNever, Msg: "plurx: a sub-delivery names exactly one directory"}
 	}
 	dir := n.Import.Dirs[0]
-	return p.scan(ctx, dir, n.Import, n.IdempotencyKey, n.Event == "moved")
+	return p.scan(ctx, dir, n.Import, n.IdempotencyKey, n.Event == "moved" || n.Event == "offload")
 }
 
 // waitMs is how long Cinema may hold a request for its targeted result. It
@@ -138,6 +138,10 @@ type plurxScanRequest struct {
 	// event and the files that left `path`.
 	Event        string   `json:"event,omitempty"`
 	RemovedPaths []string `json:"removed_paths,omitempty"`
+	// OffloadedPaths (event "offload", ADR 0028) are stored by Cinema as
+	// entries an older binary refuses to decode, so only an upgraded node
+	// handles them; they are sent only when it advertises "offload".
+	OffloadedPaths []string `json:"offloaded_paths,omitempty"`
 	// ProbeOnly is sent on every chunk of a moved request, including one that
 	// carries only expected files: cinema probes the named paths and never
 	// walks the rest of `path` (contract 4.4).
@@ -244,6 +248,11 @@ func scanBody(path string, info *ports.ImportInfo) plurxScanRequest {
 	return req
 }
 
+// NotToldNoOffload is the lasting word on an Offload that was not sent: the
+// Cinema supports neither offload nor removed paths, so any request would be
+// answered by a full scan that drops the title.
+const NotToldNoOffload = "cinema not told: it supports neither offload nor removed paths; its next full scan drops the title"
+
 // scan posts one directory.
 //
 // No retry loop here: retrying is the delivery queue's job, and it does it
@@ -261,7 +270,20 @@ func (p *Plurx) scan(ctx context.Context, dir string, info *ports.ImportInfo, ke
 		if p.Wait > 0 {
 			req.WaitMs = int(p.Wait / time.Millisecond)
 		}
-		if moved || len(info.RemovedPaths) > 0 {
+		if len(info.OffloadedPaths) > 0 {
+			switch {
+			case p.hasFeature(ports.FeatureOffload):
+				req.Event, req.OffloadedPaths, req.ProbeOnly, sentRemoved = "offload", info.OffloadedPaths, true, true
+			case p.hasFeature(ports.FeatureRemovedPaths):
+				// A Cinema without offload would drop the title when told
+				// the paths left (the dialog said so beforehand).
+				req.Event, req.RemovedPaths, req.ProbeOnly, sentRemoved = "moved", info.OffloadedPaths, true, true
+			default:
+				// Not even removed paths: a full scan would prune it the
+				// same way, so nothing is sent (settled with the old-cinema note).
+				return ports.NotifyResult{State: "done", FilesReported: true, NotTold: NotToldNoOffload}, nil
+			}
+		} else if moved || len(info.RemovedPaths) > 0 {
 			if p.hasFeature(ports.FeatureRemovedPaths) {
 				req.Event, req.RemovedPaths, req.ProbeOnly, sentRemoved = "moved", info.RemovedPaths, true, true
 			} else {

@@ -9,6 +9,7 @@ import {
 import { PAGE_SIZES, Pager, PageSizePicker, sliceForPage } from '../Pager'
 import { CardSizePicker } from '../CardSizePicker'
 import { DiskScanControl } from '../DiskScan'
+import { PRESENCES, matchesPresence, validPresence, type Presence } from '../libraryPresence'
 
 // CardBadges: the poster stays a poster. Nothing is drawn over the artwork —
 // quality, target, upgrade state and ratings all live on the item page, which
@@ -30,6 +31,11 @@ function CardBadges(props: { m: MediaItemSummary; downloading: boolean }) {
       >
         {comp.total === 0 ? '—' : `${comp.have}/${comp.total}`}
       </span>
+      {m.offloaded && (
+        <span className="pill pill-warning pill-offloaded" title={m.kind === 'series' ? `${m.offloadedEpisodes ?? 0} episode(s) offloaded: files deleted on purpose, title kept` : 'Offloaded: files deleted on purpose, title kept'}>
+          offloaded
+        </span>
+      )}
       {props.downloading && (
         <span className="pill pill-info" title="Download in flight">
           ↓
@@ -127,6 +133,8 @@ function compare(a: MediaItemSummary, b: MediaItemSummary, key: SortKey): number
 interface SectionState {
   q: string
   filter: FilterKey
+  /** On disk · Offloaded · Everything (ADR 0028); remembered per viewer. */
+  presence: Presence
   sortKey: SortKey
   sortDir: 'asc' | 'desc'
   /** Rows per page; 0 means All. Persisted — a preference about how much
@@ -140,6 +148,7 @@ function loadSection(key: SectionKey): SectionState {
   const state: SectionState = {
     q: '',
     filter: 'all',
+    presence: 'all',
     sortKey: 'title',
     sortDir: 'asc',
     pageSize: 100,
@@ -152,6 +161,7 @@ function loadSection(key: SectionKey): SectionState {
     if (raw) {
       const saved = JSON.parse(raw) as Partial<SectionState>
       if (FILTERS.some((f) => f.key === saved.filter)) state.filter = saved.filter as FilterKey
+      if (validPresence(saved.presence)) state.presence = saved.presence
       if (SORTS.some((s) => s.key === saved.sortKey)) state.sortKey = saved.sortKey as SortKey
       if (saved.sortDir === 'asc' || saved.sortDir === 'desc') state.sortDir = saved.sortDir
       // Only honour a size we actually offer, so a hand-edited or stale
@@ -172,6 +182,7 @@ function persistSection(key: SectionKey, s: SectionState) {
       `monarr-lib-${key}`,
       JSON.stringify({
         filter: s.filter,
+        presence: s.presence,
         sortKey: s.sortKey,
         sortDir: s.sortDir,
         pageSize: s.pageSize,
@@ -182,10 +193,13 @@ function persistSection(key: SectionKey, s: SectionState) {
   }
 }
 
+const isFiltered = (s: SectionState) => s.filter !== 'all' || s.presence !== 'all' || s.q.trim() !== ''
+
 function applySection(items: MediaItemSummary[], s: SectionState): MediaItemSummary[] {
   const needle = s.q.trim().toLowerCase()
   return items
     .filter((m) => matchesFilter(m, s.filter))
+    .filter((m) => matchesPresence(m, s.presence))
     .filter(
       (m) =>
         !needle ||
@@ -205,7 +219,7 @@ function SectionToolbar(props: {
   total: number
 }) {
   const { label, state, onChange } = props
-  const filtered = state.filter !== 'all' || state.q.trim() !== ''
+  const filtered = isFiltered(state)
   return (
     <div className="section-toolbar">
       <input
@@ -224,6 +238,18 @@ function SectionToolbar(props: {
         {FILTERS.map((f) => (
           <option key={f.key} value={f.key}>
             {f.label}
+          </option>
+        ))}
+      </select>
+      <select
+        aria-label={`Presence in ${label}`}
+        title="On disk, offloaded (files deleted on purpose, title kept) or everything"
+        value={state.presence}
+        onChange={(e) => onChange({ presence: e.target.value as Presence })}
+      >
+        {PRESENCES.map((p) => (
+          <option key={p.key} value={p.key}>
+            {p.label}
           </option>
         ))}
       </select>
@@ -339,15 +365,23 @@ export function LibraryPage() {
   const [editing, setEditing] = useState(false)
   const [selected, setSelected] = useState<Set<number>>(new Set())
   const [bulkProfile, setBulkProfile] = useState<number | ''>('')
+  const [bulkNote, setBulkNote] = useState('')
   const profiles = useQuery({ queryKey: ['profiles'], queryFn: getProfiles, enabled: editing })
   const selectedHasBook = (items.data ?? []).some((item) => selected.has(item.id) && item.kind === 'book')
   const bulk = useMutation({
     mutationFn: (patch: { monitored?: boolean; qualityProfileId?: number }) =>
       bulkEditLibrary({ ids: [...selected], ...patch }),
-    onSuccess: () => {
+    onSuccess: (res) => {
+      void qc.invalidateQueries({ queryKey: ['library'] })
+      if (res.failed && res.failed.length > 0) {
+        // Stay in the editor with just the ones that refused, and say why.
+        setSelected(new Set(res.failed.map((f) => f.id)))
+        setBulkNote(`${res.failed.length} not changed: ${res.failed[0].reason}`)
+        return
+      }
+      setBulkNote('')
       setSelected(new Set())
       setEditing(false)
-      void qc.invalidateQueries({ queryKey: ['library'] })
     },
   })
   const toggle = (id: number) => {
@@ -467,7 +501,7 @@ export function LibraryPage() {
         <CardSizePicker />
         <div className="head-actions">
           <DiskScanControl label="Scan disk" />
-          <button onClick={() => { setEditing(!editing); setSelected(new Set()) }}>
+          <button onClick={() => { setEditing(!editing); setSelected(new Set()); setBulkNote('') }}>
             {editing ? 'Done' : 'Edit'}
           </button>
           <Link to="/add" className="btn-accent">
@@ -476,6 +510,7 @@ export function LibraryPage() {
         </div>
       </header>
 
+      {editing && bulkNote && <div className="banner warning" role="alert">{bulkNote}</div>}
       {editing && (
         <div className="banner">
           <strong>{selected.size}</strong> selected ·{' '}
@@ -578,9 +613,9 @@ export function LibraryPage() {
                 shown={group.length}
                 total={all.length}
                 filterActive={
-                  controls[section.key].filter !== 'all' || controls[section.key].q.trim() !== ''
+                  isFiltered(controls[section.key])
                 }
-                onClear={() => updateSection(section.key, { filter: 'all', q: '' })}
+                onClear={() => updateSection(section.key, { filter: 'all', presence: 'all', q: '' })}
               />
               {visible.length > 0 ? (
                 <div className="poster-grid">{visible.map(renderCard)}</div>
@@ -589,7 +624,7 @@ export function LibraryPage() {
                   Nothing in {section.label} matches the current filter.{' '}
                   <button
                     className="link-button"
-                    onClick={() => updateSection(section.key, { filter: 'all', q: '' })}
+                    onClick={() => updateSection(section.key, { filter: 'all', presence: 'all', q: '' })}
                   >
                     Show all {all.length}
                   </button>
@@ -639,8 +674,8 @@ export function LibraryPage() {
                 label={section.label}
                 shown={group.length}
                 total={all.length}
-                filterActive={controls[section.key].filter !== 'all' || controls[section.key].q.trim() !== ''}
-                onClear={() => updateSection(section.key, { filter: 'all', q: '' })}
+                filterActive={isFiltered(controls[section.key])}
+                onClear={() => updateSection(section.key, { filter: 'all', presence: 'all', q: '' })}
               />
               <div className="poster-grid">{visible.map(renderCard)}</div>
               {all.length > 0 && group.length === 0 && (
@@ -648,7 +683,7 @@ export function LibraryPage() {
                   Nothing in {section.label} matches the current filter.{' '}
                   <button
                     className="link-button"
-                    onClick={() => updateSection(section.key, { filter: 'all', q: '' })}
+                    onClick={() => updateSection(section.key, { filter: 'all', presence: 'all', q: '' })}
                   >
                     Show all {all.length}
                   </button>

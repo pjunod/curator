@@ -107,6 +107,7 @@ var requiredColumns = []struct{ table, column string }{
 	{"downloads", "plan_id"}, {"downloads", "submission_phase"}, {"downloads", "reserved_episodes"},
 	{"downloads", "observation"}, {"downloads", "cleanup_pending"},
 	{"downloads", "activity_dismissed"},
+	{"media_items", "offloaded_at"}, {"seasons", "offloaded_at"}, {"episodes", "offloaded_at"},
 	{"indexers", "daily_request_cap"}, {"indexers", "next_rss_at"},
 	{"indexer_request_usage", "requested_at"},
 	{"media_items", "monitor"}, {"media_items", "monitor_since"}, {"media_items", "monitor_season"},

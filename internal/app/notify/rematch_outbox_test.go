@@ -268,3 +268,29 @@ func TestMovedRequestWaitsWhenFeaturesCannotBeReRead(t *testing.T) {
 		t.Fatalf("row = %+v posts = %v, want nothing posted and a retry", r, e.cinema.Posts())
 	}
 }
+
+// An Offload sent to a Cinema that supports neither offload nor removed paths
+// sends nothing and settles with a lasting warning that is NOT a
+// confirmation: no VisibleAt, so no surface says the title is in Cinema.
+func TestOffloadDeliveryToACinemaWithNeitherFeatureSettlesAsNotTold(t *testing.T) {
+	e := newOutboxEnv(t)
+	gone := filepath.Join(e.root, "Dune (2021)", "Dune (2021).mkv")
+	n := ports.Notification{Event: "offload", Title: "Offloaded: Dune", Import: &ports.ImportInfo{MediaItemID: 2, Kind: "movie", TmdbID: 438631,
+		Dirs: []string{e.root}, OffloadedPaths: []string{gone}}}
+	raw, _ := json.Marshal(n)
+	if err := e.db.EnqueueDeliveries(e.ctx, []sqlite.OutboxWrite{{NotifierID: 1, Directory: e.root, IdempotencyKey: acquisition.RematchDeliveryKey("of-1", e.root),
+		Event: "offload", Payload: string(raw), OperationID: "of-1"}}); err != nil {
+		t.Fatal(err)
+	}
+	if now := time.Now(); now.After(e.clock) {
+		e.clock = now
+	}
+	e.pass()
+	r := e.rows()[0]
+	if r.Status != "ok" || r.VisibleAt != 0 || !strings.Contains(r.Result, "cinema not told: it supports neither offload nor removed paths") {
+		t.Fatalf("row = %+v, want a lasting not-told warning and never visible", r)
+	}
+	if reqs := e.cinema.Requests(); len(reqs) != 0 {
+		t.Fatalf("nothing may be sent: %+v", reqs)
+	}
+}
