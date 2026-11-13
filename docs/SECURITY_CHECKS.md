@@ -66,6 +66,27 @@ Security > Code scanning, triage the findings, and configure required checks
 or code-scanning merge protection deliberately. Do not interpret a green
 Security workflow badge as an assertion of zero vulnerabilities.
 
+## Library path containment
+
+Adoption and manual entry accept an existing direct child of a configured
+library root. Parent spelling alone does not prove containment: a child
+symlink can resolve outside the root. Both the parent and selected directory
+are now resolved before acceptance, and the directory must remain strictly
+inside the resolved root. Configured root aliases and links to directories
+within the root remain usable; stored paths retain the registered root's
+spelling so scans claim the same folders. Queued adoption repeats this check
+because its earlier scan is only an observation.
+
+`TestAdoptionAndManualEntryRejectSymlinkOutsideRoot` reproduces the prior
+bypass. `TestRootContainmentPreservesRootAliasesAndInternalLinks` and
+`TestQueuedAdoptionRevalidatesRootContainment` cover aliases, internal links,
+prefix siblings and stale scans. This validation does not promise a sandbox
+against a local actor replacing filesystem components concurrently. Library
+root configuration remains an operator capability; arbitrary configured roots
+are supported. Acquisition has separate manifest, custody, mount identity,
+placement and recovery rules described by the [pipeline contract](PIPELINE_CONTRACT.md).
+
+
 ## Repository settings and remaining work
 
 Repository settings are separate from these workflow files. The setup
