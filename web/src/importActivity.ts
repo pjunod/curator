@@ -22,7 +22,7 @@ export function importActivityLabel(item: ImportActivityItem) {
   if (importNeedsReview(item)) return 'Review required'
   if (item.category === 'imported') return 'Imported'
   if (d.control && (d.control.version !== 1 || d.control.lifecycle === 'held')) return d.control.message || 'Runner hold requires review'
-  if (d.importControl?.outcome === 'cancelled') return 'Cancelled · files retained'
+  if (d.importControl?.outcome === 'cancelled') return item.category === 'history' ? 'Cancelled' : 'Cancelled · review required'
   if (d.state === 'importing' && !d.importState) return 'Interrupted · no importer is running'
   if (d.state === 'awaiting_import') return 'Awaiting import approval'
   if (d.state === 'failed') return 'Import failed'

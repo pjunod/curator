@@ -72,13 +72,13 @@ func TestCancelledImportHistoryRequiresNoCustody(t *testing.T) {
 		{"held stage or placement", func(e *sqlite.ImportActivityEntry) { e.Review = true }},
 		{"unresolved files", func(e *sqlite.ImportActivityEntry) { e.Unresolved = true }},
 		{"pending publication", func(e *sqlite.ImportActivityEntry) { e.PendingPublication = true }},
-		{"failed publication", func(e *sqlite.ImportActivityEntry) { e.FailedPublication = true }},
+		{"failed publication", func(e *sqlite.ImportActivityEntry) { e.FailedPublication = true; e.OpenFailedPublication = true }},
 		{"reservation", func(e *sqlite.ImportActivityEntry) { e.ReservationActionable = true }},
 		{"actionable files", func(e *sqlite.ImportActivityEntry) { e.ActionableFiles = true }},
 		{"approval", func(e *sqlite.ImportActivityEntry) { e.State = "awaiting_import" }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			e := sqlite.ImportActivityEntry{ID: 1, State: "failed", Cancelled: true, CancelOutcome: "cancelled", ImportedPublication: true}
+			e := sqlite.ImportActivityEntry{ID: 1, State: "failed", Cancelled: true, CancelOutcome: "cancelled", ImportedPublication: true, FailedPublication: true}
 			for _, classify := range []func(sqlite.ImportActivityEntry, string) string{importActivityCategory, activityCategory} {
 				if got := classify(e, ""); got != "history" {
 					t.Fatalf("resolved cancellation = %s", got)

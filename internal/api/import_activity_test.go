@@ -177,7 +177,7 @@ func TestCancelledImportHistoryPreservesAuditAndUnresolvedCustody(t *testing.T) 
 	e := newAPIEnv(t)
 	ctx := context.Background()
 	item := e.addMovie(t)
-	for _, custody := range []string{"resolved", "stage", "prepared", "retained", "authorization", "retained_authorization", "unresolved", "pending_publication", "failed_publication", "reservation", "stale_generation"} {
+	for _, custody := range []string{"resolved", "stage", "prepared", "retained", "authorization", "retained_authorization", "unresolved", "pending_publication", "failed_publication", "failed_with_history", "reservation", "stale_generation"} {
 		t.Run(custody, func(t *testing.T) {
 			id, err := e.db.InsertDownload(ctx, sqlite.Download{MediaItemID: item, State: "failed", Protocol: "usenet", ReleaseTitle: "cancel-fixture-" + custody, ImportPath: "/completed/" + custody})
 			if err != nil {
@@ -189,7 +189,7 @@ func TestCancelledImportHistoryPreservesAuditAndUnresolvedCustody(t *testing.T) 
 					t.Fatal(err)
 				}
 			}
-			exec(`UPDATE downloads SET error='original import failed: stage retained',import_path=? WHERE id=?`, "/completed/"+custody, id)
+			exec(`UPDATE downloads SET error='publication import_failed: existing stage retained; explicit retry or custody review required',import_path=? WHERE id=?`, "/completed/"+custody, id)
 			dl, err := e.db.GetDownload(ctx, id)
 			if err != nil {
 				t.Fatal(err)
@@ -241,6 +241,14 @@ func TestCancelledImportHistoryPreservesAuditAndUnresolvedCustody(t *testing.T) 
 				}
 			case "failed_publication":
 				if err := e.db.SetPublicationState(ctx, pub, "import_failed", "unresolved placement"); err != nil {
+					t.Fatal(err)
+				}
+			case "failed_with_history":
+				open, err := e.db.InsertPublication(ctx, sqlite.PublicationWrite{DownloadID: id, Generation: "new-failure", Kind: "completed", Path: "/completed/new-failure", Source: "none", Cohort: "live"})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := e.db.SetPublicationState(ctx, open, "import_failed", "new unresolved publication"); err != nil {
 					t.Fatal(err)
 				}
 			case "reservation":
@@ -296,7 +304,7 @@ func TestCancelledImportHistoryPreservesAuditAndUnresolvedCustody(t *testing.T) 
 				for _, row := range page.Items {
 					if row.Download.Id == id {
 						found = true
-						if row.Category != apigen.ImportActivityItemCategory(want) || row.Download.State != "failed" || row.Download.Error == nil || *row.Download.Error != "original import failed: stage retained" {
+						if row.Category != apigen.ImportActivityItemCategory(want) || row.Download.State != "failed" || row.Download.Error == nil || *row.Download.Error != "publication import_failed: existing stage retained; explicit retry or custody review required" {
 							t.Fatalf("audit/classification changed: %+v", row)
 						}
 					}

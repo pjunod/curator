@@ -65,7 +65,7 @@ func importActivityCategory(e sqlite.ImportActivityEntry, worker string) string 
 	if worker == "queued" {
 		return "queued"
 	}
-	if e.Review || e.Unresolved || e.FailedPublication || e.ReservationActionable || e.ActionableFiles || e.State == "awaiting_import" {
+	if e.Review || e.Unresolved || e.OpenFailedPublication || e.ReservationActionable || e.ActionableFiles || e.State == "awaiting_import" {
 		return "attention"
 	}
 	if cancelledImportIsHistory(e) {
@@ -158,9 +158,11 @@ func activityCategory(e sqlite.ImportActivityEntry, worker string) string {
 
 // Cancellation is historical only after every indexed custody obligation has
 // cleared. Old failure text and removed publication receipts remain audit, not
-// evidence of a successful import. Worker ownership is checked by both callers.
+// evidence of a successful import. FailedPublication includes removed failures
+// for history classification; only OpenFailedPublication blocks disposition.
+// Worker ownership is checked by both callers.
 func cancelledImportIsHistory(e sqlite.ImportActivityEntry) bool {
 	return e.CancelOutcome == "cancelled" && !e.Review && !e.Unresolved &&
-		!e.PendingPublication && !e.FailedPublication && !e.ReservationActionable &&
+		!e.PendingPublication && !e.OpenFailedPublication && !e.ReservationActionable &&
 		!e.ActionableFiles && e.State != "awaiting_import"
 }

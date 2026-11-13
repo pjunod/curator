@@ -35,3 +35,17 @@ it('keeps the failure pill short and exposes the original cause separately',()=>
  item.download.error=undefined;item.download.importControl!.heldStages=1
  expect(importActivityReason(item)).toContain('scratch files')
 })
+
+it('shows resolved cancellation without claiming retained files and preserves its failure reason',()=>{
+ const item=fixture();item.category='history';item.download.importControl!.outcome='cancelled'
+ item.download.error='publication import_failed: existing stage retained; explicit retry or custody review required'
+ expect(importActivityLabel(item)).toBe('Cancelled')
+ expect(importActivityReason(item)).toBe('existing stage retained; explicit retry or custody review required')
+ for (const field of ['heldStages','pendingPublications','retainedPublications'] as const) {
+  item.download.importControl![field]=1
+  expect(importActivityLabel(item)).toBe('Review required')
+  item.download.importControl![field]=0
+ }
+ item.category='attention'
+ expect(importActivityLabel(item)).toBe('Cancelled · review required')
+})

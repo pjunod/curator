@@ -1,5 +1,31 @@
 # Monarr — Project Status
 
+## Resolved cancelled imports — 2026-11-13 · v0.50.3
+
+**Owner:** Codex · **Branch:** `codex/cancelled-import-attention` ·
+**Review and gate evidence:** [PR #161](https://github.com/pjunod/curator/pull/161).
+Paul deploys after the reviewed, qualified merge.
+
+PR #159 merged as `7a55f34` while this work qualified. Its historical-failure
+classification and guarded scratch sweep are preserved. Historical failure
+receipts are now distinguished from an open failed publication, so cleaned
+cancelled imports can move to history while an unresolved sibling publication
+still requires attention. Current generation, stages, placements, authorization,
+file outcomes, reservations and writer ownership remain decisive.
+
+The compatibility imports endpoint exposes resolved cancellations under
+`history`, including `filter=history`; it never calls them successful imports.
+The resolved cancellation pill says **Cancelled** without claiming files remain.
+Original failed state, error, cancellation and publication audit are retained.
+No cleanup authority, migration, deletion predicate or approval fence changes.
+
+Regression coverage models the four rows' real historical error prefix, mixed
+removed/open publication records, every custody signal, stale cancellation,
+worker precedence, unchanged persisted audit, and truthful cancellation pills.
+Independent adversarial review precedes the four real local gates and required
+hosted checks; exact evidence and final state are recorded on PR #161.
+
+
 ## Activity attention and superseded scratch — 2026-11-13 · v0.50.2
 
 **Owner:** Codex · **Branch:** `codex/activity-attention-cleanup` · **State:** [PR #159](https://github.com/pjunod/curator/pull/159) open; independent adversarial review approved after two fixes; final local validation passed.

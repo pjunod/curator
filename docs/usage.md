@@ -1289,7 +1289,8 @@ custody, unresolved files and actionable reservations still require review.
 The compatibility `/api/v1/imports` endpoint also exposes these resolved
 cancellations as `history` (including `filter=history`), never as successful
 `imported` rows. Original failure messages and publication outcomes remain
-unchanged. Local
+unchanged. The cancellation pill says **Cancelled** once custody is resolved;
+remaining custody still says **Review required**. Local
 placement failures that require a decision appear under **Needs attention**;
 environmental retries remain **In progress**. Rejected publications are cleaned
 automatically and remain in **History** after their files are removed. The row
