@@ -70,17 +70,18 @@ func (s *Service) publicationManifest(pub sqlite.Publication) (ports.Manifest, b
 // (manifest_source 'none'), so the per-file cleanup's guard knows the
 // directory must still carry it: a missing manifest file then stops the
 // cleanup instead of letting it decide placed files without proof.
-func (s *Service) recordFileManifest(ctx context.Context, pub sqlite.Publication, m ports.Manifest) {
+func (s *Service) recordFileManifest(ctx context.Context, pub sqlite.Publication, m ports.Manifest) error {
 	if pub.ManifestSource != "none" || m.Source != "file" {
-		return
+		return nil
 	}
 	raw, err := json.Marshal(m)
 	if err != nil {
-		return
+		return fmt.Errorf("publication manifest could not be encoded: %w", err)
 	}
 	if err := s.db.RecordPublicationFileManifest(ctx, pub.ID, string(raw), m.CrossVolume); err != nil {
-		s.log.Warn("publication manifest could not be recorded", "publication", pub.ID, "err", err)
+		return fmt.Errorf("publication manifest could not be recorded: %w", err)
 	}
+	return nil
 }
 
 // errManifestInvalid is a manifest that says something impossible about
@@ -221,7 +222,10 @@ func (s *Service) runPublicationImport(ctx context.Context, dl sqlite.Download, 
 	for _, f := range m.Files {
 		files = append(files, sqlite.PublicationFile{Path: f.Path, Bytes: f.Bytes, SHA256: f.SHA256})
 	}
-	s.recordFileManifest(ctx, pub, m)
+	if err := s.recordFileManifest(ctx, pub, m); err != nil {
+		s.holdPublication(ctx, &dl, pub, err.Error())
+		return err
+	}
 	if err := s.db.SeedPublicationFiles(ctx, pub.ID, files); err != nil {
 		return err
 	}
@@ -566,7 +570,10 @@ func (s *Service) endPublication(ctx context.Context, dl sqlite.Download, cfg po
 	for _, f := range m.Files {
 		files = append(files, sqlite.PublicationFile{Path: f.Path, Bytes: f.Bytes, SHA256: f.SHA256})
 	}
-	s.recordFileManifest(ctx, pub, *m)
+	if err := s.recordFileManifest(ctx, pub, *m); err != nil {
+		s.holdPublication(ctx, &dl, pub, err.Error())
+		return
+	}
 	if err := s.db.SeedPublicationFiles(ctx, pub.ID, files); err != nil {
 		s.log.Warn("publication could not be ended", "publication", pub.ID, "err", err)
 		return
