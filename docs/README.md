@@ -19,6 +19,7 @@ when one is missing or a relative link in any document does not resolve. Start w
 | [deployment.md](deployment.md) | Storage, floating nodes and HA. |
 | [SECURITY_CHECKS.md](SECURITY_CHECKS.md) | Security workflows, badge interpretation and remaining repository controls. |
 | [SECURITY_TRIAGE.md](SECURITY_TRIAGE.md) | 2026-11-13 security finding triage, boundary evidence, dependency remediation and owner decisions. |
+| [SECURITY_DEPENDENCY_PATCHES.md](SECURITY_DEPENDENCY_PATCHES.md) | Provenance, validation and removal of local upstream dependency fixes. |
 
 ## Decisions
 
@@ -146,5 +147,3 @@ Superseded plans and proposals, kept as history. Each starts with a one-line poi
 ## Renderings
 
 - [renderings/](renderings/) — HTML and PNG captures the proposals and previews were reviewed against (`download-lifecycle/`, `media-preview/`).
-
-- [Dependency patches](SECURITY_DEPENDENCY_PATCHES.md) — provenance, validation and removal of local upstream fixes.
