@@ -337,3 +337,16 @@ restart, and publications left in Resolve for their subtitles and `.nfo`s.
     `TestPublicationCleanupMissingManifestKeepsOnlySource`,
     `TestPublicationCleanupLegacyManifestStillNeedsApproval`, and
     `TestPublicationCleanupRetainsChangedSourceBeforePass`.
+
+## Addendum — retired publications and cancelled scratch (v0.50.2)
+
+36. **Removed failures remain history; superseded scratch can retire.** A
+    completed publication that failed and was then removed remains a terminal
+    attempt in Activity. Retaining its receipt does not retain its files.
+    A cancelled media stage with no publication authorization can be retired
+    automatically once every publication of its download is removed and every
+    recorded file was discarded as superseded. The sweep requires the exact
+    journaled stage name, recorded storage and parent identities, and the
+    stage object's identity (or verified absence); a prior-file backup blocks
+    this path. It never changes Library targets or source payloads. Cancellation
+    without this supersession evidence retains its existing custody rules.

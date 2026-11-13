@@ -530,14 +530,18 @@ func (d *DB) DeleteRecoverySuperseded(ctx context.Context, fileID int64, importI
 
 // supersededStageWhere selects a prepared stage no import will ever use
 // again: a download's placement from an attempt epoch below the attempt's
-// current one, or of an attempt that has completed, that no publication
-// authorization names. Placement ids carry their epoch, so a later attempt
+// current one, of an attempt that has completed, or of a cancelled attempt
+// whose entire publication was removed as superseded. No publication
+// authorization may name the stage. Placement ids carry their epoch, so a later attempt
 // writes its own stage and never adopts this one; reconciliation would keep
 // it prepared for ever (download 1196, 2026-11-12).
 const supersededStageWhere = `p.state='prepared' AND COALESCE(json_extract(p.data,'$.recovery_import'),'')=''
 	AND COALESCE(json_extract(p.data,'$.download_id'),0)!=0
 	AND EXISTS(SELECT 1 FROM import_attempt_controls c WHERE c.download_id=json_extract(p.data,'$.download_id') AND c.generation_key=json_extract(p.data,'$.source_generation')
-		AND (c.outcome='completed' OR (json_extract(p.data,'$.import_attempt_epoch') IS NOT NULL AND json_extract(p.data,'$.import_attempt_epoch')<c.attempt_epoch)))
+		AND (c.outcome='completed' OR (c.outcome='cancelled' AND EXISTS(SELECT 1 FROM publications q WHERE q.download_id=c.download_id AND q.kind='completed' AND q.state='removed')
+            AND EXISTS(SELECT 1 FROM publications q JOIN publication_files f ON f.publication_id=q.id WHERE q.download_id=c.download_id)
+            AND NOT EXISTS(SELECT 1 FROM publications q WHERE q.download_id=c.download_id AND q.state!='removed')
+            AND NOT EXISTS(SELECT 1 FROM publications q JOIN publication_files f ON f.publication_id=q.id WHERE q.download_id=c.download_id AND (f.outcome!='discarded' OR f.discard_reason!='superseded' OR f.removed_at=0))) OR (json_extract(p.data,'$.import_attempt_epoch') IS NOT NULL AND json_extract(p.data,'$.import_attempt_epoch')<c.attempt_epoch)))
 	AND NOT EXISTS(SELECT 1 FROM import_publication_authorizations a WHERE a.placement_id=p.id)`
 
 // SupersededStages lists one download's superseded stages (every download's

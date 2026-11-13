@@ -34,7 +34,7 @@ import { PathInput } from '../PathInput'
 import '../LegacyReview.css'
 import '../ImportQueue.css'
 import '../Activity.css'
-import { canRetryImport, importActivityLabel, importNeedsReview } from '../importActivity'
+import { canRetryImport, importActivityLabel, importActivityReason, importNeedsReview } from '../importActivity'
 import { awaitingText, fmtDuration } from '../queueTime'
 
 const STATE_PILL: Record<string, string> = {
@@ -247,7 +247,8 @@ export function ActivityPage() {
         <div className="activity-attempt-heading"><div>{canRetryImport(item) && <input type="checkbox" aria-label={`Select ${item.title}`} checked={selected.has(attemptKey(d))} onChange={e => setSelected(prev => { const next = new Set(prev); if (e.target.checked) next.add(attemptKey(d)); else next.delete(attemptKey(d)); return next })} />}{d.mediaItemId > 0 ? <Link className="activity-title" to="/library/$id" params={{ id: String(d.mediaItemId) }}>{item.title}</Link> : <strong>{item.title}</strong>}<p className="muted small activity-release" title={d.title}>{d.title}</p><p className="muted small">{[item.kind, d.quality, d.id < 0 ? 'Historical import · read only' : d.protocol === 'manual' ? 'Manual import' : null].filter(Boolean).join(' · ')}</p></div><span className={`pill ${view === 'attention' ? 'pill-warning' : 'pill-neutral'}`}>{stage}</span></div>
         {view === 'progress' && <StageProgress d={d} />}
         {d.state === 'held' && <HeldLine d={d} />}
-        {d.error && <p className="muted small">{d.error}</p>}
+        {importActivityReason(item) && <p className="muted small">{importActivityReason(item)}</p>}
+        {d.publications?.length && d.publications.every(p => p.state === 'removed') ? <p className="muted small">Publication files have been removed.{view === 'history' ? ' This record is retained history.' : d.importControl?.heldStages ? ' Scratch files from an interrupted import remain.' : ''}</p> : null}
         {d.importBlockedSince && <p className="muted small">Waiting on the environment · {d.importRetryAt ? `next retry ${fmtRelative(d.importRetryAt)}` : 'automatic retry pending'}</p>}
         <div className="activity-attempt-footer"><span className="muted small">Updated {fmtRelative(item.updatedAt)}</span><div className="row-actions">
           {d.id > 0 && importNeedsReview(item) && <button disabled={busy} onClick={event => { focusActionTrigger(event); remember(); setReview(d.id) }}>Review retained files</button>}
