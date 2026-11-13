@@ -44,18 +44,34 @@ separate implementation contract and adversarial review before construction.
 
 | Order | Work | Scope | Dependency and acceptance outcome |
 |---|---|---|---|
-| 0 | Finish OpenSSF rollout and assess findings | Small/medium | #118 checks pass; default-branch score publishes after merge; findings triaged. |
-| 1 | Guided first run and connection diagnostics | Medium | Fresh install reaches a tested configuration without guessing paths or providers. |
-| 2 | Read-only migration preview, then reviewed import | Large | Existing setup imports through current services; rollback is scope-checked. |
-| 3 | Household identities and request approval | Large | Members can request without acquiring admin capabilities. |
-| 4 | Library-aware shelves and simpler default journeys | Medium/large | Users can discover, request and follow a title on web/mobile with honest statuses. |
-| 5 | Boundary improvements alongside feature work | Incremental | New seams have ownership and regression protection without a wholesale rewrite. |
-| 6 | Release trust, packaging, localization and optional integrations | Separate slices | Each slice has its own evidence and operating-cost decision. |
+| 0 | OpenSSF findings remediation | Separate session | Security rollout #118 is merged; the dedicated security session triages and fixes the resulting findings. |
+| 1 | Queue and Settings UI cleanup | Review and render first | Astra audits Activity/Import Queue and Settings Resolve/Dev against recent work; the owner reviews desktop/mobile renderings before app implementation. |
+| 2 | Household identities and request approval | Large | Members can request without acquiring admin capabilities; optimize for this household's daily use. |
+| 3 | Library-aware shelves and simpler default journeys | Medium/large | Discover, request and follow owned/requested titles coherently on web/mobile. |
+| 4 | Boundary improvements alongside feature work | Incremental | New seams have ownership and regression protection without a wholesale rewrite. |
+| 5 | Release trust, packaging, localization and optional integrations | Separate slices | Each slice has its own evidence and operating-cost decision. |
+| Later | Guided first run and connection diagnostics | Medium | Deferred until the household workflows above are delivered. |
+| Later | Read-only migration preview, then reviewed import | Large | Deferred; existing setup import and scope-checked rollback remain proposed. |
 
-Start wizard work before the request system because it improves every new
-installation and does not require a new identity model. Build member-aware
-personalization only after identities exist. Backend boundary work belongs
-inside the relevant slices, not in a prerequisite reorganization project.
+**Owner priority, 2026-11-13:** improve this household's daily use first.
+Start with UI cleanup, then household requests and library-aware discovery.
+Setup and migration are later work. Member-aware personalization follows the
+identity model; library-only shelves can proceed independently. Backend
+boundary work belongs inside the relevant slices.
+
+### UI review and rendering gate
+
+Review Activity and Import Queue as one end-to-end workflow, plus Settings
+Resolve and Dev. Identify duplicate projections, old/unreachable recovery
+entry points, current failure/retry decisions and required storage safeguards
+against the latest pipeline contract and recent queue changes. Removing a
+screen does not authorize removing a necessary backend invariant.
+
+Astra supplies an evidence-backed keep/merge/remove/move recommendation.
+Show desktop and phone renderings, including ordinary progress, an actionable
+exception and a clean empty state, before changing application UI code.
+The owner must see and approve the proposed UI before implementation. Apply
+this rendering-first rule to subsequent household and discovery UI changes.
 
 ## 3. Guided setup and migration
 
@@ -299,13 +315,14 @@ These changes would spend effort without addressing the identified journeys.
 
 Before implementation, review these decisions in order:
 
-1. Approve guided setup and a Sonarr/Radarr migration preview as the first
-   product milestone; confirm whether Prowlarr belongs in that same slice.
+1. Review Astra's queue/settings audit and the proposed desktop/mobile
+   renderings. Approve the UI cleanup before implementing application changes.
 2. Agree the household capability model and whether child accounts are in
    the initial scope. Produce a security-reviewed authorization contract.
 3. Choose the first three library-aware shelves and whether any watch-history
    integration is allowed. Default to library-only inputs.
-4. Agree release registry, architectures, ruleset policy and signing scope.
+4. Keep setup and migration deferred. Agree release registry, architectures,
+   ruleset policy and signing scope when that work is prioritized.
 5. Approve architecture refactors only with their feature slice or measured
    maintenance bottleneck; review event-database splitting independently.
 
