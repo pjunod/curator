@@ -212,6 +212,18 @@ func (d *DB) CreateMediaItem(ctx context.Context, m domain.MediaItem) (int64, er
 		return 0, err
 	}
 	defer func() { _ = tx.Rollback() }()
+	id, err := d.createMediaItemTx(ctx, tx, m)
+	if err != nil {
+		return 0, err
+	}
+	if err = tx.Commit(); err != nil {
+		return 0, err
+	}
+	return id, nil
+}
+
+// createMediaItemTx is shared by ordinary Add and atomic household approval.
+func (d *DB) createMediaItemTx(ctx context.Context, tx *sql.Tx, m domain.MediaItem) (int64, error) {
 	q := d.Write.WithTx(tx)
 	// Check every supplied identity inside the writer transaction. Search and
 	// add may be minutes apart, and different IDs resolving to different rows
@@ -254,9 +266,6 @@ func (d *DB) CreateMediaItem(ctx context.Context, m domain.MediaItem) (int64, er
 		return 0, err
 	}
 	if _, err := q.BumpIdentityRevision(ctx); err != nil {
-		return 0, err
-	}
-	if err := tx.Commit(); err != nil {
 		return 0, err
 	}
 	return id, nil

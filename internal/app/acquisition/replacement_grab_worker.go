@@ -110,6 +110,15 @@ func (s *Service) runReplacementGrab(ctx context.Context, g sqlite.ReplacementGr
 		_ = s.db.SettleReplacementGrab(ctx, g.DownloadID, "skipped: download row is gone", time.Time{})
 		return
 	}
+	household, originErr := s.db.IsHouseholdDownload(ctx, dl.ID, dl.GenerationKey)
+	if originErr != nil {
+		s.settleGrabRetry(ctx, g, originErr)
+		return
+	}
+	if household {
+		_ = s.db.SettleReplacementGrab(ctx, g.DownloadID, "skipped: household scope requires owner re-review", time.Time{})
+		return
+	}
 	enabled, err := s.enabledIndexers(ctx)
 	if err != nil || len(enabled) == 0 || s.newIndexer == nil {
 		s.settleGrabRetry(ctx, g, fmt.Errorf("no enabled indexer"))

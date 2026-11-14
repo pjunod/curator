@@ -144,6 +144,7 @@ func (ImportFailed) EventType() string { return "import.failed" }
 type Service struct {
 	completedMu       sync.Mutex
 	storageDecisionMu sync.Mutex
+	offloadNarrowMu   sync.Mutex
 	// Publication authority, per media item (import_targets.go). Shared by
 	// ordinary and recovery imports, including crash reconciliation.
 	importTargets     importTargets
@@ -159,6 +160,7 @@ type Service struct {
 	log               *slog.Logger
 	rssSweepMu        sync.Mutex
 	planDispatchMu    sync.Mutex
+	seasonRetryCursor atomic.Int64
 	newIndexer        IndexerFactory
 	newClient         ClientFactory
 
@@ -196,7 +198,8 @@ type Service struct {
 	// The data plane: import workers and the in-flight registry. See
 	// importers.go for why they are not on the poll goroutine.
 	importerFields
-	admission ports.WorkAdmission
+	admission      ports.WorkAdmission
+	householdCheck func(context.Context, int64) error
 
 	// timings records how long the pipeline's seams take (pipeline M0); nil
 	// records nothing. factMismatches counts runner statuses that carried a
@@ -784,6 +787,8 @@ type GrabRequest struct {
 	RequestID              string
 	AllowBlacklisted       bool
 	ReplacementOperationID string
+	HouseholdTargetID      int64
+	HouseholdGeneration    int64
 	ReservedEpisodeIDs     []int64 // server-derived acquisition scope, never read from HTTP
 }
 
@@ -1405,6 +1410,18 @@ func (s *Service) grab(ctx context.Context, req GrabRequest, manual bool) (int64
 	// is the worse of the two failures by a distance.
 	targetCtx, releaseTarget := s.lockImportTarget(ctx, req.MediaItemID)
 	defer releaseTarget()
+	if req.HouseholdTargetID != 0 {
+		if s.householdCheck == nil {
+			return 0, sqlite.ErrHouseholdVerification
+		}
+		if err = s.householdCheck(targetCtx, item.ID); err != nil {
+			return 0, err
+		}
+		if err = s.db.CheckHouseholdAdmission(targetCtx, req.HouseholdTargetID, req.HouseholdGeneration); err != nil {
+			return 0, err
+		}
+	}
+
 	allocationCtx, releaseStorageAllocation := s.lockStorageDecision(targetCtx)
 	releaseAllocation := func() { releaseStorageAllocation(); releaseTarget() }
 	defer releaseAllocation()
@@ -1485,6 +1502,13 @@ func (s *Service) grab(ctx context.Context, req GrabRequest, manual bool) (int64
 			Path: copyPath, Monitored: false,
 		}
 		inserted, err = s.db.InsertManualAdditionalDownload(allocationCtx, copy, download, newTransferID)
+	} else if req.HouseholdTargetID != 0 {
+		var created bool
+		inserted, created, err = s.db.InsertHouseholdDownload(allocationCtx, req.HouseholdTargetID, req.HouseholdGeneration, download)
+		if err == nil && !created {
+			releaseAllocation()
+			return inserted.ID, nil
+		}
 	} else {
 		inserted, err = s.db.InsertDownloadRecord(allocationCtx, download)
 	}

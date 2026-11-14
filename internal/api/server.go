@@ -15,6 +15,7 @@ import (
 	"github.com/pjunod/monarr/internal/app/acquisition"
 	"github.com/pjunod/monarr/internal/app/discover"
 	"github.com/pjunod/monarr/internal/app/health"
+	"github.com/pjunod/monarr/internal/app/household"
 	"github.com/pjunod/monarr/internal/app/library"
 	"github.com/pjunod/monarr/internal/app/maintenance"
 	"github.com/pjunod/monarr/internal/app/pipeline"
@@ -63,6 +64,7 @@ type Deps struct {
 	DB          SchemaVersioner
 	Library     *library.Service
 	Acquisition *acquisition.Service
+	Household   *household.Service
 	// Pipeline serves the seam timings and the overdue count; nil serves an
 	// empty summary rather than failing.
 	Pipeline *pipeline.Timings
@@ -96,8 +98,10 @@ type Deps struct {
 
 // Server implements apigen.ServerInterface.
 type Server struct {
-	authMu sync.Mutex
-	deps   Deps
+	authMu        sync.Mutex
+	loginFailures householdLoginFailures
+	cinemaStarts  householdLoginFailures
+	deps          Deps
 
 	streamsCtx         context.Context
 	cancelStreams      context.CancelFunc
@@ -132,7 +136,7 @@ func New(deps Deps) *Server {
 	streamsCtx, cancelStreams := context.WithCancel(context.Background())
 	backgroundCtx, cancelBackground := context.WithCancel(parent)
 	requestsCtx, cancelRequests := context.WithCancel(context.Background())
-	return &Server{deps: deps, streamsCtx: streamsCtx, cancelStreams: cancelStreams,
+	return &Server{loginFailures: householdLoginFailures{entries: map[string][]time.Time{}}, deps: deps, streamsCtx: streamsCtx, cancelStreams: cancelStreams,
 		backgroundCtx: backgroundCtx, cancelBackground: cancelBackground,
 		requestsCtx: requestsCtx, cancelRequests: cancelRequests,
 		streamWriteTimeout: 5 * time.Second}
@@ -155,14 +159,14 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("/api/v1/", s.noteCallers(s.authGuard(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		apiHandler.ServeHTTP(w, r.WithContext(domain.WithInteractiveJob(r.Context())))
 	}))))
-	mux.Handle("/metrics", s.metricsHandler())
+	mux.Handle("/metrics", s.authGuard(s.metricsHandler()))
 	// The compat personalities are machine callers by definition — Prowlarr,
 	// Jellyseerr, Bazarr — so they belong on the same list.
 	if s.deps.CompatSonarr != nil {
-		mux.Handle("/sonarr/", s.noteCallers(http.StripPrefix("/sonarr", s.deps.CompatSonarr)))
+		mux.Handle("/sonarr/", s.noteCallers(s.authGuard(http.StripPrefix("/sonarr", s.deps.CompatSonarr))))
 	}
 	if s.deps.CompatRadarr != nil {
-		mux.Handle("/radarr/", s.noteCallers(http.StripPrefix("/radarr", s.deps.CompatRadarr)))
+		mux.Handle("/radarr/", s.noteCallers(s.authGuard(http.StripPrefix("/radarr", s.deps.CompatRadarr))))
 	}
 	mux.Handle("/", s.spaHandler())
 	return s.trackRequests(s.recoverer(s.requestLogger(mux)))

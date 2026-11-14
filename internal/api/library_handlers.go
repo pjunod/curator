@@ -1067,6 +1067,17 @@ func (s *Server) UpdateSettings(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid JSON body")
 		return
 	}
+	if s.deps.Store != nil && (body.AuthUsername != nil || body.AuthPassword != nil || body.AuthRequired != nil && !*body.AuthRequired) {
+		established, err := s.deps.Store.HouseholdEstablished(r.Context())
+		if err != nil {
+			writeError(w, 503, "account settings unavailable")
+			return
+		}
+		if established {
+			writeError(w, 403, "manage household credentials from Accounts after local password confirmation")
+			return
+		}
+	}
 	if body.TmdbApiKey != nil {
 		if err := s.deps.Settings.SetMeta(r.Context(), TMDBKeySetting, strings.TrimSpace(*body.TmdbApiKey)); err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error())

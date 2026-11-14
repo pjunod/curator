@@ -103,3 +103,12 @@ Compile/typecheck checks are allowed during implementation. Per CLAUDE.md,
 application unit/browser suites and required CI run after complete implementation
 and an independent adversarial review. Results, PRs, merge state and receipts will
 be recorded as milestones complete. No live deployment is authorized by this work.
+
+## Merge receipt — 2026-11-13
+
+PR [#160](https://github.com/pjunod/curator/pull/160) merged as
+`97149893fc6d28c5edb4655ebce5bbfd6beaabec` after Astra review, local regression
+suites and all 19 required hosted checks on candidate `31d47751a65c2d5e2988b3557010be670c9a19ff`.
+The owned milestone lease is finished and external-drive evidence is preserved.
+Household delivery continues in [HOUSEHOLD_REQUESTS_STATUS.md](HOUSEHOLD_REQUESTS_STATUS.md).
+No live deployment.

@@ -559,11 +559,19 @@ func (d *DB) PendingOffloadOperationsForItem(ctx context.Context, itemID int64) 
 // attempt with the shorter path list) take their place. An empty keep
 // cancels them all.
 func (d *DB) RewriteOffloadOutbox(ctx context.Context, operationID, why string, keep []OutboxWrite) error {
+	return d.RewriteOffloadOutboxExcluding(ctx, operationID, why, keep, nil)
+}
+func (d *DB) RewriteOffloadOutboxExcluding(ctx context.Context, operationID, why string, keep []OutboxWrite, excluded []string) error {
 	tx, err := d.W.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
+	for _, path := range excluded {
+		if _, err = tx.ExecContext(ctx, `INSERT OR IGNORE INTO household_offload_exclusions(operation_id,path) VALUES(?,?)`, operationID, path); err != nil {
+			return err
+		}
+	}
 	now := time.Now().UnixMilli()
 	if _, err := tx.ExecContext(ctx, `UPDATE notifier_deliveries SET status='failed',last_error=?,next_at=0,updated_at=? WHERE operation_id=? AND status='pending' AND event IN ('offload','moved')`, why, now, operationID); err != nil {
 		return err
@@ -597,4 +605,21 @@ func intList(ns []int) string {
 		parts[i] = fmt.Sprint(n)
 	}
 	return strings.Join(parts, ",")
+}
+
+func (d *DB) HouseholdOffloadExclusions(ctx context.Context, id string) (map[string]bool, error) {
+	rows, err := d.R.QueryContext(ctx, `SELECT path FROM household_offload_exclusions WHERE operation_id=?`, id)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	out := map[string]bool{}
+	for rows.Next() {
+		var path string
+		if err = rows.Scan(&path); err != nil {
+			return nil, err
+		}
+		out[path] = true
+	}
+	return out, rows.Err()
 }

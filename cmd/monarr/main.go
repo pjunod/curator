@@ -48,6 +48,7 @@ import (
 	"github.com/pjunod/monarr/internal/app/acquisition"
 	"github.com/pjunod/monarr/internal/app/discover"
 	"github.com/pjunod/monarr/internal/app/health"
+	"github.com/pjunod/monarr/internal/app/household"
 	"github.com/pjunod/monarr/internal/app/importlist"
 	"github.com/pjunod/monarr/internal/app/library"
 	"github.com/pjunod/monarr/internal/app/maintenance"
@@ -71,6 +72,13 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	if len(os.Args) > 1 && os.Args[1] == "accounts" {
+		if err := runAccounts(ctx, os.Args[2:], os.Stdin, os.Stdout); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
 	if len(os.Args) > 1 && os.Args[1] == "maintenance" {
 		if err := runMaintenance(ctx, os.Args[2:], os.Stdin, os.Stdout); err != nil {
 			fmt.Fprintln(os.Stderr, err)
@@ -617,6 +625,11 @@ func serve(ctx context.Context, cfg config.Config, log *slog.Logger, listener ne
 		}
 	})
 
+	acq.SetHouseholdVerifier(lib.VerifyPrimaryPresence)
+	house := household.New(db, lib, acq)
+	house.SetAdmission(admission)
+	loops.Go(func() { house.Run(ctx) })
+
 	// HTTP.
 	srv := api.New(api.Deps{
 		TrustedProxies:      cfg.TrustedProxies,
@@ -631,6 +644,7 @@ func serve(ctx context.Context, cfg config.Config, log *slog.Logger, listener ne
 		DB:                  db,
 		Library:             lib,
 		Acquisition:         acq,
+		Household:           house,
 		Pipeline:            pipe,
 		Discover:            browse,
 		LibraryDiscovery:    discover.NewLibrary(db, meta),
@@ -648,6 +662,7 @@ func serve(ctx context.Context, cfg config.Config, log *slog.Logger, listener ne
 		DataDir:             cfg.DataDir,
 		StartedAt:           startedAt,
 	})
+	loops.Go(func() { srv.RunCinemaRevocations(ctx) })
 	httpServer := &http.Server{
 		Addr:              cfg.Addr(),
 		Handler:           srv.Handler(),

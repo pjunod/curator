@@ -1,5 +1,39 @@
 # Monarr — Project Status
 
+## Missing episode search recovery — 2026-11-13 · v0.51.2
+
+**Owner:** Codex · **Branch:** `codex/missing-episode-retry` · **State:** [PR #163](https://github.com/pjunod/curator/pull/163) open; independent review found no blockers; final local gates passed.
+
+The failed Strangers with Candy season comparison exhausted three attempts on
+`acquisition snapshot changed`, leaving S01E07 without a queued search. Optimistic
+snapshot/custody races now refresh discovery and defer without spending the
+failure budget. The existing 30-second coordinator recovers exhausted searches
+for missing episodes with bounded backoff, fresh background authority, bounded
+rotating batches, and an atomic latest-failure enqueue guard.
+
+Regressions cover a revision change during indexer discovery followed by a
+successful retry; startup recovery; monitoring, offloads, reservations, re-grab
+caps, malformed scopes, batch fairness, bounded backoff, completed work and
+provider deadlines; and a newer completed request racing recovery. Independent
+adversarial review found no blockers. Pinned lint, full Go tests, 174 web tests
+and all 267 browser tests passed. PR #163 is open; remote CI and deployment
+remain pending.
+
+Additional live diagnosis found failed receipts omitted article counts and
+charged zero-article failures as full releases. The adapter now supplements
+those receipts from a bounded, exact-transfer history lookup. Independent
+review found no blockers; lint and the affected adapter/reducer tests passed.
+The previously recorded zero-article failures 1347–1349 were corrected from
+exact job/token-correlated Runner history, preserving failure and blocklist
+records. A fresh targeted Stick search is queued.
+
+Live acquisition: targeted Stick S02E03 search grabbed a release as download
+1347; Runner failed it for zero downloadable articles. Its automatic replacement
+1348 failed health too; automatic replacement 1349 is now in progress. No
+successful import has been confirmed. The targeted Strangers with Candy S01E07 search found no eligible source;
+its sole single-episode source is PAR-failed and blocklisted. The owner approved a wider season comparison; download 1350 is fetching a
+healthy collection pack containing the missing episode. Import is pending.
+
 ## Resolved cancelled imports — 2026-11-13 · v0.51.1
 
 **Owner:** Codex · **Branch:** `codex/cancelled-import-attention` ·

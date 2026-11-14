@@ -163,6 +163,9 @@ func (d *DB) AuthorizeImportPlacement(ctx context.Context, p Placement) error {
 	if state != "prepared" || snapshot.Payload != publication.Payload {
 		return ErrPlacementGenerationChanged
 	}
+	if err = validateHouseholdPlacementTx(ctx, tx, p); err != nil {
+		return err
+	}
 	if err = authorizeImportPublication(ctx, tx, publication); err != nil {
 		return err
 	}

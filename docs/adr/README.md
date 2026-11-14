@@ -38,3 +38,5 @@ Context for all of these lives in [../architecture.md](../architecture.md).
 - [0021: Durable Runner recovery handoff](0021-file-lifecycle-recovery.md) — placement journal, target revision and receipt-driven cleanup (partly superseded by [0026](0026-pipeline-contract-v2.md)).
 
 - [0029 — shared availability](0029-shared-availability.md): observed primary-copy presence and owner discovery.
+
+- [0030: Household accounts and requests](0030-household-accounts-and-requests.md) — standalone accounts, optional identity links and scoped admission.

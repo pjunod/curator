@@ -150,3 +150,8 @@ func (d *DB) SetScanFileQuality(ctx context.Context, id, itemID, size int64, gen
 	_, err := d.W.ExecContext(ctx, `UPDATE media_files SET quality=?,quality_provenance='filename',quality_confidence='none' WHERE id=? AND media_item_id=? AND size=? AND file_generation=? AND quality_provenance IN ('','unknown','filename')`, q.String(), id, itemID, size, generation)
 	return err
 }
+
+func (d *DB) InvalidatePrimaryPresence(ctx context.Context, id int64) error {
+	_, err := d.W.ExecContext(ctx, `UPDATE library_presence_observations SET valid=0 WHERE media_item_id=? AND copy_id=0`, id)
+	return err
+}

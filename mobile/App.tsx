@@ -1,3 +1,5 @@
+import {HouseholdScreen} from './src/screens/HouseholdScreen'
+import {useResource} from './src/useResource'
 import { useEffect, useMemo, useState } from 'react'
 import { ActivityIndicator, BackHandler, Pressable, StyleSheet, Text, useWindowDimensions, View } from 'react-native'
 import { StatusBar } from 'expo-status-bar'
@@ -20,7 +22,7 @@ import { CalendarScreen } from './src/screens/CalendarScreen'
 import { ReleaseSearchScreen } from './src/screens/ReleaseSearchScreen'
 
 type Tab = 'library' | 'discover' | 'wanted' | 'activity' | 'more'
-type Overlay = { name: 'detail'; id: number } | { name: 'calendar' } | { name: 'releases'; id: number; scope: ReleaseSearchScope }
+type Overlay = { name:'household';tab:'requests'|'account' } | { name: 'detail'; id: number } | { name: 'calendar' } | { name: 'releases'; id: number; scope: ReleaseSearchScope }
 
 export default function App() {
   return (
@@ -42,6 +44,7 @@ function MonarrApp() {
   const [overlay, setOverlay] = useState<Overlay | null>(null)
   const [libraryVersion, setLibraryVersion] = useState(0)
   const client = useMemo(() => (connection ? new MonarrClient(connection) : null), [connection])
+  const account=useResource(()=>client&&connection?.sessionToken?client.getCurrentAccount():Promise.resolve(null),[client,connection?.sessionToken])
 
   useEffect(() => {
     void loadConnection().then((saved) => {
@@ -61,7 +64,7 @@ function MonarrApp() {
     return () => subscription.remove()
   }, [overlay])
 
-  const connected = async (next: Connection, _status: SystemStatus) => {
+  const connected = async (next: Connection, _status?: SystemStatus) => {
     const saved = await saveConnection(next)
     setConnection(saved)
     setTab('library')
@@ -93,8 +96,14 @@ function MonarrApp() {
     )
   }
 
+  if(connection.sessionToken&&account.loading)return <View style={[styles.boot,{backgroundColor:theme.bg}]}><ActivityIndicator color={theme.accent}/><Text style={{color:theme.muted}}>Checking account access…</Text></View>
+  if(connection.sessionToken&&(!account.data||account.error))return <SafeAreaView style={[styles.app,{backgroundColor:theme.bg}]}><Text style={{color:theme.text,padding:24}}>{account.error||'Sign in again to your Curator account.'}</Text><ButtonForSession onPress={()=>void disconnect()}/></SafeAreaView>
+  if(account.data&&account.data.accessRole!=='owner')return <HouseholdScreen client={client} identity={account.data} onSignOut={()=>void disconnect()} onAccountChanged={()=>void account.refresh()}/>
+
   let content
-  if (overlay?.name === 'detail') {
+  if(overlay?.name==='household'&&account.data){
+    content=<HouseholdScreen client={client} identity={account.data} initial={overlay.tab} onBack={()=>setOverlay(null)} onSignOut={()=>void disconnect()} onAccountChanged={()=>void account.refresh()}/>
+  } else if (overlay?.name === 'detail') {
     content = <MediaDetailScreen client={client} id={overlay.id} onBack={() => setOverlay(null)} onInteractiveSearch={(scope) => openReleases(overlay.id, scope)} onOpenActivity={() => { setOverlay(null); setTab('activity') }} />
   } else if (overlay?.name === 'releases') {
     content = <ReleaseSearchScreen client={client} id={overlay.id} initialScope={overlay.scope} onBack={() => openMedia(overlay.id)} />
@@ -109,7 +118,7 @@ function MonarrApp() {
   } else if (tab === 'activity') {
     content = <ActivityScreen client={client} onOpen={openMedia} />
   } else {
-    content = <MoreScreen client={client} connection={connection} onCalendar={() => setOverlay({ name: 'calendar' })} onDisconnect={() => void disconnect()} />
+    content = <MoreScreen onHousehold={account.data?.accessRole==='owner'?tab=>setOverlay({name:'household',tab}):undefined} client={client} connection={connection} onCalendar={() => setOverlay({ name: 'calendar' })} onDisconnect={() => void disconnect()} />
   }
 
   const screen = (
@@ -220,3 +229,5 @@ const styles = StyleSheet.create({
   theaterTabActive: { minHeight: 38 },
   theaterLabel: { fontSize: 11, fontWeight: '800' },
 })
+
+function ButtonForSession({onPress}:{onPress:()=>void}){return <Pressable accessibilityRole="button" onPress={onPress} style={{padding:20}}><Text>Return to sign-in</Text></Pressable>}

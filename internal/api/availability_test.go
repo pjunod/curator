@@ -8,6 +8,8 @@ import (
 	"github.com/pjunod/monarr/internal/app/health"
 	"github.com/pjunod/monarr/internal/ports"
 	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/pjunod/monarr/internal/domain"
@@ -92,5 +94,63 @@ func TestLibraryShelfRejectsNewCrossIDConflictDuringProviderIO(t *testing.T) {
 	rr := edgeDo(t, h, http.MethodGet, fmt.Sprintf("/api/v1/discover/library/%d/items?kind=movie&tmdbId=88&shelf=related", id), "", nil)
 	if rr.Code != 409 {
 		t.Fatalf("new conflict returned: %d %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestHouseholdShelfValidatesFullSeedIdentityBeforeAndAfterProviderIO(t *testing.T) {
+	for _, change := range []string{"conflict before", "conflict during", "deleted during"} {
+		t.Run(change, func(t *testing.T) {
+			_, db, owner := householdHTTPAccount(t)
+			ctx := context.Background()
+			id, err := db.CreateMediaItem(ctx, domain.MediaItem{Kind: domain.KindMovie, Title: "Seed", IDs: domain.ExternalIDs{TMDB: 88, IMDB: "tt88"}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			conflict := func() {
+				other, err := db.CreateMediaItem(ctx, domain.MediaItem{Kind: domain.KindMovie, Title: "Conflict", IDs: domain.ExternalIDs{TMDB: 89}})
+				if err != nil {
+					t.Fatal(err)
+				}
+				// Simulate conflicting authoritative provider IDs arriving in a
+				// concurrent rematch, after normal add validation.
+				if _, err = db.W.ExecContext(ctx, `UPDATE media_items SET imdb_id='tt88' WHERE id=?`, other); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if change == "conflict before" {
+				conflict()
+			}
+			called := false
+			source := changingLibraryProvider{during: func() {
+				called = true
+				if change == "deleted during" {
+					if _, err := db.W.ExecContext(ctx, `DELETE FROM media_items WHERE id=?`, id); err != nil {
+						t.Fatal(err)
+					}
+				} else {
+					conflict()
+				}
+			}}
+			h := New(Deps{Store: db, Log: edgeQuietLog(), Health: health.NewRegistry(nil), LibraryDiscovery: discover.NewLibrary(db, source)}).Handler()
+			rr := householdHTTP(t, h, "GET", "/api/v1/household/discovery/shelf?kind=movie&tmdbId=88&shelf=related", owner, nil)
+			if rr.Code != 409 {
+				t.Fatal("conflicting or removed seed returned", rr.Code, rr.Body.String())
+			}
+			if change == "conflict before" && called {
+				t.Fatal("conflicting seed reached provider")
+			}
+		})
+	}
+}
+func TestHouseholdPrivateActionsRejectAnotherTabsPrincipal(t *testing.T) {
+	h, _, token := householdHTTPAccount(t)
+	req := httptest.NewRequest("PUT", "https://curator.example/api/v1/household/requests/1/note", strings.NewReader(`{"note":"another owners private note"}`))
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Curator-Principal", "999:local:owner")
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != 409 {
+		t.Fatal("stale private action accepted", rr.Code, rr.Body.String())
 	}
 }

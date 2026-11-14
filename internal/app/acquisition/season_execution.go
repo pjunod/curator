@@ -277,6 +277,9 @@ func (s *Service) reconcileSeasonPlans(ctx context.Context) {
 		return
 	}
 	defer releaseWork()
+	if err := s.recoverFailedSeasonSearches(ctx); err != nil {
+		s.log.Warn("failed season search recovery deferred", "err", err)
+	}
 	rows, err := s.db.R.QueryContext(ctx, `SELECT id FROM acquisition_plans WHERE state IN ('admitted','dispatching','active','cancel_requested') ORDER BY id`)
 	if err != nil {
 		return

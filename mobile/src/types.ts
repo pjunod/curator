@@ -11,6 +11,7 @@ export type HealthStatus = 'ok' | 'warning' | 'error'
 export interface Connection {
   baseUrl: string
   apiKey: string
+  sessionToken?: string
 }
 
 export interface SystemStatus {
@@ -693,3 +694,10 @@ export interface StatusRematch {
   stoppable: boolean
 }
 
+
+export interface LocalAccount {id:number;revision:number;username:string;displayName:string;role:'owner'|'member';status:'active'|'suspended';createdAt:string}
+export interface AccountIdentity {accessRole:'owner'|'member';account:LocalAccount;method:'local'|'cinema'|'machine';machine:boolean}
+export interface HouseholdTitle {kind:'movie'|'series';tmdbId:number;title:string;year:number;overview:string;posterPath:string;releaseDate?:string;seasons:{number:number;aired:number;unknownDates:number}[];availability:Availability}
+export interface HouseholdRequest {id:number;revision:number;kind:'movie'|'series';tmdbId:number;scope:{episodes?:{season:number;episode:number}[]};title:string;year:number;posterPath:string;overview:string;state:'pending'|'approved'|'acquiring'|'fulfilled'|'declined'|'withdrawn'|'needs_review';publicNote:string;privateNote?:string;subscribed:boolean;subscriberCount:number;createdAt:string;updatedAt:string}
+
+export interface HouseholdReview {requestId:number;revision:number;title:string;scope:string;destination:string;rootId:number;profileId:number;profileName:string;present:number;missing:number;offloaded:number;checkedAt:string;fingerprint:string;newTitle:boolean}
