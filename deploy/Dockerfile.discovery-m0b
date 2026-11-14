@@ -1,6 +1,6 @@
 # Packaging experiment for docs/plan-smart-media-discovery.md §7.1.
 # The model is mounted at runtime; it is never baked into the image.
-FROM rust:1.97.1-bookworm@sha256:0e2bcaef56d041a486784e54104a81aebe0da44bd03019bd70bc0401e42e4a97 AS embed
+FROM rust:1.99.1-bookworm@sha256:e6f2cff35d0f309acf8433b4f05878ed77092602c5065cc81801177da0bb3a9c AS embed
 WORKDIR /src/tools/curator-embed
 COPY tools/curator-embed/Cargo.toml tools/curator-embed/Cargo.lock ./
 COPY tools/curator-embed/vendor ./vendor
