@@ -1,51 +1,16 @@
-import { AvailabilityBadge } from '../AvailabilityBadge'
+import { LibraryCardActivity, LibraryCardFooter } from '../LibraryCardFooter'
 import { useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
-import type { BookType, MediaItemSummary, MediaKind } from '../api'
+import type { BookType, MediaItemSummary, MediaKind, QueueItem } from '../api'
 import {
-  ACTIVE_DOWNLOAD_STATES, bulkEditLibrary, completeness, getLibrary,
+  bulkEditLibrary, completeness, getLibrary,
   getProfiles, getQueue, getReviewQueue, getScanReport, getSettings, posterUrl,
 } from '../api'
 import { PAGE_SIZES, Pager, PageSizePicker, sliceForPage } from '../Pager'
 import { CardSizePicker } from '../CardSizePicker'
 import { DiskScanControl } from '../DiskScan'
 import { PRESENCES, matchesPresence, validPresence, type Presence } from '../libraryPresence'
-
-// CardBadges: the poster stays a poster. Nothing is drawn over the artwork —
-// quality, target, upgrade state and ratings all live on the item page, which
-// is where someone goes when they want detail. What is left here is the
-// completeness pill and an in-flight marker, both in the card's text footer
-// rather than on the image.
-function CardBadges(props: { m: MediaItemSummary; downloading: boolean }) {
-  const { m } = props
-  const comp = completeness(m.kind, m.episodeFileCount, m.episodeCount, m.fileCount)
-  return (
-    <div className="poster-badges">
-      {m.availability&&m.kind!=='book'&&<AvailabilityBadge value={m.availability} />}
-      <span
-        className={`pill pill-recorded ${comp.cls}`}
-        title={
-          m.kind === 'series'
-            ? 'Recorded monitored aired episodes; presence is checked separately'
-            : 'Recorded file count; presence is checked separately'
-        }
-      >
-        {comp.total === 0 ? 'No episode records' : `${comp.have}/${comp.total} recorded`}
-      </span>
-      {m.offloaded && (
-        <span className="pill pill-warning pill-offloaded" title={m.kind === 'series' ? `${m.offloadedEpisodes ?? 0} episode(s) offloaded: files deleted on purpose, title kept` : 'Offloaded: files deleted on purpose, title kept'}>
-          offloaded
-        </span>
-      )}
-      {props.downloading && (
-        <span className="pill pill-info" title="Download in flight">
-          ↓
-        </span>
-      )}
-    </div>
-  )
-}
 
 type LibraryTab = 'all' | 'movie' | 'series' | BookType
 
@@ -343,11 +308,12 @@ export function LibraryPage() {
   const settings = useQuery({ queryKey: ['settings'], queryFn: getSettings })
   const report = useQuery({ queryKey: ['scan-report'], queryFn: getScanReport })
   const queue = useQuery({ queryKey: ['queue'], queryFn: getQueue, refetchInterval: 30_000 })
-  const downloading = new Set(
-    (queue.data ?? [])
-      .filter((q) => ACTIVE_DOWNLOAD_STATES.includes(q.state))
-      .map((q) => q.mediaItemId),
-  )
+  const downloads = new Map<number, QueueItem[]>()
+  for (const job of queue.data ?? []) {
+    const jobs = downloads.get(job.mediaItemId) ?? []
+    jobs.push(job)
+    downloads.set(job.mediaItemId, jobs)
+  }
 
   // Per-tab counts, so a tab that looks empty is empty rather than
   // ambiguous — "Books 0" answers the question "is this broken?".
@@ -451,30 +417,16 @@ export function LibraryPage() {
         </div>
       </button>
     ) : (
-      <Link key={m.id} to="/library/$id" params={{ id: String(m.id) }} className="poster-card">
-        {m.posterPath ? (
-          <img src={posterUrl(m.posterPath)} alt="" loading="lazy" />
-        ) : (
-          <div className="poster-fallback">{m.title.slice(0, 1)}</div>
-        )}
-        <div className="poster-meta">
-          <div className="poster-title" title={m.title}>
-            {m.title}
-          </div>
-          <div className="muted poster-sub">
-            <span>
-              {m.kind === 'book'
-                ? [
-                    m.author,
-                    ...(m.bookTypes ?? [m.bookType ?? 'ebook']).map((edition) =>
-                      edition === 'audiobook' ? 'Audiobook' : 'Ebook',
-                    ),
-                  ].filter(Boolean).join(' · ')
-                : `${m.year || '—'} · ${m.kind}`}
-            </span>
-          </div>
-          <CardBadges m={m} downloading={downloading.has(m.id)} />
+      <Link key={m.id} to="/library/$id" params={{ id: String(m.id) }} className="poster-card library-card">
+        <div className="library-card-art">
+          {m.posterPath ? (
+            <img src={posterUrl(m.posterPath)} alt="" loading="lazy" />
+          ) : (
+            <div className="poster-fallback">{m.title.slice(0, 1)}</div>
+          )}
+          <LibraryCardActivity downloads={downloads.get(m.id)} active={m.availability?.acquisition === 'active'} />
         </div>
+        <LibraryCardFooter item={m} />
       </Link>
     )
 
