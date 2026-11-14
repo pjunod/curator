@@ -1999,7 +1999,7 @@ paths:
       parameters:
         - name: filter
           in: query
-          schema: { type: string, enum: [all, active, queued, attention, imported], default: all }
+          schema: { type: string, enum: [all, active, queued, attention, imported, history], default: all }
         - name: q
           in: query
           schema: { type: string }
@@ -2011,7 +2011,7 @@ paths:
           schema: { type: integer, minimum: 0, default: 0 }
       responses:
         "200":
-          description: One page of imports. Counts cover the full search, not only this page. History is subject to Activity retention.
+          description: One page of imports. Counts cover the full search, not only this page. Cancelled attempts without custody appear in history, retaining their original state and errors. History is subject to Activity retention.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ImportActivityPage' }

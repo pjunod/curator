@@ -22,7 +22,7 @@ func (s *Server) ListImportActivity(w http.ResponseWriter, r *http.Request, p ap
 	if p.Offset != nil {
 		offset = *p.Offset
 	}
-	if (filter != "all" && filter != "active" && filter != "queued" && filter != "attention" && filter != "imported") || limit < 1 || limit > 200 || offset < 0 {
+	if (filter != "all" && filter != "active" && filter != "queued" && filter != "attention" && filter != "imported" && filter != "history") || limit < 1 || limit > 200 || offset < 0 {
 		writeError(w, 400, "invalid import filter or pagination")
 		return
 	}
