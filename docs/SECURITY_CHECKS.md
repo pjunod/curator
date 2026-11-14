@@ -172,3 +172,40 @@ settings-read error requires authentication instead of opening the gate;
 `TestAuthSettingsReadFailureCannotOpenGate` covers the failure, absent-row
 default and a still-readable API key. This was a confirmed adjacent defect
 found by fault injection during the password-storage review.
+
+
+## Optional Cinema login: reviewed network and cookie findings
+
+Cinema egress is configuration authority, not a household request parameter.
+`SaveCinemaConnection` requires a current **local owner account and password**
+before any request. Members, anonymous callers and Cinema-derived owner sessions
+cannot select a host. Later calls use only that saved connection or its durable
+revocation snapshot. `cinemaEndpoint` reparses every base, requires HTTPS with a
+nonempty hostname, refuses credentials/query/fragment/opaque forms (including a
+trailing bare `?`), preserves a valid reverse-proxy prefix and adds a closed
+protocol operation plus an encoded info query. Standard TLS verification stays
+on; redirects are never followed, including secret-bearing POST redirects.
+Private/LAN HTTPS Cinema addresses are intentional supported destinations.
+
+The two `go/request-forgery` sites (PR #162 alerts 171 and 172) are individually
+reviewed authorized-owner egress. This is not permission to bypass CodeQL or
+accept caller-controlled destinations in household discovery/sign-in routes.
+Regression cases prove denied callers and malformed bases cause zero outbound
+IO, a self-hosted TLS prefix works, and a second origin receives neither an info
+redirect nor credentials/grants from a 307 response. Test TLS transport injection
+preserves the production client's redirect and timeout policy.
+
+Local legacy and household login/logout share `setLocalSessionCookie`. The
+conditional Secure finding (PR #162 alert 173, now at the shared issuance policy)
+records the existing **trusted-LAN plaintext HTTP compatibility risk**, not a
+confidential transport guarantee. Direct TLS and explicitly trusted HTTPS proxy
+requests always receive Secure; spoofed, chained and duplicate forwarding
+headers cannot assert TLS. Plain HTTP can expose both the login password and
+session to a network observer; use HTTPS for confidentiality. This narrow policy
+exception does not cover Cinema state or derived cookies, which stay HTTPS-only.
+`TestHouseholdDatabaseCookieTransportAndRevocation` repeats the transport matrix
+through real stored accounts and confirms durable revocation on logout.
+
+Configure optional Cinema login through Curator's HTTPS address: its form carries
+both the local owner password and Cinema client secret. Neither global query
+exclusions nor weakened security checks are needed for these exact dispositions.

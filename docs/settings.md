@@ -26,7 +26,7 @@ API. Sole-owner recovery is a host operation described in
 **Access → Cinema sign-in connection** is independent of media notifications,
 calendar and watch-state synchronization. In Cinema, use **Settings →
 Integrations → Manage optional Curator sign-in connections** to register the
-exact Curator HTTPS callback `/api/v1/auth/cinema/callback`. Copy the new client
+exact Curator HTTPS callback `/api/v1/auth/cinema/callback`. Open Curator through HTTPS before entering credentials. Copy the new client
 ID and one-time client secret into Curator with Cinema's HTTPS address and the
 same callback. Verify and save with your local owner password. This establishes
 authenticated household access. Both services need these new delegation routes;

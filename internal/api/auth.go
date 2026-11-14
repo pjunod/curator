@@ -275,12 +275,16 @@ func (s *Server) Login(w http.ResponseWriter, r *http.Request) {
 			s.deps.Log.Warn("auth: password hash upgrade failed; will retry on next login")
 		}
 	}
-	http.SetCookie(w, &http.Cookie{
-		Name: sessionCookie, Value: liveSessions.create(), Path: "/",
-		HttpOnly: true, SameSite: http.SameSiteLaxMode, Secure: s.secureSessionRequest(r),
-		MaxAge: int(sessionTTL.Seconds()),
-	})
+	s.setLocalSessionCookie(w, r, liveSessions.create(), int(sessionTTL.Seconds()))
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// setLocalSessionCookie is the common standalone login/logout transport policy.
+// Direct TLS and explicitly trusted HTTPS proxies always get Secure. Plain HTTP
+// is an intentional trusted-LAN compatibility mode (SECURITY_CHECKS.md), not a
+// confidentiality guarantee. Cinema-derived cookie issuance remains HTTPS-only.
+func (s *Server) setLocalSessionCookie(w http.ResponseWriter, r *http.Request, token string, maxAge int) {
+	http.SetCookie(w, &http.Cookie{Name: sessionCookie, Value: token, Path: "/", HttpOnly: true, SameSite: http.SameSiteLaxMode, Secure: s.secureSessionRequest(r), MaxAge: maxAge})
 }
 
 // Logout implements POST /auth/logout.
@@ -311,10 +315,7 @@ func (s *Server) Logout(w http.ResponseWriter, r *http.Request) {
 	if c, err := r.Cookie(sessionCookie); err == nil {
 		liveSessions.drop(c.Value)
 	}
-	http.SetCookie(w, &http.Cookie{
-		Name: sessionCookie, Value: "", Path: "/", MaxAge: -1, HttpOnly: true,
-		SameSite: http.SameSiteLaxMode, Secure: s.secureSessionRequest(r),
-	})
+	s.setLocalSessionCookie(w, r, "", -1)
 	w.WriteHeader(http.StatusNoContent)
 }
 

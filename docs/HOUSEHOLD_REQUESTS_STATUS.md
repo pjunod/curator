@@ -153,3 +153,16 @@ Curator [PR #162](https://github.com/pjunod/curator/pull/162) is submitted with
 all local gates passing. Cinema companion PR #1586 is submitted as WIP to its
 enabled merge train; both applications remain independently usable. Protected
 current-candidate checks and both merge receipts remain pending.
+
+## Current CodeQL follow-up
+
+Required CodeQL reported two Cinema egress alerts and conditional local-cookie
+Secure handling on PR #162. Astra independently confirmed owner-only egress and
+the preexisting supported plaintext-HTTP risk, and identified two URL parser
+gaps. The follow-up validates hostname/ForceQuery and uses a closed parsed-base
+endpoint builder, preserves production no-redirect policy in fixtures, shares
+standalone cookie issuance and adds zero-egress/redirect/DB-cookie regressions.
+[Exact policy and review](SECURITY_CHECKS.md#optional-cinema-login-reviewed-network-and-cookie-findings).
+No global scan exclusions or security-gate bypasses. Targeted static recheck,
+affected regressions and current-candidate CodeQL qualification follow before
+merge; the earlier full local qualification remains recorded above.

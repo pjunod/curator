@@ -34,17 +34,42 @@ type cinemaIdentity struct {
 
 func cinemaHTTPS(raw string) (*url.URL, error) {
 	u, err := url.Parse(raw)
-	if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil || u.Fragment != "" || u.RawQuery != "" || u.Opaque != "" {
+	if err != nil || u.Scheme != "https" || u.Hostname() == "" || u.ForceQuery || u.User != nil || u.Fragment != "" || u.RawQuery != "" || u.Opaque != "" {
 		return nil, errors.New("use an exact HTTPS address without credentials, query or fragment")
 	}
 	return u, nil
+}
+
+// cinemaEndpoint accepts only the owner-configured HTTPS origin/prefix and
+// this closed protocol's operations. Never concatenate a base's query/fragment
+// with a path, or accept a caller-selected operation/redirect target.
+func cinemaEndpoint(base, operation string, query url.Values) (string, error) {
+	u, err := cinemaHTTPS(base)
+	if err != nil {
+		return "", err
+	}
+	switch operation {
+	case "info", "exchange", "introspect", "revoke":
+	default:
+		return "", errors.New("invalid Cinema operation")
+	}
+	suffix := "/api/v1/delegation/" + operation
+	escaped := strings.TrimRight(u.EscapedPath(), "/")
+	u.Path = strings.TrimRight(u.Path, "/") + suffix
+	u.RawPath = escaped + suffix
+	u.RawQuery = query.Encode()
+	return u.String(), nil
 }
 func cinemaCall(ctx context.Context, c domain.CinemaConnection, path string, body any, out any) error {
 	raw, err := json.Marshal(body)
 	if err != nil {
 		return err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(c.BaseURL, "/")+"/api/v1/delegation/"+path, bytes.NewReader(raw))
+	target, err := cinemaEndpoint(c.BaseURL, path, nil)
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, target, bytes.NewReader(raw))
 	if err != nil {
 		return errors.New("cinema connection is invalid")
 	}
@@ -142,7 +167,12 @@ func (s *Server) SaveCinemaConnection(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		c = &domain.CinemaConnection{BaseURL: strings.TrimRight(base.String(), "/"), ClientID: b.ClientID, ClientSecret: b.ClientSecret, Redirect: redirect.String()}
-		req, e := http.NewRequestWithContext(r.Context(), http.MethodGet, c.BaseURL+"/api/v1/delegation/info?clientId="+url.QueryEscape(c.ClientID), nil)
+		target, e := cinemaEndpoint(c.BaseURL, "info", url.Values{"clientId": {c.ClientID}})
+		if e != nil {
+			writeError(w, 400, "invalid Cinema address")
+			return
+		}
+		req, e := http.NewRequestWithContext(r.Context(), http.MethodGet, target, nil)
 		if e != nil {
 			writeError(w, 400, "invalid Cinema address")
 			return

@@ -56,7 +56,9 @@ func newCinemaFixture(t *testing.T) *cinemaFixture {
 		}
 	}))
 	previous := cinemaHTTPClient
-	cinemaHTTPClient = f.server.Client()
+	client := *previous
+	client.Transport = f.server.Client().Transport
+	cinemaHTTPClient = &client
 	t.Cleanup(func() { cinemaHTTPClient = previous; f.server.Close() })
 	return f
 }

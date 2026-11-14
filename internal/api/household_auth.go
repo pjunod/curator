@@ -283,7 +283,7 @@ func (s *Server) loginHousehold(w http.ResponseWriter, r *http.Request, username
 		}{token, account, expires})
 		return
 	}
-	http.SetCookie(w, &http.Cookie{Name: sessionCookie, Value: token, Path: "/", HttpOnly: true, SameSite: http.SameSiteLaxMode, Secure: s.secureSessionRequest(r), MaxAge: int(sessionTTL.Seconds())})
+	s.setLocalSessionCookie(w, r, token, int(sessionTTL.Seconds()))
 	w.WriteHeader(204)
 }
 func (s *Server) GetCurrentAccount(w http.ResponseWriter, r *http.Request) {
