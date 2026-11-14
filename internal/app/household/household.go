@@ -69,6 +69,16 @@ func (s *Service) providerTitle(ctx context.Context, kind domain.MediaKind, tmdb
 	if preview.Item.Kind != kind || preview.Item.IDs.TMDB != tmdb {
 		return domain.MediaItem{}, fmt.Errorf("title identity changed")
 	}
+	if kind == domain.KindSeries {
+		item, inventoryErr := s.Library.HouseholdSeriesInventory(ctx, tmdb)
+		if inventoryErr != nil {
+			return domain.MediaItem{}, inventoryErr
+		}
+		if domain.ExternalIDsConflict(item.IDs, preview.Item.IDs) {
+			return domain.MediaItem{}, fmt.Errorf("series inventory identity changed")
+		}
+		return item, nil
+	}
 	return preview.Item, nil
 }
 func (s *Service) Title(ctx context.Context, kind domain.MediaKind, tmdb int64) (Title, error) {

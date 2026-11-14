@@ -538,3 +538,172 @@ func TestHouseholdPrimaryProbePreservesAdditionalCopyEvidence(t *testing.T) {
 		t.Fatal("primary check invalidated another copy", valid, err)
 	}
 }
+
+func TestHouseholdPartialSeriesKeepsReviewReasonAndStablePollRevision(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+	owner, digest := householdOwner(t, db)
+	id := availabilityFixture(t, db, domain.MediaItem{Kind: domain.KindSeries, Title: "Partial", IDs: domain.ExternalIDs{TMDB: 100}, QualityProfileID: 1, Seasons: []domain.Season{{Number: 1, Episodes: []domain.Episode{{SeasonNumber: 1, EpisodeNumber: 1, AirDate: "2020-01-01"}, {SeasonNumber: 1, EpisodeNumber: 2, AirDate: "2020-01-02"}}}}})
+	availabilityProof(t, db, id, time.Now())
+	item, err := db.GetMediaItemFull(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scope := []domain.RequestEpisode{{Season: 1, Episode: 1}, {Season: 1, Episode: 2}}
+	rid, err := db.SubmitHouseholdRequest(ctx, owner, digest, domain.HouseholdRequest{Kind: item.Kind, TMDBID: 100, IDs: item.IDs, Title: item.Title, Fingerprint: "two-leaf", Scope: domain.RequestScope{Episodes: scope}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request, err := db.HouseholdRequest(ctx, rid, owner.ID, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	evidence, err := db.HouseholdEvidence(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan := HouseholdApproval{RequestID: rid, RequestRevision: request.Revision, Item: item, Evidence: evidence, Missing: scope, Policy: domain.HouseholdPolicy{ProfileFingerprint: householdPolicyHash(t, db, item.QualityProfileID), Kind: item.Kind, TMDBID: 100, IDs: item.IDs, RootID: evidence.RootID, ProfileID: item.QualityProfileID, RootGeneration: evidence.RootGeneration, SharedRevision: evidence.SharedRevision, RootPath: evidence.RootPath, RootIdentity: evidence.RootIdentity, Path: evidence.Path}}
+	if err = db.ApproveHouseholdRequest(ctx, owner, digest, plan); err != nil {
+		t.Fatal(err)
+	}
+	targets, err := db.HouseholdPendingTargets(ctx)
+	if err != nil || len(targets) != 2 {
+		t.Fatal(targets, err)
+	}
+	first, second := targets[0], targets[1]
+	if err = db.SetHouseholdTargetResult(ctx, second.ID, second.ApprovalGeneration, "needs_review", "Episode two is held. Review Activity."); err != nil {
+		t.Fatal(err)
+	}
+	blocked, err := db.HouseholdRequest(ctx, rid, owner.ID, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A different blocked leaf must not alternate the aggregate reason each poll.
+	if err = db.SetHouseholdTargetResult(ctx, first.ID, first.ApprovalGeneration, "needs_review", "Episode one has failed."); err != nil {
+		t.Fatal(err)
+	}
+	changed, err := db.HouseholdRequest(ctx, rid, owner.ID, true)
+	if err != nil || changed.Revision != blocked.Revision+1 || changed.PublicNote != blocked.PublicNote {
+		t.Fatal(changed, blocked, err)
+	}
+	for range 3 {
+		for _, v := range []struct {
+			target      domain.HouseholdTarget
+			state, note string
+		}{{first, "needs_review", "Episode one has failed."}, {second, "needs_review", "Episode two is held. Review Activity."}, {first, "waiting", "Still following work."}} {
+			if err = db.SetHouseholdTargetResult(ctx, v.target.ID, v.target.ApprovalGeneration, v.state, v.note); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	stable, err := db.HouseholdRequest(ctx, rid, owner.ID, true)
+	if err != nil || stable.Revision != changed.Revision || stable.PublicNote != blocked.PublicNote || !stable.UpdatedAt.Equal(changed.UpdatedAt) {
+		t.Fatal("identical polls changed owner confirmation", stable, changed, err)
+	}
+	files := []int64{}
+	for i, target := range []domain.HouseholdTarget{first, second} {
+		fid, e := db.UpsertFile(ctx, id, 0, fmt.Sprintf("%s/S01E%02d.mkv", item.Path, target.Episode), 10)
+		if e != nil {
+			t.Fatal(e)
+		}
+		if _, e = db.W.ExecContext(ctx, `INSERT INTO media_file_episodes(media_file_id,episode_id) VALUES(?,?)`, fid, target.EpisodeID); e != nil {
+			t.Fatal(e)
+		}
+		files = append(files, fid)
+		availabilityProof(t, db, id, time.Now(), files...)
+		if err = db.SetHouseholdTargetResult(ctx, target.ID, target.ApprovalGeneration, "fulfilled", ""); err != nil {
+			t.Fatal(err)
+		}
+		got, e := db.HouseholdRequest(ctx, rid, owner.ID, true)
+		if e != nil {
+			t.Fatal(e)
+		}
+		if i == 0 && (got.State != "needs_review" || got.PublicNote != blocked.PublicNote || got.Revision != stable.Revision+1) {
+			t.Fatal("partial fulfillment erased outstanding review", got)
+		}
+		if i == 1 && (got.State != "fulfilled" || got.PublicNote != "") {
+			t.Fatal("complete primary scope not fulfilled", got)
+		}
+		if err = db.SetHouseholdTargetResult(ctx, target.ID, target.ApprovalGeneration, "fulfilled", ""); err != nil {
+			t.Fatal(err)
+		}
+		same, e := db.HouseholdRequest(ctx, rid, owner.ID, true)
+		if e != nil || same.Revision != got.Revision {
+			t.Fatal("repeated proof churned revision", same, got, e)
+		}
+		var claims int
+		if e = db.R.QueryRowContext(ctx, `SELECT count(*) FROM household_scope_claims WHERE request_id=?`, rid).Scan(&claims); e != nil || claims != 1-i {
+			t.Fatal("wrong exact claims", claims, e)
+		}
+	}
+	var downloads int
+	if err = db.R.QueryRowContext(ctx, `SELECT count(*) FROM downloads`).Scan(&downloads); err != nil || downloads != 0 {
+		t.Fatal("result processing submitted new work", downloads, err)
+	}
+}
+
+func TestHouseholdTransactionsRecheckActingIdentityAndKeepOtherMembersHistory(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+	owner, digest := householdOwner(t, db)
+	member, memberDigest := householdMember(t, db, owner, digest, "member")
+	plan, id := householdMoviePlan(t, db, owner, digest, "authority")
+	forged := member
+	forged.Role = "owner"
+	stale := owner
+	stale.CredentialGeneration++
+	for _, actor := range []struct {
+		name    string
+		account domain.Account
+		digest  string
+	}{{"forged role", forged, memberDigest}, {"stale owner", stale, digest}, {"wrong session", owner, memberDigest}} {
+		t.Run(actor.name, func(t *testing.T) {
+			for _, operation := range []struct {
+				name string
+				run  func() error
+			}{
+				{"approve", func() error { return db.ApproveHouseholdRequest(ctx, actor.account, actor.digest, plan) }},
+				{"decline", func() error {
+					return db.DeclineHouseholdRequest(ctx, actor.account, actor.digest, id, plan.RequestRevision, "declined", "private")
+				}},
+				{"private note", func() error { return db.SaveHouseholdRequestNote(ctx, actor.account, actor.digest, id, "private") }},
+				{"invite", func() error {
+					return db.CreateHouseholdInvite(ctx, actor.account, actor.digest, "forbidden", time.Now().Add(time.Hour))
+				}},
+				{"connection", func() error { return db.SaveCinemaConnection(ctx, actor.account, actor.digest, nil) }},
+				{"other account", func() error {
+					return db.UpdateAccount(ctx, actor.account, actor.digest, owner.ID, owner.Revision, "owner", "active", "changed", "")
+				}},
+			} {
+				if err := operation.run(); err == nil {
+					t.Fatalf("%s bypassed transactional actor proof", operation.name)
+				}
+			}
+		})
+	}
+	// Every member-facing mutation also rechecks account+session pairing, even
+	// when an upstream HTTP handler authenticated an older request snapshot.
+	for _, operation := range []func() error{
+		func() error {
+			_, err := db.SubmitHouseholdRequest(ctx, stale, digest, domain.HouseholdRequest{Kind: domain.KindMovie, TMDBID: 551, IDs: domain.ExternalIDs{TMDB: 551}, Title: "unauthorized", Fingerprint: "stale"})
+			return err
+		},
+		func() error { return db.JoinHouseholdRequest(ctx, owner, memberDigest, id) },
+		func() error { return db.WithdrawHouseholdRequest(ctx, owner, memberDigest, id) },
+	} {
+		if err := operation(); err == nil {
+			t.Fatal("stale request snapshot changed subscriptions")
+		}
+	}
+	saved, err := db.HouseholdRequest(ctx, id, owner.ID, true)
+	if err != nil || saved.State != "pending" || saved.Revision != plan.RequestRevision || saved.PrivateNote != "" || saved.PublicNote != "" || saved.SubscriberCount != 1 {
+		t.Fatal("rejected writer partially committed", saved, err)
+	}
+	current, err := db.AccountByID(ctx, owner.ID)
+	if err != nil || current.DisplayName != owner.DisplayName || current.Revision != owner.Revision {
+		t.Fatal("forged owner changed local account", current, err)
+	}
+	if _, err = db.AccountSession(ctx, digest); err != nil {
+		t.Fatal("rejected mutation revoked unrelated owner", err)
+	}
+}

@@ -150,7 +150,7 @@ Cinema account linking has been performed.
 ## Pull requests
 
 Curator [PR #162](https://github.com/pjunod/curator/pull/162) is submitted with
-all local gates passing. Cinema companion PR #1586 is submitted as WIP to its
+all local gates passing. Cinema companion PR #1586 is ready and queued in its
 enabled merge train; both applications remain independently usable. Protected
 current-candidate checks and both merge receipts remain pending.
 
@@ -166,3 +166,36 @@ standalone cookie issuance and adds zero-egress/redirect/DB-cookie regressions.
 No global scan exclusions or security-gate bypasses. Targeted static recheck,
 affected regressions and current-candidate CodeQL qualification follow before
 merge; the earlier full local qualification remains recorded above.
+
+## Final journey review
+
+Astra cleared the production follow-up and the new journey regressions. The
+review found and corrected three daily-use failures: real TMDB series previews
+omit episodes, background polling could erase another episode's review reason
+or continually invalidate owner confirmation, and member seed projection
+truncated a 50-title library page to 30. Household series reads now hydrate and
+validate complete provider inventory without persisting metadata or changing
+monitoring; duplicate coordinates and conflicting identities fail closed.
+Aggregate progress preserves the first unresolved review reason and advances
+its revision only for semantic changes. Library seed pages retain all 50 rows;
+recommendation shelves retain their separate 30-title bound.
+
+Regressions exercise the real TMDB adapter from detail through approval,
+partially present/offloaded series with explicit consent and frozen aired scope,
+exact-episode acquisition followed after restart, startup worker handling of
+missing sources/volumes and changed policy, independent account/password
+migration with rollback, writer outages, malformed handoffs, and member-safe
+library discovery across two pages. The Cinema revocation test checks durable
+row deletion as well as remote grant invalidation. The focused desktop/phone
+household browser journeys pass (4); prior full client suites remain recorded
+above. Fresh full Go coverage and current-candidate hosted gates must qualify
+before merge; the 86% coverage floor remains unchanged.
+
+Fresh full Go regressions (`-count=1`, `-coverpkg=./...`) pass with 86.0%
+handwritten coverage and the unchanged 86.0% floor; the committed badge reflects
+that run. Required lint reports zero issues. Astra's last fixture-only finding
+was corrected by separating symlink refusal from changed-volume refusal and
+proving the valid baseline before changing the generation; its focused rerun
+passes. Owner discovery and volume-review HTTP journeys also verify protected
+routes, current availability, stale confirmation and missing-mount refusal.
+Hosted required checks and both merge receipts remain pending.

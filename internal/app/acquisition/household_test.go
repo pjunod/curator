@@ -3,13 +3,16 @@ package acquisition
 import (
 	"context"
 	"fmt"
+	"github.com/pjunod/monarr/internal/app/library"
 	"github.com/pjunod/monarr/internal/domain"
+	"github.com/pjunod/monarr/internal/infra/bus"
 	"github.com/pjunod/monarr/internal/infra/sqlite"
 	"github.com/pjunod/monarr/internal/ports"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestHouseholdImportRejectsExtraEpisodeAndArrivingPrimary(t *testing.T) {
@@ -79,9 +82,68 @@ func TestHouseholdImportRejectsExtraEpisodeAndArrivingPrimary(t *testing.T) {
 	if err != nil || string(bytes) != "keep arrived primary" {
 		t.Fatal("arrival changed", err)
 	}
+
+	// A resumed publication may recognize only its own exact bytes and observed
+	// inode generation. A matching digest alone cannot admit a later replacement.
+	if _, err = db.W.ExecContext(ctx, `UPDATE media_files SET source_generation=?,source_transfer=? WHERE id=?`, scope.SourceGeneration, scope.Transfer, fid); err != nil {
+		t.Fatal(err)
+	}
+	digest, _, fileGeneration, err := fileDigestSnapshot(ctx, arrived)
+	if err != nil {
+		t.Fatal(err)
+	}
+	own := placement
+	own.Target = arrived
+	own.SHA256 = digest
+	own.PreviousSHA256 = digest
+	own.TargetObserved = true
+	own.TargetFileGeneration = fileGeneration
+	if err = s.validateHouseholdImport(ctx, item, scope, own); err != nil {
+		t.Fatal("own idempotent placement refused", err)
+	}
+	if err = s.validateHouseholdPublication(ctx, item, scope, own); err != nil {
+		t.Fatal("unchanged observed publication refused", err)
+	}
+	if err = os.WriteFile(arrived, []byte("changed after final observation"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.validateHouseholdPublication(ctx, item, scope, own); err == nil {
+		t.Fatal("changed target generation accepted")
+	}
+	if err = s.validateHouseholdImport(ctx, item, scope, own); err == nil {
+		t.Fatal("different bytes treated as own placement")
+	}
+	if err = os.Remove(arrived); err != nil {
+		t.Fatal(err)
+	}
+	old := placement
+	old.PreviousSHA256 = "old-different-digest"
+	if err = s.validateHouseholdPublication(ctx, item, scope, old); err == nil {
+		t.Fatal("household approval authorized replacement")
+	}
+	s.SetHouseholdVerifier(nil)
+	if err = s.validateHouseholdPublication(ctx, item, scope, placement); err == nil {
+		t.Fatal("missing primary verifier allowed publication")
+	}
+	s.SetHouseholdVerifier(func(context.Context, int64) error { return nil })
+	if err = s.validateHouseholdPublication(ctx, item, importScope{}, placement); err != nil {
+		t.Fatal("ordinary import wrongly needs household authority", err)
+	}
+	if err = os.Symlink("unverified-target", arrived); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.validateHouseholdImport(ctx, item, scope, own); err == nil {
+		t.Fatal("symlink primary accepted as exact owned file")
+	}
+	if err = os.Remove(arrived); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.validateHouseholdImport(ctx, item, scope, placement); err != nil {
+		t.Fatal("valid empty primary failed before generation change", err)
+	}
 	origin.RootGeneration++
-	if err = s.validateHouseholdImport(ctx, item, scope, placement); err == nil {
-		t.Fatal("changed volume accepted")
+	if err = s.validateHouseholdImport(ctx, item, scope, placement); err == nil || !strings.Contains(err.Error(), "changed") {
+		t.Fatal("changed volume accepted or wrong refusal", err)
 	}
 }
 
@@ -265,5 +327,116 @@ func TestHouseholdOffloadRewriteFailureRollsBackExclusionsAndOutbox(t *testing.T
 	}
 	if len(deliveries) != 1 || deliveries[0].Status != "pending" {
 		t.Fatal("failed rewrite mutated original delivery", deliveries)
+	}
+}
+
+func TestHouseholdExactEpisodeAdmissionSurvivesRetryWithoutSeasonExpansion(t *testing.T) {
+	ctx := context.Background()
+	client := &fakeClient{}
+	releases := []ports.Release{
+		{Title: "Test.Show.S01.2160p.WEB-DL.x265-PACK", DownloadURL: "season-pack", Protocol: "torrent", Indexer: "idx", Seeders: 100},
+		{Title: "Test.Show.S01E02.2160p.WEB-DL.x265-NEXT", DownloadURL: "neighbor", Protocol: "torrent", Indexer: "idx", Seeders: 100},
+		{Title: "Test.Show.S01E01.1080p.WEB-DL.x264-EXACT", DownloadURL: "exact-episode", Protocol: "torrent", Indexer: "idx", Seeders: 20},
+	}
+	svc, db, id := setup(t, releases, client)
+	b := bus.New(nil)
+	defer b.Close()
+	lib := library.New(db, nil, b, nil)
+	item, err := db.GetMediaItemFull(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	root, err := lib.AddRootFolder(ctx, filepath.Dir(item.Path), domain.RootKind("series"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.W.ExecContext(ctx, `UPDATE media_items SET root_folder_id=?,monitored=0 WHERE id=?`, root.ID, id); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.W.ExecContext(ctx, `UPDATE episodes SET monitored=0 WHERE media_item_id=?`, id); err != nil {
+		t.Fatal(err)
+	}
+	svc.SetHouseholdVerifier(lib.VerifyPrimaryPresence)
+	if err = lib.VerifyPrimaryPresence(ctx, id); err != nil {
+		t.Fatal(err)
+	}
+	item, err = db.GetMediaItemFull(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	name, hash, required := "owner", "local-hash", true
+	if err = db.ConfigureLocalOwner(ctx, &name, &hash, &required); err != nil {
+		t.Fatal(err)
+	}
+	owner, err := db.AccountByUsername(ctx, name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest := "household-admission-session"
+	if err = db.CreateAccountSession(ctx, digest, owner, "test", time.Now().Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	scope := []domain.RequestEpisode{{Season: 1, Episode: 1}}
+	rid, err := db.SubmitHouseholdRequest(ctx, owner, digest, domain.HouseholdRequest{Kind: item.Kind, TMDBID: item.IDs.TMDB, IDs: item.IDs, Title: item.Title, Fingerprint: "exact-episode", Scope: domain.RequestScope{Episodes: scope}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request, err := db.HouseholdRequest(ctx, rid, owner.ID, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	evidence, err := db.HouseholdEvidence(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fingerprint, err := db.HouseholdProfileFingerprint(ctx, item.QualityProfileID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy := domain.HouseholdPolicy{ProfileFingerprint: fingerprint, Kind: item.Kind, TMDBID: item.IDs.TMDB, IDs: item.IDs, RootID: evidence.RootID, ProfileID: item.QualityProfileID, RootGeneration: evidence.RootGeneration, SharedRevision: evidence.SharedRevision, RootPath: evidence.RootPath, RootIdentity: evidence.RootIdentity, Path: evidence.Path}
+	if err = db.ApproveHouseholdRequest(ctx, owner, digest, sqlite.HouseholdApproval{RequestID: rid, RequestRevision: request.Revision, Item: item, Evidence: evidence, Policy: policy, Missing: scope}); err != nil {
+		t.Fatal(err)
+	}
+	targets, err := db.HouseholdPendingTargets(ctx)
+	if err != nil || len(targets) != 1 {
+		t.Fatal(targets, err)
+	}
+	target := targets[0]
+	download, err := svc.AcquireHouseholdTarget(ctx, target)
+	if err != nil || download == 0 {
+		t.Fatal("exact episode acquisition failed", download, err)
+	}
+	if len(client.added) != 1 || client.added[0] != "exact-episode" {
+		t.Fatal("broadened household acquisition", client.added)
+	}
+	row, err := db.GetDownload(ctx, download)
+	if err != nil {
+		t.Fatal(err)
+	}
+	origin, err := db.HouseholdDownloadOrigin(ctx, download, row.GenerationKey)
+	if err != nil || origin == nil || origin.Episode != 1 || origin.Season != 1 || len(origin.EpisodeIDs) != 1 {
+		t.Fatal("missing immutable exact authority", origin, err)
+	}
+	// Repeating a durable target after restart must follow its committed work.
+	restarted := New(db, b, nil, nil, nil)
+	repeated, err := restarted.AcquireHouseholdTarget(ctx, target)
+	if err != nil || repeated != download || len(client.added) != 1 {
+		t.Fatal("retry resubmitted", repeated, client.added, err)
+	}
+	stale := target
+	stale.ApprovalGeneration++
+	if _, err = restarted.AcquireHouseholdTarget(ctx, stale); err == nil {
+		t.Fatal("stale approval reused")
+	}
+	current, err := db.GetMediaItemFull(ctx, id)
+	if err != nil || current.Monitored {
+		t.Fatal("request changed monitoring", current, err)
+	}
+	for _, season := range current.Seasons {
+		for _, ep := range season.Episodes {
+			if ep.Monitored {
+				t.Fatal("request enabled episode monitoring")
+			}
+		}
 	}
 }

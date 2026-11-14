@@ -99,3 +99,33 @@ func (s *Service) PlanHouseholdAdd(ctx context.Context, item domain.MediaItem, r
 func (s *Service) VerifyPrimaryPresence(ctx context.Context, id int64) error {
 	return s.verifyPresence(ctx, id, true)
 }
+
+// HouseholdSeriesInventory reads complete provider episodes without persisting
+// or changing monitoring. Generic metadata previews deliberately omit episodes.
+func (s *Service) HouseholdSeriesInventory(ctx context.Context, tmdbID int64) (domain.MediaItem, error) {
+	if s.meta == nil || tmdbID <= 0 {
+		return domain.MediaItem{}, ErrProviderUnavailable
+	}
+	item, err := s.meta.GetSeries(ctx, tmdbID)
+	if err != nil {
+		return domain.MediaItem{}, err
+	}
+	if item.Kind != domain.KindSeries || item.IDs.TMDB != tmdbID {
+		return domain.MediaItem{}, fmt.Errorf("series inventory identity changed")
+	}
+	seasons := map[int]bool{}
+	for _, season := range item.Seasons {
+		if season.Number < 0 || seasons[season.Number] {
+			return domain.MediaItem{}, fmt.Errorf("ambiguous series season inventory")
+		}
+		seasons[season.Number] = true
+		episodes := map[int]bool{}
+		for _, ep := range season.Episodes {
+			if ep.SeasonNumber != season.Number || ep.EpisodeNumber <= 0 || episodes[ep.EpisodeNumber] {
+				return domain.MediaItem{}, fmt.Errorf("ambiguous series episode inventory")
+			}
+			episodes[ep.EpisodeNumber] = true
+		}
+	}
+	return item, nil
+}

@@ -318,17 +318,23 @@ func (d *DB) SetHouseholdTargetResult(ctx context.Context, id, generation int64,
 	if _, err = tx.ExecContext(ctx, `UPDATE household_request_targets SET next_check_at=? WHERE id=? AND approval_generation=?`, time.Now().Add(time.Minute).UnixMilli(), id, generation); err != nil {
 		return err
 	}
-	if state == "waiting" && requestStatus == "needs_review" {
-		// Following admitted work cannot erase the reason a fresh owner review
-		// is required for the remaining scope.
-
-		return tx.Commit()
+	var unfinished bool
+	if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM household_request_targets WHERE request_id=? AND state<>'fulfilled')`, target.RequestID).Scan(&unfinished); err != nil {
+		return err
 	}
-	requestState := ""
-	if state == "needs_review" {
+	requestState := requestStatus
+	if !unfinished {
+		requestState, note = "fulfilled", ""
+	} else if requestStatus == "needs_review" {
+		// Progress on another leaf must preserve the unresolved review reason.
+		if err = tx.QueryRowContext(ctx, `SELECT public_note FROM household_requests WHERE id=?`, target.RequestID).Scan(&note); err != nil {
+			return err
+		}
+	} else if state == "needs_review" {
 		requestState = "needs_review"
 	}
-	_, err = tx.ExecContext(ctx, `UPDATE household_requests SET state=CASE WHEN NOT EXISTS(SELECT 1 FROM household_request_targets t WHERE t.request_id=household_requests.id AND t.state<>'fulfilled') THEN 'fulfilled' WHEN ?<>'' THEN ? ELSE state END,public_note=?,revision=revision+1,updated_at=? WHERE id=?`, requestState, requestState, note, time.Now().UnixMilli(), target.RequestID)
+	leafChanged := state == "fulfilled" && target.State != "fulfilled" || state == "needs_review" && target.DownloadID == 0 && target.State != "needs_review"
+	_, err = tx.ExecContext(ctx, `UPDATE household_requests SET state=?,public_note=?,revision=revision+1,updated_at=? WHERE id=? AND (state<>? OR public_note<>? OR ?)`, requestState, note, time.Now().UnixMilli(), target.RequestID, requestState, note, leafChanged)
 	if err != nil {
 		return err
 	}

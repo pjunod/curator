@@ -236,7 +236,7 @@ func (s *Server) ApproveHouseholdRequest(w http.ResponseWriter, r *http.Request,
 	w.WriteHeader(204)
 }
 
-func safeHouseholdSearchResults(ctx context.Context, db *sqlite.DB, items []ports.SearchResult) []household.Title {
+func safeHouseholdSearchResults(ctx context.Context, db *sqlite.DB, items []ports.SearchResult, limit int) []household.Title {
 	out := []household.Title{}
 	targets := []domain.AvailabilityTarget{}
 	for _, v := range items {
@@ -245,7 +245,7 @@ func safeHouseholdSearchResults(ctx context.Context, db *sqlite.DB, items []port
 		}
 		out = append(out, household.Title{Kind: v.Kind, TMDBID: v.TMDBID, Title: v.Title, Year: v.Year, PosterPath: v.PosterPath, Overview: v.Overview, Seasons: []household.SeasonChoice{}})
 		targets = append(targets, domain.AvailabilityTarget{Kind: v.Kind, IDs: domain.ExternalIDs{TMDB: v.TMDBID, TVDB: v.TVDBID, IMDB: v.IMDBID}})
-		if len(out) == 30 {
+		if len(out) == limit {
 			break
 		}
 	}
@@ -283,7 +283,7 @@ func (s *Server) HouseholdDiscoverySeeds(w http.ResponseWriter, r *http.Request)
 	for _, seed := range seeds {
 		items = append(items, seed.Item)
 	}
-	writeJSON(w, 200, map[string]any{"items": safeHouseholdSearchResults(r.Context(), s.deps.Store, items), "hasMore": more})
+	writeJSON(w, 200, map[string]any{"items": safeHouseholdSearchResults(r.Context(), s.deps.Store, items, 50), "hasMore": more})
 }
 func (s *Server) HouseholdDiscoveryShelf(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.householdActor(w, r); !ok {
@@ -325,5 +325,5 @@ func (s *Server) HouseholdDiscoveryShelf(w http.ResponseWriter, r *http.Request)
 		writeError(w, 409, "library seed changed; choose it again")
 		return
 	}
-	writeJSON(w, 200, map[string]any{"title": title, "items": safeHouseholdSearchResults(r.Context(), s.deps.Store, items)})
+	writeJSON(w, 200, map[string]any{"title": title, "items": safeHouseholdSearchResults(r.Context(), s.deps.Store, items, 30)})
 }
