@@ -54,9 +54,13 @@ func cinemaEndpoint(base, operation string, query url.Values) (string, error) {
 		return "", errors.New("invalid Cinema operation")
 	}
 	suffix := "/api/v1/delegation/" + operation
-	escaped := strings.TrimRight(u.EscapedPath(), "/")
-	u.Path = strings.TrimRight(u.Path, "/") + suffix
-	u.RawPath = escaped + suffix
+	escaped := strings.TrimRight(u.EscapedPath(), "/") + suffix
+	decoded, err := url.PathUnescape(escaped)
+	if err != nil {
+		return "", err
+	}
+	u.Path = decoded
+	u.RawPath = escaped
 	u.RawQuery = query.Encode()
 	return u.String(), nil
 }

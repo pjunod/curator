@@ -46,6 +46,14 @@ func TestCinemaEndpointRejectsAmbiguousBasesAndPreservesPrefix(t *testing.T) {
 	if target.Host != "cinema.example" || target.EscapedPath() != "/reverse%20proxy/api/v1/delegation/info" || target.Query().Get("clientId") != "client&next=other" || target.Query().Has("next") {
 		t.Fatal("endpoint escaped its fixed prefix/query", value)
 	}
+	encoded, err := cinemaEndpoint("https://cinema.example/tenant%2F/", "exchange", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := url.Parse(encoded)
+	if err != nil || parsed.EscapedPath() != "/tenant%2F/api/v1/delegation/exchange" {
+		t.Fatal("encoded prefix changed destination path", encoded, err)
+	}
 	var calls atomic.Int64
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
