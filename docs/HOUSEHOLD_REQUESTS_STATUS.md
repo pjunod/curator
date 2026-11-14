@@ -199,3 +199,17 @@ proving the valid baseline before changing the generation; its focused rerun
 passes. Owner discovery and volume-review HTTP journeys also verify protected
 routes, current availability, stale confirmation and missing-mount refusal.
 Hosted required checks and both merge receipts remain pending.
+
+## Integration with failed season-search recovery
+
+All 19 protected checks passed on `05d3e78`, including 2,192 top-level Go
+regressions across eight race shards and Linux coverage at the unchanged 86.0%
+floor. Main then advanced to `f2de3ae` (PR #163). Its only textual conflict is
+VERSION; the household feature keeps `0.52.0` above the new `0.51.2` patch.
+Astra cleared the combined acquisition paths: failed ordinary season jobs may
+retry their existing owner-authorized monitored scope, while household exact
+admission creates no season-search job and keeps its generic replacement fence.
+The monitored household-failure regression now asserts no season job appears
+before or after the reconciler runs. Focused household, season recovery,
+SQLite, reducer and NZBD admission regressions pass; lint reports zero issues.
+The combined commit must pass protected checks before merge.

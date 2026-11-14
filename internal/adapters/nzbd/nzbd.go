@@ -598,7 +598,22 @@ func (c *Client) GetRequestAdmission(ctx context.Context, transferToken string) 
 	if wire.RequestToken != transferToken || wire.ProtocolVersion != 1 {
 		return ports.RequestAdmission{}, false, fmt.Errorf("nzbd: request admission identity or protocol version mismatch")
 	}
-	return wire.portValue(), true, nil
+	adm := wire.portValue()
+	if adm.Outcome == "failed" && !adm.Fetched.Known() {
+		// Older receipts omit counts. History is measurement evidence only:
+		// the receipt still decides the terminal and its blame. Bound this
+		// optional read; missing/pruned history keeps conservative accounting.
+		var page statusHistory
+		if err := c.do(ctx, http.MethodGet, "/api/v1/history?limit=100", &page); err == nil {
+			for _, h := range page.Entries {
+				if h.Job == int64(wire.JobID) && paramValue(h.Params, TransferParam) == transferToken && h.Record != nil && h.Record.TotalArticles > 0 {
+					adm.Fetched = ports.Fetched{TotalArticles: h.Record.TotalArticles, SuccessArticles: h.Record.SuccessArticles}
+					break
+				}
+			}
+		}
+	}
+	return adm, true, nil
 }
 
 // Test implements ports.DownloadClient.

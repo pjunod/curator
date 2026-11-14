@@ -63,6 +63,7 @@ type seasonCheckpoint struct {
 	// promotion it has just consumed.
 	manualSpent        bool
 	OriginalDownloadID int64            `json:"originalDownloadId,omitempty"`
+	SearchRetryCount   int              `json:"searchRetryCount,omitempty"`
 	Revision           int64            `json:"revision"`
 	Started            time.Time        `json:"started"`
 	Deadline           time.Time        `json:"deadline"`
@@ -371,6 +372,25 @@ func (s *Service) handleSeasonSearch(ctx context.Context, j domain.Job) error {
 	var started seasonCheckpoint
 	_ = json.Unmarshal([]byte(j.Payload), &started)
 	err := s.runSeasonSearch(ctx, j)
+	if errors.Is(err, sqlite.ErrAcquisitionSnapshotChanged) {
+		fresh, readErr := s.db.GetJob(ctx, j.ID)
+		if readErr != nil {
+			return readErr
+		}
+		var p seasonCheckpoint
+		if readErr = json.Unmarshal([]byte(fresh.Payload), &p); readErr != nil {
+			return readErr
+		}
+		p.Fingerprint, p.Stage = "", ""
+		p.Revision, p.Started, p.Deadline = 0, time.Time{}, time.Time{}
+		p.Scopes, p.Releases = nil, nil
+		p.IntrinsicPartial, p.SchedulingDeferred = false, false
+		p.CooldownUntil = time.Time{}
+		if readErr = s.saveSeasonCheckpoint(ctx, j, p); readErr != nil {
+			return readErr
+		}
+		return &sqlite.BudgetDeferred{At: time.Now().Add(30 * time.Second), Reason: "library changed during discovery; comparing a fresh acquisition snapshot"}
+	}
 	var deferred *sqlite.BudgetDeferred
 	if errors.As(err, &deferred) && time.Until(deferred.At) > 0 && s.seasonJobPromoted(ctx, j.ID, started) {
 		return &sqlite.BudgetDeferred{At: time.Now(), Reason: "promoted to a manual comparison"}
@@ -1031,7 +1051,7 @@ func (s *Service) admitSeasonCandidates(ctx context.Context, p seasonCheckpoint,
 	defer releaseTarget() // idempotent; released explicitly below
 	_, _, _, fresh, _, err := s.seasonSnapshot(targetCtx, p)
 	if err == nil && len(fresh) != len(targets) {
-		err = fmt.Errorf("season targets changed")
+		err = fmt.Errorf("%w: season targets changed", sqlite.ErrAcquisitionSnapshotChanged)
 	}
 	var id int64
 	if err == nil {

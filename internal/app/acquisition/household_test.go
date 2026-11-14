@@ -286,6 +286,10 @@ func TestFailedMonitoredHouseholdEpisodeNeverFallsBackToSeasonPlanning(t *testin
 	if err = db.R.QueryRowContext(ctx, `SELECT count(*) FROM replacement_grabs WHERE download_id=?`, downloadID).Scan(&jobs); err != nil || jobs != 0 {
 		t.Fatal("failure enqueued ordinary replacement", jobs, err)
 	}
+	var discoveryJobs int
+	if err = db.R.QueryRowContext(ctx, `SELECT count(*) FROM jobs WHERE kind=?`, SeasonSearchJobKind).Scan(&discoveryJobs); err != nil || discoveryJobs != 0 {
+		t.Fatal("household failure seeded ordinary season discovery", discoveryJobs, err)
+	}
 	// Simulate a legacy queued job to exercise the worker's independent fence.
 	if _, err = db.W.ExecContext(ctx, `DROP TRIGGER household_no_generic_replacement`); err != nil {
 		t.Fatal(err)
@@ -294,6 +298,10 @@ func TestFailedMonitoredHouseholdEpisodeNeverFallsBackToSeasonPlanning(t *testin
 		t.Fatal(err)
 	}
 	s.RunReplacementGrabs(ctx)
+	s.reconcileSeasonPlans(ctx)
+	if err = db.R.QueryRowContext(ctx, `SELECT count(*) FROM jobs WHERE kind=?`, SeasonSearchJobKind).Scan(&discoveryJobs); err != nil || discoveryJobs != 0 {
+		t.Fatal("failed-search recovery broadened household authority", discoveryJobs, err)
+	}
 	var plans int
 	if err = db.R.QueryRowContext(ctx, `SELECT count(*) FROM acquisition_plans`).Scan(&plans); err != nil || plans != 0 {
 		t.Fatal("household failure reached season planner", plans, err)
