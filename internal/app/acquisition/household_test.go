@@ -331,6 +331,13 @@ func TestHouseholdOffloadRewriteFailureRollsBackExclusionsAndOutbox(t *testing.T
 }
 
 func TestHouseholdExactEpisodeAdmissionSurvivesRetryWithoutSeasonExpansion(t *testing.T) {
+	householdAdmissionJourney(t, domain.KindSeries)
+}
+func TestHouseholdExactMovieAdmissionKeepsMonitoringOffAndFollowsRetry(t *testing.T) {
+	householdAdmissionJourney(t, domain.KindMovie)
+}
+func householdAdmissionJourney(t *testing.T, kind domain.MediaKind) {
+	t.Helper()
 	ctx := context.Background()
 	client := &fakeClient{}
 	releases := []ports.Release{
@@ -338,7 +345,23 @@ func TestHouseholdExactEpisodeAdmissionSurvivesRetryWithoutSeasonExpansion(t *te
 		{Title: "Test.Show.S01E02.2160p.WEB-DL.x265-NEXT", DownloadURL: "neighbor", Protocol: "torrent", Indexer: "idx", Seeders: 100},
 		{Title: "Test.Show.S01E01.1080p.WEB-DL.x264-EXACT", DownloadURL: "exact-episode", Protocol: "torrent", Indexer: "idx", Seeders: 20},
 	}
+	exactURL := "exact-episode"
+	if kind == domain.KindMovie {
+		exactURL = "exact-movie"
+		releases = []ports.Release{{Title: "Requested.Movie.2020.1080p.WEB-DL.x264-EXACT", DownloadURL: exactURL, Protocol: "torrent", Indexer: "idx", Seeders: 20}}
+	}
 	svc, db, id := setup(t, releases, client)
+	if kind == domain.KindMovie {
+		folder := filepath.Join(t.TempDir(), "Requested Movie (2020)")
+		if err := os.Mkdir(folder, 0700); err != nil {
+			t.Fatal(err)
+		}
+		movieID, err := db.CreateMediaItem(ctx, domain.MediaItem{Kind: domain.KindMovie, Title: "Requested Movie", SortTitle: "requested movie", Year: 2020, IDs: domain.ExternalIDs{TMDB: 550}, Path: folder, QualityProfileID: 1})
+		if err != nil {
+			t.Fatal(err)
+		}
+		id = movieID
+	}
 	b := bus.New(nil)
 	defer b.Close()
 	lib := library.New(db, nil, b, nil)
@@ -346,7 +369,7 @@ func TestHouseholdExactEpisodeAdmissionSurvivesRetryWithoutSeasonExpansion(t *te
 	if err != nil {
 		t.Fatal(err)
 	}
-	root, err := lib.AddRootFolder(ctx, filepath.Dir(item.Path), domain.RootKind("series"))
+	root, err := lib.AddRootFolder(ctx, filepath.Dir(item.Path), domain.KindMixed)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -377,6 +400,11 @@ func TestHouseholdExactEpisodeAdmissionSurvivesRetryWithoutSeasonExpansion(t *te
 		t.Fatal(err)
 	}
 	scope := []domain.RequestEpisode{{Season: 1, Episode: 1}}
+	expectedLeaf := 1
+	if kind == domain.KindMovie {
+		scope = []domain.RequestEpisode{{}}
+		expectedLeaf = 0
+	}
 	rid, err := db.SubmitHouseholdRequest(ctx, owner, digest, domain.HouseholdRequest{Kind: item.Kind, TMDBID: item.IDs.TMDB, IDs: item.IDs, Title: item.Title, Fingerprint: "exact-episode", Scope: domain.RequestScope{Episodes: scope}})
 	if err != nil {
 		t.Fatal(err)
@@ -406,7 +434,7 @@ func TestHouseholdExactEpisodeAdmissionSurvivesRetryWithoutSeasonExpansion(t *te
 	if err != nil || download == 0 {
 		t.Fatal("exact episode acquisition failed", download, err)
 	}
-	if len(client.added) != 1 || client.added[0] != "exact-episode" {
+	if len(client.added) != 1 || client.added[0] != exactURL {
 		t.Fatal("broadened household acquisition", client.added)
 	}
 	row, err := db.GetDownload(ctx, download)
@@ -414,7 +442,7 @@ func TestHouseholdExactEpisodeAdmissionSurvivesRetryWithoutSeasonExpansion(t *te
 		t.Fatal(err)
 	}
 	origin, err := db.HouseholdDownloadOrigin(ctx, download, row.GenerationKey)
-	if err != nil || origin == nil || origin.Episode != 1 || origin.Season != 1 || len(origin.EpisodeIDs) != 1 {
+	if err != nil || origin == nil || origin.Kind != kind || origin.Episode != expectedLeaf || origin.Season != expectedLeaf || len(origin.EpisodeIDs) != expectedLeaf {
 		t.Fatal("missing immutable exact authority", origin, err)
 	}
 	// Repeating a durable target after restart must follow its committed work.
@@ -422,6 +450,11 @@ func TestHouseholdExactEpisodeAdmissionSurvivesRetryWithoutSeasonExpansion(t *te
 	repeated, err := restarted.AcquireHouseholdTarget(ctx, target)
 	if err != nil || repeated != download || len(client.added) != 1 {
 		t.Fatal("retry resubmitted", repeated, client.added, err)
+	}
+	missing := target
+	missing.ID = 999999
+	if _, err = restarted.AcquireHouseholdTarget(ctx, missing); err == nil {
+		t.Fatal("missing durable target accepted")
 	}
 	stale := target
 	stale.ApprovalGeneration++
