@@ -19,14 +19,20 @@ adversarial review found no blockers. Pinned lint, full Go tests, 174 web tests
 and all 267 browser tests passed. PR #163 is open; remote CI and deployment
 remain pending.
 
+Additional live diagnosis found failed receipts omitted article counts and
+charged zero-article failures as full releases. The adapter now supplements
+those receipts from a bounded, exact-transfer history lookup. Independent
+review found no blockers; lint and the affected adapter/reducer tests passed.
+The previously recorded zero-article failures 1347–1349 were corrected from
+exact job/token-correlated Runner history, preserving failure and blocklist
+records. A fresh targeted Stick search is queued.
+
 Live acquisition: targeted Stick S02E03 search grabbed a release as download
 1347; Runner failed it for zero downloadable articles. Its automatic replacement
 1348 failed health too; automatic replacement 1349 is now in progress. No
 successful import has been confirmed. The targeted Strangers with Candy S01E07 search found no eligible source;
-its sole single-episode source is PAR-failed and blocklisted. An attempted wider
-season comparison was blocked by automatic approval review because it could
-also acquire unrelated upgrades. No blocklist override or broader acquisition
-has been performed.
+its sole single-episode source is PAR-failed and blocklisted. The owner approved a wider season comparison; download 1350 is fetching a
+healthy collection pack containing the missing episode. Import is pending.
 
 ## Resolved cancelled imports — 2026-11-13 · v0.51.1
 

@@ -1305,6 +1305,12 @@ off through 10, 20 and 40 minutes to a one-hour ceiling. The failed job remains
 in history. The sweep rotates through bounded batches, so old satisfied or
 unmonitored failures cannot hide later missing work.
 
+Failed Runner receipts without fetched counts use at most 100 recent history
+rows to recover article measurements for the exact job and transfer token.
+Zero successful articles cost zero bandwidth budget, while each failure still
+counts toward the 20-attempt ceiling. Missing or unavailable history keeps the
+conservative full-release charge; it never changes the failure verdict.
+
 Provider request limits, active download custody, offloading, monitoring and
 re-grab caps still apply. A newer manual or automatic comparison wins over a
 stale recovery request. Completed searches keep their existing discovery

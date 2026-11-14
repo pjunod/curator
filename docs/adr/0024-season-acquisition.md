@@ -40,3 +40,9 @@ minutes, doubling to a one-hour ceiling on repeated failures. Every recovery
 uses a fresh background checkpoint; an atomic check against the newest job
 prevents superseding a concurrent request. Completed comparisons, provider
 budgets, offloads, monitoring and re-grab caps retain their existing rules.
+
+Receipts can precede history and omit fetched counts. The Runner adapter
+supplements failed receipts from one bounded recent history page, requiring
+both the job ID and transfer token. History supplies only measurements; the
+receipt retains outcome and blame authority. Unavailable measurements retain
+the conservative full-release bandwidth charge.

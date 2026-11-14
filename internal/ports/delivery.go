@@ -98,21 +98,23 @@ type RequestTokenIdempotency interface {
 // RequestAdmission is Runner's durable outcome for an exact transfer token,
 // independent of queue and history retention.
 type RequestAdmission struct {
-	ProtocolVersion     int    `json:"protocolVersion"`
-	RequestToken        string `json:"requestToken"`
-	JobID               string `json:"jobId"`
-	Generation          string `json:"generation"`
-	RunnerInstanceID    string `json:"runnerInstanceId"`
-	Outcome             string `json:"outcome"`
-	TerminalOutcome     string `json:"terminalOutcome,omitempty"`
-	PublicationPath     string `json:"publicationPath,omitempty"`
-	SourceArtifactID    string `json:"sourceArtifactId,omitempty"`
-	SourceGeneration    string `json:"sourceGeneration,omitempty"`
-	FailureStage        string `json:"failureStage,omitempty"`
-	FailureCause        string `json:"failureCause,omitempty"`
-	CustodyState        string `json:"custodyState,omitempty"`
-	KeepSourceOnFailure bool   `json:"keepSourceOnFailure,omitempty"`
-	SourceCleanupStatus string `json:"sourceCleanupStatus,omitempty"`
+	// Fetched supplements the receipt with transfer-correlated Runner measurements.
+	Fetched             Fetched `json:"fetched,omitempty"`
+	ProtocolVersion     int     `json:"protocolVersion"`
+	RequestToken        string  `json:"requestToken"`
+	JobID               string  `json:"jobId"`
+	Generation          string  `json:"generation"`
+	RunnerInstanceID    string  `json:"runnerInstanceId"`
+	Outcome             string  `json:"outcome"`
+	TerminalOutcome     string  `json:"terminalOutcome,omitempty"`
+	PublicationPath     string  `json:"publicationPath,omitempty"`
+	SourceArtifactID    string  `json:"sourceArtifactId,omitempty"`
+	SourceGeneration    string  `json:"sourceGeneration,omitempty"`
+	FailureStage        string  `json:"failureStage,omitempty"`
+	FailureCause        string  `json:"failureCause,omitempty"`
+	CustodyState        string  `json:"custodyState,omitempty"`
+	KeepSourceOnFailure bool    `json:"keepSourceOnFailure,omitempty"`
+	SourceCleanupStatus string  `json:"sourceCleanupStatus,omitempty"`
 	// Typed terminal fields (contract section 2.5; Runner M1a writes them as
 	// Failure:* params). Empty from an older Runner, whose TerminalOutcome is
 	// then read by the legacy string rule.

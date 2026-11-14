@@ -836,6 +836,7 @@ func admissionTerminal(adm ports.RequestAdmission) (ports.RunnerTerminal, bool) 
 	default:
 		return t, false
 	}
+	t.Fetched = adm.Fetched
 	return t, true
 }
 

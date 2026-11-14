@@ -1034,3 +1034,17 @@ func mustReadManifest(t *testing.T, dir string) ports.Manifest {
 	}
 	return m
 }
+
+func TestMeasuredReceiptDoesNotChargeZeroByteFailure(t *testing.T) {
+	f := setupV2(t, nil)
+	f.deferGrabs()
+	dl := f.grab(1, "Show.S01E01.1080p.WEB-DL-GRP")
+	adm := ports.RequestAdmission{RequestToken: dl.Transfer, JobID: dl.Handle, Outcome: "failed", FailureReason: ports.ReasonHealth, BlamesRelease: boolPtr(true), Fetched: ports.Fetched{TotalArticles: 100}}
+	for _, fact := range admissionFacts(adm) {
+		f.observe(dl, fact)
+	}
+	got, err := f.db.GetDownload(f.ctx, dl.ID)
+	if err != nil || got.Progress != 0 || got.RunnerOutcome != ports.OutcomeFailed {
+		t.Fatalf("download=%+v err=%v", got, err)
+	}
+}
