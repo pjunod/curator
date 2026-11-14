@@ -117,7 +117,7 @@ func TestExistingOwnerTransferSettlesOffloadBeforeAttachmentWithoutIndexers(t *t
 	if err = db.ApproveHouseholdRequest(ctx, owner, digest, sqlite.HouseholdApproval{RequestID: requestID, RequestRevision: request.Revision, Item: item, Evidence: evidence, Policy: policy, Missing: []domain.RequestEpisode{{}}}); err != nil {
 		t.Fatal(err)
 	}
-	ownerDownload, err := db.InsertDownload(ctx, sqlite.Download{MediaItemID: itemID, ClientID: 1, Protocol: "torrent", State: "grabbed", Intent: "manual", Transfer: "owner-transfer", WantableIDs: []string{fmt.Sprintf("movie:%d", itemID)}})
+	ownerDownload, err := db.InsertDownload(ctx, sqlite.Download{MediaItemID: itemID, ClientID: 1, Protocol: "torrent", State: "grabbed", Intent: "automatic", Transfer: "owner-transfer", WantableIDs: []string{fmt.Sprintf("movie:%d", itemID)}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -142,7 +142,11 @@ func TestExistingOwnerTransferSettlesOffloadBeforeAttachmentWithoutIndexers(t *t
 			t.Fatal("existing work bypassed offload narrowing", delivery)
 		}
 	}
-	origin, err := db.HouseholdDownloadOrigin(ctx, ownerDownload, "")
+	ownerRow, e := db.GetDownload(ctx, ownerDownload)
+	if e != nil {
+		t.Fatal(e)
+	}
+	origin, err := db.HouseholdDownloadOrigin(ctx, ownerDownload, ownerRow.GenerationKey)
 	if err != nil || origin != nil {
 		t.Fatal("existing owner authority replaced", origin, err)
 	}

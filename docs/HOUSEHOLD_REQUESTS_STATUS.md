@@ -1,6 +1,6 @@
 # Household accounts and requests — implementation status
 
-**Status:** Astra findings fixed; static recheck and regressions pending · **Updated:**
+**Status:** Astra production review cleared; final regressions running · **Updated:**
 2026-11-13 · **Base:** owner discovery PR
 [#160](https://github.com/pjunod/curator/pull/160), merged as
 `97149893fc6d28c5edb4655ebce5bbfd6beaabec`.
@@ -124,3 +124,8 @@ publication/download generations, delayed owner connection and a stale member
 form after another tab signs in. Cinema's populated rewind fixtures now seed
 valid foreign-key parents. A second targeted recheck is pending; no runtime
 regression evidence is claimed yet.
+
+Astra cleared production fixes on Curator `99eb022` / Cinema `e0f60d0c3`.
+Two worker-fixture-only corrections (valid automatic intent and actual download
+generation in the origin assertion) were explicitly cleared without another
+review. Final suites now run before PR qualification and merge. No deployment.
