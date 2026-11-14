@@ -21,10 +21,10 @@ function CardBadges(props: { m: MediaItemSummary; downloading: boolean }) {
   const { m } = props
   const comp = completeness(m.kind, m.episodeFileCount, m.episodeCount, m.fileCount)
   return (
-    <>
+    <div className="poster-badges">
       {m.availability&&m.kind!=='book'&&<AvailabilityBadge value={m.availability} />}
       <span
-        className={`pill ${comp.cls}`}
+        className={`pill pill-recorded ${comp.cls}`}
         title={
           m.kind === 'series'
             ? 'Recorded monitored aired episodes; presence is checked separately'
@@ -43,7 +43,7 @@ function CardBadges(props: { m: MediaItemSummary; downloading: boolean }) {
           ↓
         </span>
       )}
-    </>
+    </div>
   )
 }
 
@@ -472,8 +472,8 @@ export function LibraryPage() {
                   ].filter(Boolean).join(' · ')
                 : `${m.year || '—'} · ${m.kind}`}
             </span>
-            <CardBadges m={m} downloading={downloading.has(m.id)} />
           </div>
+          <CardBadges m={m} downloading={downloading.has(m.id)} />
         </div>
       </Link>
     )

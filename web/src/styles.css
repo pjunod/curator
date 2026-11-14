@@ -1654,6 +1654,33 @@ a.pill-info:hover {
   font-size: 11px;
 }
 
+/* Status labels can be longer than a poster is wide. Keep them below the
+   metadata and let both the badge row and each label wrap within the card. */
+.poster-badges {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  margin-top: 6px;
+}
+
+.poster-badges .availability-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.poster-badges .pill {
+  max-width: 100%;
+  padding: 1px 8px;
+  font-size: 11px;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
 /* ---- sidebar: theme picker + global search ---- */
 .theme-picker {
   display: flex;
@@ -2699,6 +2726,10 @@ a.pill-info:hover {
 
   .poster-sub .pill {
     display: none; /* completeness pill needs room the card doesn't have */
+  }
+
+  .poster-badges .pill-recorded {
+    display: none;
   }
 
   /* An offloaded title must still read as one on a phone: it is the whole
