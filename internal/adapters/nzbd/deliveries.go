@@ -51,29 +51,31 @@ type runnerDeliveryWire struct {
 }
 
 type runnerRequestAdmissionWire struct {
-	ProtocolVersion     int    `json:"protocolVersion"`
-	RequestToken        string `json:"requestToken"`
-	JobID               uint32 `json:"jobId"`
-	Generation          string `json:"generation"`
-	RunnerInstanceID    string `json:"runnerInstanceId"`
-	Outcome             string `json:"outcome"`
-	TerminalOutcome     string `json:"terminalOutcome,omitempty"`
-	PublicationPath     string `json:"publicationPath,omitempty"`
-	SourceArtifactID    string `json:"sourceArtifactId,omitempty"`
-	SourceGeneration    string `json:"sourceGeneration,omitempty"`
-	FailureStage        string `json:"failureStage,omitempty"`
-	FailureCause        string `json:"failureCause,omitempty"`
-	CustodyState        string `json:"custodyState,omitempty"`
-	KeepSourceOnFailure bool   `json:"keepSourceOnFailure,omitempty"`
-	SourceCleanupStatus string `json:"sourceCleanupStatus,omitempty"`
-	FailureReason       string `json:"failureReason,omitempty"`
-	FetchCause          string `json:"fetchCause,omitempty"`
-	BlamesRelease       *bool  `json:"blamesRelease,omitempty"`
-	Salvage             string `json:"salvage,omitempty"`
+	Fetched             ports.Fetched `json:"fetched"`
+	ProtocolVersion     int           `json:"protocolVersion"`
+	RequestToken        string        `json:"requestToken"`
+	JobID               uint32        `json:"jobId"`
+	Generation          string        `json:"generation"`
+	RunnerInstanceID    string        `json:"runnerInstanceId"`
+	Outcome             string        `json:"outcome"`
+	TerminalOutcome     string        `json:"terminalOutcome,omitempty"`
+	PublicationPath     string        `json:"publicationPath,omitempty"`
+	SourceArtifactID    string        `json:"sourceArtifactId,omitempty"`
+	SourceGeneration    string        `json:"sourceGeneration,omitempty"`
+	FailureStage        string        `json:"failureStage,omitempty"`
+	FailureCause        string        `json:"failureCause,omitempty"`
+	CustodyState        string        `json:"custodyState,omitempty"`
+	KeepSourceOnFailure bool          `json:"keepSourceOnFailure,omitempty"`
+	SourceCleanupStatus string        `json:"sourceCleanupStatus,omitempty"`
+	FailureReason       string        `json:"failureReason,omitempty"`
+	FetchCause          string        `json:"fetchCause,omitempty"`
+	BlamesRelease       *bool         `json:"blamesRelease,omitempty"`
+	Salvage             string        `json:"salvage,omitempty"`
 }
 
 func (w runnerRequestAdmissionWire) portValue() ports.RequestAdmission {
 	return ports.RequestAdmission{
+		Fetched:         w.Fetched,
 		ProtocolVersion: w.ProtocolVersion, RequestToken: w.RequestToken,
 		JobID: strconv.FormatUint(uint64(w.JobID), 10), Generation: w.Generation,
 		RunnerInstanceID: w.RunnerInstanceID, Outcome: w.Outcome,

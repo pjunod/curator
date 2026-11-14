@@ -479,6 +479,10 @@ func TestRequestTokenIdempotencyRequiresExplicitCapability(t *testing.T) {
 func TestRequestAdmissionLookupUsesExactTransferToken(t *testing.T) {
 	var gotPath string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/history" {
+			_, _ = w.Write([]byte(`{"entries":[]}`))
+			return
+		}
 		gotPath = r.URL.EscapedPath()
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"protocolVersion":1,"requestToken":"t-9-aabbcc","jobId":9,"generation":"gen-9","runnerInstanceId":"runner-1","outcome":"failed","terminalOutcome":"FAILURE/FETCH","sourceArtifactId":"artifact-1","sourceGeneration":"source-gen-1","failureStage":"fetch","failureCause":"descriptor unavailable","custodyState":"no_payload","keepSourceOnFailure":false,"sourceCleanupStatus":"not_required"}`))

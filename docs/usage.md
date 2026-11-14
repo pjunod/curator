@@ -1292,6 +1292,30 @@ also checked across TMDB and TVDB after metadata hydration, so the same show
 cannot split into two cards merely because the two paths named it through
 different providers.
 
+## Automatic recovery of failed episode searches
+
+A library or policy change during season discovery restarts the comparison
+with fresh evidence after 30 seconds. It does not consume the job's failure
+attempts or admit a plan against the stale snapshot.
+
+At startup and every 30 seconds, Curator checks exhausted season searches for
+still-missing, aired, monitored episodes. An eligible failure gets a fresh
+background comparison after five minutes; repeated exhausted comparisons back
+off through 10, 20 and 40 minutes to a one-hour ceiling. The failed job remains
+in history. The sweep rotates through bounded batches, so old satisfied or
+unmonitored failures cannot hide later missing work.
+
+Failed Runner receipts without fetched counts use at most 100 recent history
+rows to recover article measurements for the exact job and transfer token.
+Zero successful articles cost zero bandwidth budget, while each failure still
+counts toward the 20-attempt ceiling. Missing or unavailable history keeps the
+conservative full-release charge; it never changes the failure verdict.
+
+Provider request limits, active download custody, offloading, monitoring and
+re-grab caps still apply. A newer manual or automatic comparison wins over a
+stale recovery request. Completed searches keep their existing discovery
+cooldowns; this recovery does not repeatedly search upgrades alone.
+
 ## Activity, and keeping it finite
 
 The Activity page leads with what is **moving**: the in-flight sections

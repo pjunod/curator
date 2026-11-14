@@ -355,3 +355,26 @@ func (d *DB) DeferClaimedJob(ctx context.Context, job domain.Job, cause string, 
 	}
 	return nil
 }
+
+// EnqueueFailedJobReplacement replaces only the newest terminal failure for
+// this key. A concurrent manual request (even one already completed) wins;
+// the recovery sweep must not resurrect the stale failure it read earlier.
+func (d *DB) EnqueueFailedJobReplacement(ctx context.Context, failedID int64, j domain.Job) (bool, error) {
+	if j.DedupeKey == "" {
+		return false, fmt.Errorf("failed job replacement needs a dedupe key")
+	}
+	now := time.Now()
+	after := j.RunAfter
+	if after.IsZero() {
+		after = now
+	}
+	res, err := d.W.ExecContext(ctx, `INSERT INTO jobs(kind,payload,priority,run_after,max_attempts,dedupe_key,created_at,updated_at)
+ SELECT ?,?,?,?,?,?,?,? FROM jobs old WHERE old.id=? AND old.kind=? AND old.dedupe_key=? AND old.state='failed'
+ AND NOT EXISTS(SELECT 1 FROM jobs newer WHERE newer.kind=old.kind AND newer.dedupe_key=old.dedupe_key AND newer.id>old.id)
+ ON CONFLICT DO NOTHING`, j.Kind, j.Payload, j.Priority, after.UnixMilli(), j.MaxAttempts, j.DedupeKey, now.UnixMilli(), now.UnixMilli(), failedID, j.Kind, j.DedupeKey)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n == 1, err
+}
