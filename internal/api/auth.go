@@ -10,6 +10,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"net/netip"
@@ -284,6 +285,21 @@ func (s *Server) Login(w http.ResponseWriter, r *http.Request) {
 
 // Logout implements POST /auth/logout.
 func (s *Server) Logout(w http.ResponseWriter, r *http.Request) {
+	if expected := r.Header.Get("X-Curator-Principal"); expected != "" {
+		if s.deps.Store == nil {
+			writeError(w, 409, "Account changed. Refresh before continuing.")
+			return
+		}
+		// Local logout remains available during an upstream outage; read this
+		// Curator session's authority without asking Cinema to authenticate it.
+		session, err := s.deps.Store.AccountSession(r.Context(), digestSession(requestSessionToken(r)))
+		p := principal{Account: session.Account, Method: session.Method}
+		if err != nil || expected != fmt.Sprintf("%d:%s:%s", p.Account.ID, p.Method, p.accessRole()) {
+			writeError(w, 409, "Account changed. Refresh before continuing.")
+			return
+		}
+	}
+
 	if s.deps.Store != nil {
 		if token := requestSessionToken(r); token != "" {
 			if err := s.deps.Store.DropAccountSession(r.Context(), digestSession(token)); err != nil {

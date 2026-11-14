@@ -112,3 +112,15 @@ deterministic cleanup, delayed-writer expiry and an atomic active-client cap.
 New store, API, mobile and real-browser fixtures cover these boundaries. Only
 compilation, typechecking and generation have run on the fixes. Astra's targeted
 static recheck must clear before regression execution, PR checks and merging.
+
+The first static fix recheck held the test gate for five residual issues. The
+follow-up corrections use the real transfer columns and Unix epoch sentinel,
+share held-publication checks across lookup/bind/poll, settle exact offload
+notifications before following existing owner transfers, commit exclusions and
+notification rewrites atomically, lift native attempt fencing to every connect
+method, and bind all personal web mutations/link caches to the initiating actor.
+New fixtures include real worker attachment, failed rewrite rollback, mismatched
+publication/download generations, delayed owner connection and a stale member
+form after another tab signs in. Cinema's populated rewind fixtures now seed
+valid foreign-key parents. A second targeted recheck is pending; no runtime
+regression evidence is claimed yet.

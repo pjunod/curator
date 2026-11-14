@@ -1694,7 +1694,7 @@ export const bulkEditLibrary = (req: {
 }) => send<{ updated: number; failed?: { id: number; code: string; reason: string }[] }>('POST', '/library/bulk', req)
 export const login = (username: string, password: string) =>
   send('POST', '/auth/login', { username, password })
-export const logout = () => send('POST', '/auth/logout')
+export const logout = (principal?:string) => send('POST', '/auth/logout',undefined,principal)
 
 // composeHostPort joins a host (bare, or with scheme/path) with a port,
 // unless the host already carries one. The download-client form uses it to
@@ -2370,14 +2370,14 @@ export const getHouseholdRequests=(before=0,principal?:string)=>get<HouseholdReq
 export const getHouseholdRequest=(id:number)=>get<HouseholdRequest>(`/household/requests/${id}`)
 export const searchHouseholdCatalogue=(kind:'movie'|'series',q:string)=>get<HouseholdTitle[]>(`/household/catalogue?kind=${kind}&q=${encodeURIComponent(q)}`)
 export const getHouseholdTitle=(kind:'movie'|'series',id:number)=>get<HouseholdTitle>(`/household/titles/${id}?kind=${kind}`)
-export const submitHouseholdRequest=(kind:'movie'|'series',tmdbId:number,seasons:number[])=>send<HouseholdRequest>('POST','/household/requests',{kind,tmdbId,seasons})
-export const changeHouseholdSubscription=(id:number,withdraw:boolean)=>send<HouseholdRequest>('POST',`/household/requests/${id}/${withdraw?'withdraw':'join'}`)
+export const submitHouseholdRequest=(kind:'movie'|'series',tmdbId:number,seasons:number[],principal?:string)=>send<HouseholdRequest>('POST','/household/requests',{kind,tmdbId,seasons},principal)
+export const changeHouseholdSubscription=(id:number,withdraw:boolean,principal?:string)=>send<HouseholdRequest>('POST',`/household/requests/${id}/${withdraw?'withdraw':'join'}`,undefined,principal)
 export const declineHouseholdRequest=(id:number,revision:number,publicNote:string,privateNote:string,principal?:string)=>send('POST',`/household/requests/${id}/decline`,{revision,publicNote,privateNote},principal)
 export const saveHouseholdRequestNote=(id:number,note:string,principal?:string)=>send('PUT',`/household/requests/${id}/note`,{note},principal)
-export const getHouseholdAccounts=()=>get<LocalAccount[]>('/household/accounts')
-export const updateOwnAccount=(revision:number,password:string,displayName:string,newPassword:string)=>send('PUT','/auth/account',{revision,password,displayName,newPassword})
-export const updateHouseholdAccount=(id:number,revision:number,password:string,role:string,status:string)=>send('PATCH',`/household/accounts/${id}`,{revision,password,role,status})
-export const createHouseholdInvitation=(password:string)=>send<{token:string;expiresAt:string}>('POST','/household/invitations',{password})
+export const getHouseholdAccounts=(principal?:string)=>get<LocalAccount[]>('/household/accounts',principal)
+export const updateOwnAccount=(revision:number,password:string,displayName:string,newPassword:string,principal?:string)=>send('PUT','/auth/account',{revision,password,displayName,newPassword},principal)
+export const updateHouseholdAccount=(id:number,revision:number,password:string,role:string,status:string,principal?:string)=>send('PATCH',`/household/accounts/${id}`,{revision,password,role,status},principal)
+export const createHouseholdInvitation=(password:string,principal?:string)=>send<{token:string;expiresAt:string}>('POST','/household/invitations',{password},principal)
 export const acceptHouseholdInvitation=(token:string,username:string,displayName:string,password:string)=>send<LocalAccount>('POST','/auth/invitations/accept',{token,username,displayName,password})
 
 export interface HouseholdReview {requestId:number;revision:number;title:string;scope:string;destination:string;rootId:number;profileId:number;profileName:string;present:number;missing:number;offloaded:number;checkedAt:string;fingerprint:string;newTitle:boolean}
@@ -2385,11 +2385,11 @@ export const reviewHouseholdRequest=(id:number,rootId=0,profileId=0,principal?:s
 export const approveHouseholdRequest=(id:number,rootId:number,profileId:number,fingerprint:string,privateNote:string,reacquire:boolean,principal?:string)=>send('POST',`/household/requests/${id}/approve`,{rootId,profileId,fingerprint,privateNote,reacquire},principal)
 
 export interface CinemaConnectionInfo {configured:boolean;baseUrl?:string;issuer?:string;clientId?:string;redirect?:string}
-export const getCinemaConnection=()=>get<CinemaConnectionInfo>('/auth/cinema/connection')
-export const saveCinemaConnection=(body:{password:string;baseUrl:string;clientId:string;clientSecret:string;redirect:string;disconnect?:boolean})=>send('PUT','/auth/cinema/connection',body)
-export const getCinemaLink=()=>get<{linked:boolean;issuer?:string}>('/auth/cinema/link')
-export const startCinemaLink=(password:string)=>send<{url:string}>('POST','/auth/cinema/link',{password})
-export const unlinkCinema=(password:string)=>send('DELETE','/auth/cinema/link',{password})
+export const getCinemaConnection=(principal?:string)=>get<CinemaConnectionInfo>('/auth/cinema/connection',principal)
+export const saveCinemaConnection=(body:{password:string;baseUrl:string;clientId:string;clientSecret:string;redirect:string;disconnect?:boolean},principal?:string)=>send('PUT','/auth/cinema/connection',body,principal)
+export const getCinemaLink=(principal?:string)=>get<{linked:boolean;issuer?:string}>('/auth/cinema/link',principal)
+export const startCinemaLink=(password:string,principal?:string)=>send<{url:string}>('POST','/auth/cinema/link',{password},principal)
+export const unlinkCinema=(password:string,principal?:string)=>send('DELETE','/auth/cinema/link',{password},principal)
 export const startCinemaSignIn=()=>send<{url:string}>('POST','/auth/cinema/start')
 
 export const getHouseholdSeeds=(q='',offset=0)=>get<{items:HouseholdTitle[];hasMore:boolean}>(`/household/discovery/seeds?q=${encodeURIComponent(q)}&offset=${offset}`)

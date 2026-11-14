@@ -11,7 +11,7 @@ import type {Connection} from '../types'
 type Handoff={client:MonarrClient;state:string;verifier:string;completion?:string;expires:number;epoch:number;server:string}
 export function CinemaSignIn({server,onConnected,attempts:shared}:{server:string;onConnected:(connection:Connection)=>Promise<void>;attempts?:MutableRefObject<number>}){
  const own=useRef(0),attempts=shared??own,serverRef=useRef(server)
- if(serverRef.current!==server){serverRef.current=server;attempts.current++}
+ if(serverRef.current!==server){serverRef.current=server;if(!shared)attempts.current++}
  const theme=useTheme(),[error,setError]=useState(''),[busy,setBusy]=useState(false),[pending,setPending]=useState(false),handoff=useRef<Handoff|null>(null),lock=useRef(false),alive=useRef(true)
  const info=useResource(async()=>{if(!server.trim())return null;return new MonarrClient({baseUrl:normalizeServerUrl(server),apiKey:''}).getSignInInfo()},[server])
  const current=(h:Handoff)=>alive.current&&attempts.current===h.epoch&&serverRef.current===h.server

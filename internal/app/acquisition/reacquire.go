@@ -271,10 +271,6 @@ func (s *Service) cancelOffloadDeliveriesRestricted(ctx context.Context, sc reac
 				keepPaths = append(keepPaths, f.Path)
 			}
 		}
-		if err = s.db.ExcludeHouseholdOffloadPaths(ctx, op.ID, removePaths); err != nil {
-			return err
-		}
-
 		var keep []sqlite.OutboxWrite
 		if len(keepPaths) > 0 {
 			if keep, err = s.offloadOutbox(ctx, op.ID, sc.item, keepPaths, false); err != nil {
@@ -282,7 +278,7 @@ func (s *Service) cancelOffloadDeliveriesRestricted(ctx context.Context, sc reac
 				return err
 			}
 		}
-		if err := s.db.RewriteOffloadOutbox(ctx, op.ID, why, keep); err != nil {
+		if err := s.db.RewriteOffloadOutboxExcluding(ctx, op.ID, why, keep, removePaths); err != nil {
 			s.log.Warn("re-acquire: could not cancel offload requests", "err", err)
 			return err
 		}

@@ -227,15 +227,15 @@ func (d *DB) BindExistingHouseholdDownload(ctx context.Context, targetID, genera
 		return err
 	}
 	download := downloadFromRow(row)
-	if download.MediaItemID != target.MediaItemID || download.CopyID != 0 || download.Superseded || !download.ParkedAt.IsZero() || !slices.Contains([]string{"planned", "submitting", "grabbed", "downloading", "downloaded", "awaiting_import", "importing"}, download.State) {
+	if download.MediaItemID != target.MediaItemID || download.CopyID != 0 || download.Superseded || download.ParkedAt.UnixMilli() > 0 || !slices.Contains([]string{"planned", "submitting", "grabbed", "downloading", "downloaded", "awaiting_import", "importing"}, download.State) {
 		return ErrRequestChanged
 	}
 	want := fmt.Sprintf("movie:%d", target.MediaItemID)
 	if policy.Kind == domain.KindSeries {
 		want = fmt.Sprintf("episode:%d:%d:%d", target.MediaItemID, target.Season, target.Episode)
 	}
-	var stopped bool
-	if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM import_attempt_controls WHERE download_id=? AND generation_key=? AND outcome IN('cancelled','completed')) OR EXISTS(SELECT 1 FROM downloads WHERE id=? AND runner_outcome IN('cancelled','failed')) OR EXISTS(SELECT 1 FROM publications WHERE download_id=? AND generation=? AND (state='import_failed' OR holds>0))`, download.ID, download.GenerationKey, download.ID, download.ID, download.GenerationKey).Scan(&stopped); err != nil {
+	stopped, err := householdDownloadNeedsReview(ctx, tx, download.ID, download.GenerationKey)
+	if err != nil {
 		return err
 	}
 	if stopped {
@@ -346,14 +346,28 @@ func (d *DB) FindHouseholdOwnerDownload(ctx context.Context, t domain.HouseholdT
 		want = fmt.Sprintf("episode:%d:%d:%d", t.MediaItemID, t.Season, t.Episode)
 	}
 	var id int64
-	err := d.R.QueryRowContext(ctx, `SELECT d.id FROM downloads d WHERE d.media_item_id=? AND COALESCE(d.copy_id,0)=0 AND d.superseded=0 AND d.parked_at=0 AND d.state IN('planned','submitting','grabbed','downloading','downloaded','awaiting_import','importing') AND d.runner_outcome NOT IN('cancelled','failed') AND NOT EXISTS(SELECT 1 FROM household_download_origins h WHERE h.download_id=d.id AND h.generation=d.generation_key) AND NOT EXISTS(SELECT 1 FROM import_attempt_controls i WHERE i.download_id=d.id AND i.generation_key=d.generation_key AND i.outcome IN('cancelled','completed')) AND (EXISTS(SELECT 1 FROM json_each(d.wantable_ids) w WHERE w.value=?) OR (?<>0 AND d.plan_id<>0 AND EXISTS(SELECT 1 FROM json_each(d.reserved_episodes) e WHERE e.value=?))) ORDER BY d.id LIMIT 1`, t.MediaItemID, want, t.EpisodeID, t.EpisodeID).Scan(&id)
+	var generation string
+	err := d.R.QueryRowContext(ctx, `SELECT d.id,d.generation_key FROM downloads d WHERE d.media_item_id=? AND COALESCE(d.copy_id,0)=0 AND d.superseded=0 AND d.state IN('planned','submitting','grabbed','downloading','downloaded','awaiting_import','importing') AND NOT EXISTS(SELECT 1 FROM household_download_origins h WHERE h.download_id=d.id AND h.generation=d.generation_key) AND (EXISTS(SELECT 1 FROM json_each(d.wantables) w WHERE w.value=?) OR (?<>0 AND d.plan_id<>0 AND EXISTS(SELECT 1 FROM json_each(d.reserved_episodes) e WHERE e.value=?))) ORDER BY d.id LIMIT 1`, t.MediaItemID, want, t.EpisodeID, t.EpisodeID).Scan(&id, &generation)
 	if errors.Is(err, sql.ErrNoRows) {
 		return 0, nil
 	}
-	return id, err
+	if err != nil {
+		return 0, err
+	}
+	stopped, e := householdDownloadNeedsReview(ctx, d.R, id, generation)
+	if e != nil {
+		return 0, e
+	}
+	if stopped {
+		return id, ErrRequestChanged
+	}
+	return id, nil
 }
 func (d *DB) HouseholdDownloadNeedsReview(ctx context.Context, id int64, generation string) (bool, error) {
+	return householdDownloadNeedsReview(ctx, d.R, id, generation)
+}
+func householdDownloadNeedsReview(ctx context.Context, q scopeQuerier, id int64, generation string) (bool, error) {
 	var stopped bool
-	err := d.R.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM downloads d WHERE d.id=? AND d.generation_key=? AND (d.superseded=1 OR d.parked_at>0 OR d.runner_outcome IN('cancelled','failed') OR d.state NOT IN('planned','submitting','grabbed','downloading','downloaded','awaiting_import','importing') OR EXISTS(SELECT 1 FROM import_attempt_controls i WHERE i.download_id=d.id AND i.generation_key=d.generation_key AND i.outcome IN('cancelled','completed')) OR EXISTS(SELECT 1 FROM publications p WHERE p.download_id=d.id AND (p.state='import_failed' OR p.holds>0))))`, id, generation).Scan(&stopped)
+	err := q.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM downloads d WHERE d.id=? AND d.generation_key=? AND (d.superseded=1 OR d.parked_at>0 OR d.runner_outcome IN('cancelled','failed') OR d.state NOT IN('planned','submitting','grabbed','downloading','downloaded','awaiting_import','importing') OR EXISTS(SELECT 1 FROM import_attempt_controls i WHERE i.download_id=d.id AND i.generation_key=d.generation_key AND i.outcome IN('cancelled','completed')) OR EXISTS(SELECT 1 FROM publications p WHERE p.download_id=d.id AND (p.state='import_failed' OR p.holds>0))))`, id, generation).Scan(&stopped)
 	return stopped, err
 }

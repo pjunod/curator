@@ -1,5 +1,5 @@
 import {CinemaSignIn} from './CinemaSignIn'
-import {useEffect,useRef,useState} from 'react'
+import {useEffect,useRef,useState,type MutableRefObject} from 'react'
 import {Platform,Text,View} from 'react-native'
 import {MonarrClient} from '../api'
 import {normalizeServerUrl} from '../connection'
@@ -7,8 +7,8 @@ import type {Connection} from '../types'
 import {useTheme} from '../theme'
 import {Button,Field,InlineError,Panel} from '../components/UI'
 
-export function AccountSignIn({server,onConnected}:{server:string;onConnected:(value:Connection)=>Promise<void>}){
- const attempts=useRef(0),selected=useRef(server),alive=useRef(true),locked=useRef(false);if(selected.current!==server){selected.current=server;attempts.current++}
+export function AccountSignIn({server,onConnected,attempts:shared}:{server:string;onConnected:(value:Connection)=>Promise<void>;attempts?:MutableRefObject<number>}){
+ const own=useRef(0),attempts=shared??own,selected=useRef(server),alive=useRef(true),locked=useRef(false);if(selected.current!==server){selected.current=server;if(!shared)attempts.current++}
  useEffect(()=>{alive.current=true;return()=>{alive.current=false;attempts.current++}},[])
  const theme=useTheme(),[username,setUsername]=useState(''),[password,setPassword]=useState(''),[error,setError]=useState(''),[busy,setBusy]=useState(false)
  const signIn=async()=>{

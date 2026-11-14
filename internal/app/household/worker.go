@@ -101,6 +101,18 @@ func (s *Service) processTarget(ctx context.Context, target domain.HouseholdTarg
 	if policy.Kind == domain.KindSeries {
 		present = evidence.PresentEpisodes[target.EpisodeID]
 	}
+	if policy.Reacquire && target.OffloadEpoch > 0 {
+		scope := domain.RequestScope{}
+		if policy.Kind == domain.KindSeries {
+			scope.Episodes = []domain.RequestEpisode{{Season: target.Season, Episode: target.Episode}}
+		}
+		if err = s.Acquisition.CancelHouseholdOffloadDeliveries(ctx, target.MediaItemID, scope, policy.OffloadOperations); err != nil {
+			if errors.Is(err, sqlite.ErrRequestChanged) {
+				return result("needs_review", "Historical offload notifications need owner review before this exact primary scope can return.")
+			}
+			return result("waiting", "Waiting to settle the previously approved offload notifications.")
+		}
+	}
 	if present {
 		return result("fulfilled", "")
 	}
@@ -123,6 +135,9 @@ func (s *Service) processTarget(ctx context.Context, target domain.HouseholdTarg
 	}
 	existing, err := s.DB.FindHouseholdOwnerDownload(ctx, target)
 	if err != nil {
+		if errors.Is(err, sqlite.ErrRequestChanged) {
+			return result("needs_review", "Existing owner work is held, parked or cancelled. Review it in Activity.")
+		}
 		return err
 	}
 	if existing != 0 {
@@ -130,18 +145,6 @@ func (s *Service) processTarget(ctx context.Context, target domain.HouseholdTarg
 			return result("needs_review", "Existing owner work changed before it could be followed.")
 		}
 		return result("waiting", "Following already authorized work for the requested primary scope.")
-	}
-	request, err := s.DB.HouseholdRequest(ctx, target.RequestID, 0, false)
-	if err != nil {
-		return err
-	}
-	if policy.Reacquire {
-		if err = s.Acquisition.CancelHouseholdOffloadDeliveries(ctx, target.MediaItemID, request.Scope, policy.OffloadOperations); err != nil {
-			if errors.Is(err, sqlite.ErrRequestChanged) {
-				return result("needs_review", "Historical offload notifications need owner review before this exact primary scope can return.")
-			}
-			return result("waiting", "Waiting to settle the previously approved offload notifications.")
-		}
 	}
 	id, acquireErr := s.Acquisition.AcquireHouseholdTarget(ctx, target)
 	// Admission may have committed before a client response or local error. Never

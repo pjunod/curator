@@ -240,3 +240,30 @@ func TestFailedMonitoredHouseholdEpisodeNeverFallsBackToSeasonPlanning(t *testin
 		t.Fatal("household failure submitted another download", client.added)
 	}
 }
+
+func TestHouseholdOffloadRewriteFailureRollsBackExclusionsAndOutbox(t *testing.T) {
+	f := newOffloadFixture(t)
+	ctx := context.Background()
+	f.cinema(t, ports.FeatureRemovedPaths, ports.FeatureOffload)
+	movie, _, _ := f.movieWithFiles(t)
+	req := OffloadRequest{ItemID: movie.ID, Scope: "item"}
+	op := f.start(t, req, f.preview(t, req))
+	f.wait(t, op.ID)
+	if _, err := f.db.W.ExecContext(ctx, `CREATE TRIGGER refuse_outbox_rewrite BEFORE UPDATE ON notifier_deliveries BEGIN SELECT RAISE(ABORT,'fixture rewrite failure'); END`); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.svc.CancelHouseholdOffloadDeliveries(ctx, movie.ID, domain.RequestScope{}, []string{op.ID}); err == nil {
+		t.Fatal("failed rewrite accepted")
+	}
+	exclusions, err := f.db.HouseholdOffloadExclusions(ctx, op.ID)
+	if err != nil || len(exclusions) != 0 {
+		t.Fatal("exclusions committed without outbox", exclusions, err)
+	}
+	deliveries, err := f.db.OperationDeliveries(ctx, op.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(deliveries) != 1 || deliveries[0].Status != "pending" {
+		t.Fatal("failed rewrite mutated original delivery", deliveries)
+	}
+}

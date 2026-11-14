@@ -559,11 +559,19 @@ func (d *DB) PendingOffloadOperationsForItem(ctx context.Context, itemID int64) 
 // attempt with the shorter path list) take their place. An empty keep
 // cancels them all.
 func (d *DB) RewriteOffloadOutbox(ctx context.Context, operationID, why string, keep []OutboxWrite) error {
+	return d.RewriteOffloadOutboxExcluding(ctx, operationID, why, keep, nil)
+}
+func (d *DB) RewriteOffloadOutboxExcluding(ctx context.Context, operationID, why string, keep []OutboxWrite, excluded []string) error {
 	tx, err := d.W.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
+	for _, path := range excluded {
+		if _, err = tx.ExecContext(ctx, `INSERT OR IGNORE INTO household_offload_exclusions(operation_id,path) VALUES(?,?)`, operationID, path); err != nil {
+			return err
+		}
+	}
 	now := time.Now().UnixMilli()
 	if _, err := tx.ExecContext(ctx, `UPDATE notifier_deliveries SET status='failed',last_error=?,next_at=0,updated_at=? WHERE operation_id=? AND status='pending' AND event IN ('offload','moved')`, why, now, operationID); err != nil {
 		return err
@@ -614,17 +622,4 @@ func (d *DB) HouseholdOffloadExclusions(ctx context.Context, id string) (map[str
 		out[path] = true
 	}
 	return out, rows.Err()
-}
-func (d *DB) ExcludeHouseholdOffloadPaths(ctx context.Context, id string, paths []string) error {
-	tx, err := d.W.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = tx.Rollback() }()
-	for _, path := range paths {
-		if _, err = tx.ExecContext(ctx, `INSERT OR IGNORE INTO household_offload_exclusions(operation_id,path) VALUES(?,?)`, id, path); err != nil {
-			return err
-		}
-	}
-	return tx.Commit()
 }

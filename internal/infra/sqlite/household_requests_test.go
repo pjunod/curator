@@ -348,6 +348,19 @@ func TestHouseholdExistingWorkAndFrozenOriginPolicy(t *testing.T) {
 	if err != nil || found != downloadID {
 		t.Fatal("existing work requires an indexer", found, err)
 	}
+	// Runner payload identity differs from the local download generation.
+	if _, err = db.W.ExecContext(ctx, `INSERT INTO publications(download_id,generation,kind,path,state,discovered_at,updated_at,holds) VALUES(?,'runner-payload-generation','completed','/held-payload','discovered',0,0,1)`, downloadID); err != nil {
+		t.Fatal(err)
+	}
+	if err = db.BindExistingHouseholdDownload(ctx, target.ID, target.ApprovalGeneration, downloadID); !errors.Is(err, ErrRequestChanged) {
+		t.Fatal("held payload attached through a different generation namespace", err)
+	}
+	if _, err = db.FindHouseholdOwnerDownload(ctx, target); !errors.Is(err, ErrRequestChanged) {
+		t.Fatal("lookup failed to identify held work", err)
+	}
+	if _, err = db.W.ExecContext(ctx, `DELETE FROM publications WHERE download_id=?`, downloadID); err != nil {
+		t.Fatal(err)
+	}
 	if err = db.BindExistingHouseholdDownload(ctx, target.ID, target.ApprovalGeneration, downloadID); err != nil {
 		t.Fatal(err)
 	}
