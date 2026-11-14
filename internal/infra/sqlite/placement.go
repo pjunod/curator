@@ -225,6 +225,11 @@ func (d *DB) CommitPlacement(ctx context.Context, p Placement) (int64, error) {
 	if placementEpoch(prepared) != placementEpoch(p) || (state != "prepared" && state != "committed" && state != "cleaned") {
 		return 0, ErrPlacementGenerationChanged
 	}
+	if state == "prepared" {
+		if err = validateHouseholdPlacementTx(ctx, tx, p); err != nil {
+			return 0, err
+		}
+	}
 	if p.ImportEpoch != nil {
 		publication, e := placementPublication(p)
 		if e != nil {

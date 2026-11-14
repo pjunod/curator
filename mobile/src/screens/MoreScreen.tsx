@@ -15,11 +15,13 @@ export function MoreScreen({
   connection,
   onCalendar,
   onDisconnect,
+  onHousehold,
 }: {
   client: MonarrClient
   connection: Connection
   onCalendar: () => void
   onDisconnect: () => void
+  onHousehold?: (tab:'requests'|'account')=>void
 }) {
   const theme = useTheme()
   const {
@@ -58,6 +60,8 @@ export function MoreScreen({
           </Panel>
         </Pressable>
 
+        <SectionTitle>Household</SectionTitle>
+        {onHousehold?<View style={styles.actions}><Button label="Household requests" onPress={()=>onHousehold('requests')}/><Button secondary label="Your Curator account" onPress={()=>onHousehold('account')}/></View>:<Text style={[styles.adminCopy,{color:theme.muted}]}>Use Change server to sign in with a personal Curator account for household requests.</Text>}
         <SectionTitle>Display</SectionTitle>
         <Panel style={styles.appearancePanel}>
           <View style={styles.preferenceBlock}>

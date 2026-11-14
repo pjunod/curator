@@ -1,3 +1,4 @@
+import {AccountSignIn} from './AccountSignIn'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { KeyboardAvoidingView, Platform, StyleSheet, Text, View } from 'react-native'
 import { CameraView, useCameraPermissions, type BarcodeScanningResult } from 'expo-camera'
@@ -14,7 +15,7 @@ export function ConnectScreen({
   onConnected,
 }: {
   initial?: Connection | null
-  onConnected: (connection: Connection, status: SystemStatus) => Promise<void>
+  onConnected: (connection: Connection, status?: SystemStatus) => Promise<void>
 }) {
   const theme = useTheme()
   const [cameraPermission, requestCameraPermission] = useCameraPermissions()
@@ -30,23 +31,27 @@ export function ConnectScreen({
   const [qrHandled, setQrHandled] = useState(false)
   const apiKeyRef = useRef(apiKey)
   const scanGeneration = useRef(0)
+  const attempts=useRef(0),alive=useRef(true),scannerActive=useRef(false)
+  useEffect(()=>{alive.current=true;return()=>{alive.current=false;attempts.current++;scannerActive.current=false}},[])
 
   useEffect(() => {
     apiKeyRef.current = apiKey
   }, [apiKey])
 
   const connectWith = async (candidate: Connection) => {
+ const epoch=++attempts.current;const valid=()=>alive.current&&attempts.current===epoch
     setConnecting(true)
     setError('')
     setMessage('')
     try {
       const connection = sanitizeConnection(candidate)
       const status = await new MonarrClient(connection).getStatus()
+      if(!valid())return
       await onConnected(connection, status)
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Could not connect to Curator.')
+      if(valid())setError(cause instanceof Error ? cause.message : 'Could not connect to Curator.')
     } finally {
-      setConnecting(false)
+      if(alive.current)setConnecting(false)
     }
   }
 
@@ -102,7 +107,7 @@ export function ConnectScreen({
   }, [findOnWifi])
 
   const useDiscoveredServer = (found: DiscoveredServer) => {
-    setServer(found.baseUrl)
+    attempts.current++;setServer(found.baseUrl)
     setError('')
     if (found.requiresApiKey) {
       setMessage(`${found.name} requires its API key. Enter it below, then connect.`)
@@ -112,20 +117,23 @@ export function ConnectScreen({
   }
 
   const openQrScanner = async () => {
+    const epoch=++attempts.current
     setError('')
     setMessage('')
     let permission = cameraPermission
     if (!permission?.granted) permission = await requestCameraPermission()
+    if(!alive.current||attempts.current!==epoch)return
     if (!permission.granted) {
       setError('Camera access is required to scan a Curator pairing QR code.')
       return
     }
-    setQrHandled(false)
+    scannerActive.current=true;setQrHandled(false)
     setScanningQr(true)
   }
 
   const handleQrCode = ({ data }: BarcodeScanningResult) => {
-    if (qrHandled) return
+    if (qrHandled||!scannerActive.current) return
+    scannerActive.current=false
     setQrHandled(true)
     try {
       const connection = parsePairingCode(data)
@@ -157,7 +165,7 @@ export function ConnectScreen({
             />
             <View pointerEvents="none" style={[styles.scanTarget, { borderColor: theme.accent }]} />
           </View>
-          <Button label="Cancel" secondary onPress={() => setScanningQr(false)} />
+          <Button label="Cancel" secondary onPress={() => {scannerActive.current=false;attempts.current++;setScanningQr(false)}} />
         </View>
       </AppScreen>
     )
@@ -209,8 +217,10 @@ export function ConnectScreen({
             placeholder="http://192.168.1.20:7676"
             returnKeyType="next"
             value={server}
-            onChangeText={setServer}
+            onChangeText={value=>{attempts.current++;setServer(value)}}
           />
+
+          <AccountSignIn attempts={attempts} server={server} onConnected={value=>onConnected(value)} />
 
           <View style={styles.labelBlock}>
             <Text style={[styles.label, { color: theme.text }]}>API key</Text>
@@ -223,7 +233,7 @@ export function ConnectScreen({
             secureTextEntry
             returnKeyType="go"
             value={apiKey}
-            onChangeText={setApiKey}
+            onChangeText={value=>{attempts.current++;setApiKey(value)}}
             onSubmitEditing={() => void connect()}
           />
 

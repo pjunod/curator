@@ -4,6 +4,51 @@ Everything on the Settings and System pages, field by field. Process-level
 configuration (port, data dir, log level) is environment-based and lives in
 the [README](../README.md#configuration).
 
+## Household accounts and optional Cinema login
+
+**Access → Household accounts** manages local Curator people. Configure your
+first local owner username/password with the existing User login form, sign in,
+then create a single-use invitation after confirming that password. Accepting
+an invitation creates a separate local member with a password of at least
+12 characters. Issuing an invitation requires authenticated household access;
+anonymous owner access stays disabled after household access is established.
+Existing owner API keys and paired owner devices keep owner privileges. Use a
+personal account for members; remove an old owner connection or rotate its key
+when converting an owner device to member use.
+
+**Account** changes your own display name and local password after confirming
+your current local password. Password, role and suspension changes revoke the
+affected account's sessions. The last active local owner cannot be suspended or
+demoted. Other local owners can reset an account's password through the account
+API. Sole-owner recovery is a host operation described in
+[usage.md](usage.md#recover-a-local-owner-password).
+
+**Access → Cinema sign-in connection** is independent of media notifications,
+calendar and watch-state synchronization. In Cinema, use **Settings →
+Integrations → Manage optional Curator sign-in connections** to register the
+exact Curator HTTPS callback `/api/v1/auth/cinema/callback`. Open Curator through HTTPS before entering credentials. Copy the new client
+ID and one-time client secret into Curator with Cinema's HTTPS address and the
+same callback. Verify and save with your local owner password. This establishes
+authenticated household access. Both services need these new delegation routes;
+an older Cinema answers unavailable and local Curator sign-in still works.
+
+Each person links Cinema from their own **Account** page using a local Curator
+password and explicit Cinema consent. Names/emails never merge accounts. An
+unlinked Cinema identity must first sign in locally or accept an invitation.
+Cinema sign-in grants household discovery/requests access even if the permanent
+Curator account is an owner. Owner administration and account changes require
+local sign-in. Native clients open the system browser and receive their own
+proof-bound, one-use handoff. Finish consent and use the browser return link on
+the same device that started sign-in, then confirm the displayed local account.
+The app requires both its original verifier and that browser-returned completion
+code; it never receives the Cinema bearer or a shared owner key.
+
+Unlink revokes Cinema-derived Curator sessions immediately and durably queues
+remote grant revocation for fair retry until each remote grant expires. Local credentials, local sessions and request
+history remain. Replacing/disconnecting the saved Cinema login connection
+unlinks all its identities and revokes its derived sessions. Cinema outages
+fail closed for Cinema-derived requests; local sign-in stays independent.
+
 ## Display preferences
 
 **Display** at the bottom of the desktop navigation (or in the phone's

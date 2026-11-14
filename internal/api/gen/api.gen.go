@@ -2093,6 +2093,60 @@ func (e SetPublicationCleanupJSONBodyAction) Valid() bool {
 	}
 }
 
+// Defines values for SearchHouseholdCatalogueParamsKind.
+const (
+	SearchHouseholdCatalogueParamsKindMovie  SearchHouseholdCatalogueParamsKind = "movie"
+	SearchHouseholdCatalogueParamsKindSeries SearchHouseholdCatalogueParamsKind = "series"
+)
+
+// Valid indicates whether the value is a known member of the SearchHouseholdCatalogueParamsKind enum.
+func (e SearchHouseholdCatalogueParamsKind) Valid() bool {
+	switch e {
+	case SearchHouseholdCatalogueParamsKindMovie:
+		return true
+	case SearchHouseholdCatalogueParamsKindSeries:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for SubmitHouseholdRequestJSONBodyKind.
+const (
+	SubmitHouseholdRequestJSONBodyKindMovie  SubmitHouseholdRequestJSONBodyKind = "movie"
+	SubmitHouseholdRequestJSONBodyKindSeries SubmitHouseholdRequestJSONBodyKind = "series"
+)
+
+// Valid indicates whether the value is a known member of the SubmitHouseholdRequestJSONBodyKind enum.
+func (e SubmitHouseholdRequestJSONBodyKind) Valid() bool {
+	switch e {
+	case SubmitHouseholdRequestJSONBodyKindMovie:
+		return true
+	case SubmitHouseholdRequestJSONBodyKindSeries:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for GetHouseholdTitleParamsKind.
+const (
+	GetHouseholdTitleParamsKindMovie  GetHouseholdTitleParamsKind = "movie"
+	GetHouseholdTitleParamsKindSeries GetHouseholdTitleParamsKind = "series"
+)
+
+// Valid indicates whether the value is a known member of the GetHouseholdTitleParamsKind enum.
+func (e GetHouseholdTitleParamsKind) Valid() bool {
+	switch e {
+	case GetHouseholdTitleParamsKindMovie:
+		return true
+	case GetHouseholdTitleParamsKindSeries:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ListImportActivityParamsFilter.
 const (
 	ListImportActivityParamsFilterActive    ListImportActivityParamsFilter = "active"
@@ -5219,10 +5273,28 @@ type ListActivityParamsView string
 // ListActivityParamsScope defines parameters for ListActivity.
 type ListActivityParamsScope string
 
+// UpdateOwnAccountJSONBody defines parameters for UpdateOwnAccount.
+type UpdateOwnAccountJSONBody = map[string]interface{}
+
+// AcceptHouseholdInvitationJSONBody defines parameters for AcceptHouseholdInvitation.
+type AcceptHouseholdInvitationJSONBody struct {
+	DisplayName *string `json:"displayName,omitempty"`
+	Password    string  `json:"password"`
+	Token       string  `json:"token"`
+	Username    string  `json:"username"`
+}
+
 // LoginJSONBody defines parameters for Login.
 type LoginJSONBody struct {
 	Password string `json:"password"`
 	Username string `json:"username"`
+}
+
+// CreateAccountSessionJSONBody defines parameters for CreateAccountSession.
+type CreateAccountSessionJSONBody struct {
+	Device   *string `json:"device,omitempty"`
+	Password string  `json:"password"`
+	Username string  `json:"username"`
 }
 
 // GetCalendarParams defines parameters for GetCalendar.
@@ -5306,6 +5378,67 @@ type ListHistoryParams struct {
 	Limit       *int   `form:"limit,omitempty" json:"limit,omitempty"`
 	Offset      *int   `form:"offset,omitempty" json:"offset,omitempty"`
 }
+
+// UpdateHouseholdAccountJSONBody defines parameters for UpdateHouseholdAccount.
+type UpdateHouseholdAccountJSONBody = map[string]interface{}
+
+// SearchHouseholdCatalogueParams defines parameters for SearchHouseholdCatalogue.
+type SearchHouseholdCatalogueParams struct {
+	Kind SearchHouseholdCatalogueParamsKind `form:"kind" json:"kind"`
+	Q    string                             `form:"q" json:"q"`
+}
+
+// SearchHouseholdCatalogueParamsKind defines parameters for SearchHouseholdCatalogue.
+type SearchHouseholdCatalogueParamsKind string
+
+// CreateHouseholdInvitationJSONBody defines parameters for CreateHouseholdInvitation.
+type CreateHouseholdInvitationJSONBody struct {
+	Password string `json:"password"`
+}
+
+// ListHouseholdRequestsParams defines parameters for ListHouseholdRequests.
+type ListHouseholdRequestsParams struct {
+	Before *int64 `form:"before,omitempty" json:"before,omitempty"`
+}
+
+// SubmitHouseholdRequestJSONBody defines parameters for SubmitHouseholdRequest.
+type SubmitHouseholdRequestJSONBody struct {
+	Kind    SubmitHouseholdRequestJSONBodyKind `json:"kind"`
+	Seasons *[]int                             `json:"seasons,omitempty"`
+	TmdbId  int64                              `json:"tmdbId"`
+}
+
+// SubmitHouseholdRequestJSONBodyKind defines parameters for SubmitHouseholdRequest.
+type SubmitHouseholdRequestJSONBodyKind string
+
+// ApproveHouseholdRequestJSONBody defines parameters for ApproveHouseholdRequest.
+type ApproveHouseholdRequestJSONBody struct {
+	Fingerprint string  `json:"fingerprint"`
+	PrivateNote *string `json:"privateNote,omitempty"`
+	ProfileId   *int64  `json:"profileId,omitempty"`
+	Reacquire   *bool   `json:"reacquire,omitempty"`
+	RootId      *int64  `json:"rootId,omitempty"`
+}
+
+// DeclineHouseholdRequestJSONBody defines parameters for DeclineHouseholdRequest.
+type DeclineHouseholdRequestJSONBody = map[string]interface{}
+
+// SaveHouseholdRequestNoteJSONBody defines parameters for SaveHouseholdRequestNote.
+type SaveHouseholdRequestNoteJSONBody = map[string]interface{}
+
+// ReviewHouseholdRequestParams defines parameters for ReviewHouseholdRequest.
+type ReviewHouseholdRequestParams struct {
+	RootId    *int64 `form:"rootId,omitempty" json:"rootId,omitempty"`
+	ProfileId *int64 `form:"profileId,omitempty" json:"profileId,omitempty"`
+}
+
+// GetHouseholdTitleParams defines parameters for GetHouseholdTitle.
+type GetHouseholdTitleParams struct {
+	Kind GetHouseholdTitleParamsKind `form:"kind" json:"kind"`
+}
+
+// GetHouseholdTitleParamsKind defines parameters for GetHouseholdTitle.
+type GetHouseholdTitleParamsKind string
 
 // PlanRetainedRecoveryJSONBody defines parameters for PlanRetainedRecovery.
 type PlanRetainedRecoveryJSONBody = []map[string]interface{}
@@ -5577,8 +5710,17 @@ type ListWantedSearchResultsParams struct {
 // PlurxWebhook200JSONResponseBodyState defines parameters for PlurxWebhook.
 type PlurxWebhook200JSONResponseBodyState string
 
+// UpdateOwnAccountJSONRequestBody defines body for UpdateOwnAccount for application/json ContentType.
+type UpdateOwnAccountJSONRequestBody = UpdateOwnAccountJSONBody
+
+// AcceptHouseholdInvitationJSONRequestBody defines body for AcceptHouseholdInvitation for application/json ContentType.
+type AcceptHouseholdInvitationJSONRequestBody AcceptHouseholdInvitationJSONBody
+
 // LoginJSONRequestBody defines body for Login for application/json ContentType.
 type LoginJSONRequestBody LoginJSONBody
+
+// CreateAccountSessionJSONRequestBody defines body for CreateAccountSession for application/json ContentType.
+type CreateAccountSessionJSONRequestBody CreateAccountSessionJSONBody
 
 // AddCustomFormatJSONRequestBody defines body for AddCustomFormat for application/json ContentType.
 type AddCustomFormatJSONRequestBody = CustomFormatInput
@@ -5612,6 +5754,24 @@ type SetPublicationCleanupJSONRequestBody SetPublicationCleanupJSONBody
 
 // GrabReleaseJSONRequestBody defines body for GrabRelease for application/json ContentType.
 type GrabReleaseJSONRequestBody = GrabRequest
+
+// UpdateHouseholdAccountJSONRequestBody defines body for UpdateHouseholdAccount for application/json ContentType.
+type UpdateHouseholdAccountJSONRequestBody = UpdateHouseholdAccountJSONBody
+
+// CreateHouseholdInvitationJSONRequestBody defines body for CreateHouseholdInvitation for application/json ContentType.
+type CreateHouseholdInvitationJSONRequestBody CreateHouseholdInvitationJSONBody
+
+// SubmitHouseholdRequestJSONRequestBody defines body for SubmitHouseholdRequest for application/json ContentType.
+type SubmitHouseholdRequestJSONRequestBody SubmitHouseholdRequestJSONBody
+
+// ApproveHouseholdRequestJSONRequestBody defines body for ApproveHouseholdRequest for application/json ContentType.
+type ApproveHouseholdRequestJSONRequestBody ApproveHouseholdRequestJSONBody
+
+// DeclineHouseholdRequestJSONRequestBody defines body for DeclineHouseholdRequest for application/json ContentType.
+type DeclineHouseholdRequestJSONRequestBody = DeclineHouseholdRequestJSONBody
+
+// SaveHouseholdRequestNoteJSONRequestBody defines body for SaveHouseholdRequestNote for application/json ContentType.
+type SaveHouseholdRequestNoteJSONRequestBody = SaveHouseholdRequestNoteJSONBody
 
 // ManualImportJSONRequestBody defines body for ManualImport for application/json ContentType.
 type ManualImportJSONRequestBody = ManualImportRequest
@@ -5774,12 +5934,57 @@ type ServerInterface interface {
 	// ListActivity Unified download and retained import activity
 	// (GET /activity)
 	ListActivity(w http.ResponseWriter, r *http.Request, params ListActivityParams)
+	// UpdateOwnAccount Update the current local account after password confirmation
+	// (PUT /auth/account)
+	UpdateOwnAccount(w http.ResponseWriter, r *http.Request)
+	// OpenCinemaBrowser Bind a native handoff to its system browser and redirect to consent
+	// (GET /auth/cinema/browser)
+	OpenCinemaBrowser(w http.ResponseWriter, r *http.Request)
+	// CinemaCallback Consume a state- and issuer-bound Cinema callback
+	// (GET /auth/cinema/callback)
+	CinemaCallback(w http.ResponseWriter, r *http.Request)
+	// GetCinemaConnection Read the saved optional Cinema connection without secrets
+	// (GET /auth/cinema/connection)
+	GetCinemaConnection(w http.ResponseWriter, r *http.Request)
+	// SaveCinemaConnection Verify, save or disconnect Cinema login after local owner password proof
+	// (PUT /auth/cinema/connection)
+	SaveCinemaConnection(w http.ResponseWriter, r *http.Request)
+	// UnlinkCinema Unlink Cinema locally and queue remote grant revocation
+	// (DELETE /auth/cinema/link)
+	UnlinkCinema(w http.ResponseWriter, r *http.Request)
+	// GetCinemaLink Read this account’s optional Cinema identity link
+	// (GET /auth/cinema/link)
+	GetCinemaLink(w http.ResponseWriter, r *http.Request)
+	// StartCinemaLink Begin an explicitly consented Cinema link after local password proof
+	// (POST /auth/cinema/link)
+	StartCinemaLink(w http.ResponseWriter, r *http.Request)
+	// StartCinemaNative Start system-browser sign-in with an app S256 challenge
+	// (POST /auth/cinema/native)
+	StartCinemaNative(w http.ResponseWriter, r *http.Request)
+	// FinishCinemaNative Consume a native handoff with the app verifier and consenting-device completion code
+	// (POST /auth/cinema/native/result)
+	FinishCinemaNative(w http.ResponseWriter, r *http.Request)
+	// StartCinemaSignIn Start optional Cinema sign-in for an already linked account
+	// (POST /auth/cinema/start)
+	StartCinemaSignIn(w http.ResponseWriter, r *http.Request)
+	// GetHouseholdSignInInfo Public sign-in requirements and optional integration availability
+	// (GET /auth/info)
+	GetHouseholdSignInInfo(w http.ResponseWriter, r *http.Request)
+	// AcceptHouseholdInvitation Create an independent Curator account with a single-use household invitation
+	// (POST /auth/invitations/accept)
+	AcceptHouseholdInvitation(w http.ResponseWriter, r *http.Request)
 	// Login Session login for the UI (when auth is enabled)
 	// (POST /auth/login)
 	Login(w http.ResponseWriter, r *http.Request)
 	// Logout Clear the session
 	// (POST /auth/logout)
 	Logout(w http.ResponseWriter, r *http.Request)
+	// GetCurrentAccount Current local Curator account and sign-in method
+	// (GET /auth/me)
+	GetCurrentAccount(w http.ResponseWriter, r *http.Request)
+	// CreateAccountSession Sign in locally and issue a separately revocable native device token
+	// (POST /auth/sessions)
+	CreateAccountSession(w http.ResponseWriter, r *http.Request)
 	// ListBlocklist Failed releases that will never be re-grabbed
 	// (GET /blocklist)
 	ListBlocklist(w http.ResponseWriter, r *http.Request)
@@ -5879,6 +6084,54 @@ type ServerInterface interface {
 	// ListHistory What happened to a release — grab, client outcome, import result
 	// (GET /history)
 	ListHistory(w http.ResponseWriter, r *http.Request, params ListHistoryParams)
+	// ListHouseholdAccounts Local owner account management
+	// (GET /household/accounts)
+	ListHouseholdAccounts(w http.ResponseWriter, r *http.Request)
+	// UpdateHouseholdAccount Confirm a local owner password and update account role, status or credentials
+	// (PATCH /household/accounts/{id})
+	UpdateHouseholdAccount(w http.ResponseWriter, r *http.Request, id int64)
+	// SearchHouseholdCatalogue Member-safe movie or show search
+	// (GET /household/catalogue)
+	SearchHouseholdCatalogue(w http.ResponseWriter, r *http.Request, params SearchHouseholdCatalogueParams)
+	// HouseholdDiscoverySeeds Member-safe library movie and show seeds with fresh availability
+	// (GET /household/discovery/seeds)
+	HouseholdDiscoverySeeds(w http.ResponseWriter, r *http.Request)
+	// HouseholdDiscoveryShelf Recommendations or collection from a current library seed
+	// (GET /household/discovery/shelf)
+	HouseholdDiscoveryShelf(w http.ResponseWriter, r *http.Request)
+	// CreateHouseholdInvitation Local owner confirms password and creates a seven-day member invitation
+	// (POST /household/invitations)
+	CreateHouseholdInvitation(w http.ResponseWriter, r *http.Request)
+	// ListHouseholdRequests Household requests and current user's subscription state
+	// (GET /household/requests)
+	ListHouseholdRequests(w http.ResponseWriter, r *http.Request, params ListHouseholdRequestsParams)
+	// SubmitHouseholdRequest Submit or join a request with a server-frozen known-aired scope
+	// (POST /household/requests)
+	SubmitHouseholdRequest(w http.ResponseWriter, r *http.Request)
+	// GetHouseholdRequest Safe household request detail
+	// (GET /household/requests/{id})
+	GetHouseholdRequest(w http.ResponseWriter, r *http.Request, id int64)
+	// ApproveHouseholdRequest Recheck and approve exactly the reviewed missing scope atomically
+	// (POST /household/requests/{id}/approve)
+	ApproveHouseholdRequest(w http.ResponseWriter, r *http.Request, id int64)
+	// DeclineHouseholdRequest Local owner declines a reviewed request and optionally saves a private note
+	// (POST /household/requests/{id}/decline)
+	DeclineHouseholdRequest(w http.ResponseWriter, r *http.Request, id int64)
+	// JoinHouseholdRequest Follow an existing household request without duplicating work
+	// (POST /household/requests/{id}/join)
+	JoinHouseholdRequest(w http.ResponseWriter, r *http.Request, id int64)
+	// SaveHouseholdRequestNote Save a note visible only to the current local owner
+	// (PUT /household/requests/{id}/note)
+	SaveHouseholdRequestNote(w http.ResponseWriter, r *http.Request, id int64)
+	// ReviewHouseholdRequest Local owner's read-only current filesystem and policy review
+	// (GET /household/requests/{id}/review)
+	ReviewHouseholdRequest(w http.ResponseWriter, r *http.Request, id int64, params ReviewHouseholdRequestParams)
+	// WithdrawHouseholdRequest Withdraw only your own pending interest
+	// (POST /household/requests/{id}/withdraw)
+	WithdrawHouseholdRequest(w http.ResponseWriter, r *http.Request, id int64)
+	// GetHouseholdTitle Safe provider title details and regular aired season choices
+	// (GET /household/titles/{id})
+	GetHouseholdTitle(w http.ResponseWriter, r *http.Request, id int64, params GetHouseholdTitleParams)
 	// GetManualImportDefaultPath Completed-download folder Monarr sees for manual imports
 	// (GET /import/default-path)
 	GetManualImportDefaultPath(w http.ResponseWriter, r *http.Request)
@@ -6392,6 +6645,188 @@ func (siw *ServerInterfaceWrapper) ListActivity(w http.ResponseWriter, r *http.R
 	handler.ServeHTTP(w, r)
 }
 
+// UpdateOwnAccount operation middleware
+func (siw *ServerInterfaceWrapper) UpdateOwnAccount(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.UpdateOwnAccount(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// OpenCinemaBrowser operation middleware
+func (siw *ServerInterfaceWrapper) OpenCinemaBrowser(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.OpenCinemaBrowser(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CinemaCallback operation middleware
+func (siw *ServerInterfaceWrapper) CinemaCallback(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CinemaCallback(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetCinemaConnection operation middleware
+func (siw *ServerInterfaceWrapper) GetCinemaConnection(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetCinemaConnection(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// SaveCinemaConnection operation middleware
+func (siw *ServerInterfaceWrapper) SaveCinemaConnection(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.SaveCinemaConnection(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// UnlinkCinema operation middleware
+func (siw *ServerInterfaceWrapper) UnlinkCinema(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.UnlinkCinema(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetCinemaLink operation middleware
+func (siw *ServerInterfaceWrapper) GetCinemaLink(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetCinemaLink(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// StartCinemaLink operation middleware
+func (siw *ServerInterfaceWrapper) StartCinemaLink(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.StartCinemaLink(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// StartCinemaNative operation middleware
+func (siw *ServerInterfaceWrapper) StartCinemaNative(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.StartCinemaNative(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// FinishCinemaNative operation middleware
+func (siw *ServerInterfaceWrapper) FinishCinemaNative(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.FinishCinemaNative(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// StartCinemaSignIn operation middleware
+func (siw *ServerInterfaceWrapper) StartCinemaSignIn(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.StartCinemaSignIn(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetHouseholdSignInInfo operation middleware
+func (siw *ServerInterfaceWrapper) GetHouseholdSignInInfo(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetHouseholdSignInInfo(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// AcceptHouseholdInvitation operation middleware
+func (siw *ServerInterfaceWrapper) AcceptHouseholdInvitation(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.AcceptHouseholdInvitation(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // Login operation middleware
 func (siw *ServerInterfaceWrapper) Login(w http.ResponseWriter, r *http.Request) {
 
@@ -6411,6 +6846,34 @@ func (siw *ServerInterfaceWrapper) Logout(w http.ResponseWriter, r *http.Request
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.Logout(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetCurrentAccount operation middleware
+func (siw *ServerInterfaceWrapper) GetCurrentAccount(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetCurrentAccount(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreateAccountSession operation middleware
+func (siw *ServerInterfaceWrapper) CreateAccountSession(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateAccountSession(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -7264,6 +7727,434 @@ func (siw *ServerInterfaceWrapper) ListHistory(w http.ResponseWriter, r *http.Re
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.ListHistory(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListHouseholdAccounts operation middleware
+func (siw *ServerInterfaceWrapper) ListHouseholdAccounts(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListHouseholdAccounts(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// UpdateHouseholdAccount operation middleware
+func (siw *ServerInterfaceWrapper) UpdateHouseholdAccount(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.UpdateHouseholdAccount(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// SearchHouseholdCatalogue operation middleware
+func (siw *ServerInterfaceWrapper) SearchHouseholdCatalogue(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params SearchHouseholdCatalogueParams
+
+	// ------------- Required query parameter "kind" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "kind", r.URL.Query(), &params.Kind, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "kind"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "kind", Err: err})
+		}
+		return
+	}
+
+	// ------------- Required query parameter "q" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "q", r.URL.Query(), &params.Q, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "q"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "q", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.SearchHouseholdCatalogue(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// HouseholdDiscoverySeeds operation middleware
+func (siw *ServerInterfaceWrapper) HouseholdDiscoverySeeds(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.HouseholdDiscoverySeeds(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// HouseholdDiscoveryShelf operation middleware
+func (siw *ServerInterfaceWrapper) HouseholdDiscoveryShelf(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.HouseholdDiscoveryShelf(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreateHouseholdInvitation operation middleware
+func (siw *ServerInterfaceWrapper) CreateHouseholdInvitation(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateHouseholdInvitation(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListHouseholdRequests operation middleware
+func (siw *ServerInterfaceWrapper) ListHouseholdRequests(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListHouseholdRequestsParams
+
+	// ------------- Optional query parameter "before" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "before", r.URL.Query(), &params.Before, runtime.BindQueryParameterOptions{Type: "integer", Format: "int64"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "before"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "before", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListHouseholdRequests(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// SubmitHouseholdRequest operation middleware
+func (siw *ServerInterfaceWrapper) SubmitHouseholdRequest(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.SubmitHouseholdRequest(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetHouseholdRequest operation middleware
+func (siw *ServerInterfaceWrapper) GetHouseholdRequest(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetHouseholdRequest(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ApproveHouseholdRequest operation middleware
+func (siw *ServerInterfaceWrapper) ApproveHouseholdRequest(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ApproveHouseholdRequest(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeclineHouseholdRequest operation middleware
+func (siw *ServerInterfaceWrapper) DeclineHouseholdRequest(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeclineHouseholdRequest(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// JoinHouseholdRequest operation middleware
+func (siw *ServerInterfaceWrapper) JoinHouseholdRequest(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.JoinHouseholdRequest(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// SaveHouseholdRequestNote operation middleware
+func (siw *ServerInterfaceWrapper) SaveHouseholdRequestNote(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.SaveHouseholdRequestNote(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ReviewHouseholdRequest operation middleware
+func (siw *ServerInterfaceWrapper) ReviewHouseholdRequest(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ReviewHouseholdRequestParams
+
+	// ------------- Optional query parameter "rootId" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "rootId", r.URL.Query(), &params.RootId, runtime.BindQueryParameterOptions{Type: "integer", Format: "int64"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "rootId"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "rootId", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "profileId" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "profileId", r.URL.Query(), &params.ProfileId, runtime.BindQueryParameterOptions{Type: "integer", Format: "int64"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "profileId"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "profileId", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ReviewHouseholdRequest(w, r, id, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// WithdrawHouseholdRequest operation middleware
+func (siw *ServerInterfaceWrapper) WithdrawHouseholdRequest(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.WithdrawHouseholdRequest(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetHouseholdTitle operation middleware
+func (siw *ServerInterfaceWrapper) GetHouseholdTitle(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetHouseholdTitleParams
+
+	// ------------- Required query parameter "kind" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "kind", r.URL.Query(), &params.Kind, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "kind"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "kind", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetHouseholdTitle(w, r, id, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -11013,6 +11904,37 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/library/{id}/refresh", wrapper.RefreshLibraryItem)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/library/bulk", wrapper.BulkEditLibrary)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/auth/login", wrapper.Login)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/auth/cinema/connection", wrapper.GetCinemaConnection)
+	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/auth/cinema/connection", wrapper.SaveCinemaConnection)
+	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/auth/cinema/link", wrapper.UnlinkCinema)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/auth/cinema/link", wrapper.GetCinemaLink)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/auth/cinema/link", wrapper.StartCinemaLink)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/auth/cinema/start", wrapper.StartCinemaSignIn)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/auth/cinema/native", wrapper.StartCinemaNative)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/auth/cinema/native/result", wrapper.FinishCinemaNative)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/auth/cinema/browser", wrapper.OpenCinemaBrowser)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/auth/cinema/callback", wrapper.CinemaCallback)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/auth/me", wrapper.GetCurrentAccount)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/auth/info", wrapper.GetHouseholdSignInInfo)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/auth/sessions", wrapper.CreateAccountSession)
+	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/auth/account", wrapper.UpdateOwnAccount)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/auth/invitations/accept", wrapper.AcceptHouseholdInvitation)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/household/accounts", wrapper.ListHouseholdAccounts)
+	m.HandleFunc(http.MethodPatch+" "+options.BaseURL+"/household/accounts/{id}", wrapper.UpdateHouseholdAccount)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/household/invitations", wrapper.CreateHouseholdInvitation)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/household/catalogue", wrapper.SearchHouseholdCatalogue)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/household/titles/{id}", wrapper.GetHouseholdTitle)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/household/discovery/seeds", wrapper.HouseholdDiscoverySeeds)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/household/discovery/shelf", wrapper.HouseholdDiscoveryShelf)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/household/requests", wrapper.ListHouseholdRequests)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/household/requests", wrapper.SubmitHouseholdRequest)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/household/requests/{id}", wrapper.GetHouseholdRequest)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/household/requests/{id}/join", wrapper.JoinHouseholdRequest)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/household/requests/{id}/withdraw", wrapper.WithdrawHouseholdRequest)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/household/requests/{id}/decline", wrapper.DeclineHouseholdRequest)
+	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/household/requests/{id}/note", wrapper.SaveHouseholdRequestNote)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/household/requests/{id}/review", wrapper.ReviewHouseholdRequest)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/household/requests/{id}/approve", wrapper.ApproveHouseholdRequest)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/auth/logout", wrapper.Logout)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/notifiers", wrapper.ListNotifiers)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/notifiers", wrapper.AddNotifier)

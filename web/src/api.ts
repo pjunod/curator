@@ -594,16 +594,16 @@ async function parseError(res: Response, fallback: string): Promise<never> {
   throw new ApiError(msg, res.status, code, activeRunId)
 }
 
-async function get<T>(path: string): Promise<T> {
-  const res = await fetch(`/api/v1${path}`)
+async function get<T>(path: string,principal?:string): Promise<T> {
+  const res = await fetch(`/api/v1${path}`,{headers:principal?{'X-Curator-Principal':principal}:undefined})
   if (!res.ok) await parseError(res, `GET ${path}: ${res.status} ${res.statusText}`)
   return res.json() as Promise<T>
 }
 
-async function send<T = void>(method: string, path: string, body?: unknown): Promise<T> {
+async function send<T = void>(method: string, path: string, body?: unknown,principal?:string): Promise<T> {
   const res = await fetch(`/api/v1${path}`, {
     method,
-    headers: body !== undefined ? { 'Content-Type': 'application/json' } : undefined,
+    headers: {...(body!==undefined?{'Content-Type':'application/json'}:{}),...(principal?{'X-Curator-Principal':principal}:{})},
     body: body !== undefined ? JSON.stringify(body) : undefined,
   })
   if (!res.ok) await parseError(res, `${method} ${path}: ${res.status} ${res.statusText}`)
@@ -1694,7 +1694,7 @@ export const bulkEditLibrary = (req: {
 }) => send<{ updated: number; failed?: { id: number; code: string; reason: string }[] }>('POST', '/library/bulk', req)
 export const login = (username: string, password: string) =>
   send('POST', '/auth/login', { username, password })
-export const logout = () => send('POST', '/auth/logout')
+export const logout = (principal?:string) => send('POST', '/auth/logout',undefined,principal)
 
 // composeHostPort joins a host (bare, or with scheme/path) with a port,
 // unless the host already carries one. The download-client form uses it to
@@ -2358,3 +2358,39 @@ export interface LibraryVolumeReview {
 }
 export const previewLibraryVolume=(id:number)=>get<LibraryVolumeReview>(`/rootfolders/${id}/volume`)
 export const confirmLibraryVolume=(id:number,fingerprint:string,acknowledged:boolean)=>send('POST',`/rootfolders/${id}/volume`,{fingerprint,acknowledged})
+
+// Household clients use their own safe endpoints and never hydrate owner DTOs.
+export interface LocalAccount {id:number;revision:number;username:string;displayName:string;role:'owner'|'member';status:'active'|'suspended';createdAt:string}
+export interface AccountIdentity {accessRole:'owner'|'member';account:LocalAccount;method:'local'|'cinema'|'machine';machine:boolean}
+export interface HouseholdTitle {kind:'movie'|'series';tmdbId:number;title:string;year:number;overview:string;posterPath:string;releaseDate?:string;seasons:{number:number;aired:number;unknownDates:number}[];availability:Availability}
+export interface HouseholdRequest {id:number;revision:number;kind:'movie'|'series';tmdbId:number;scope:{episodes?:{season:number;episode:number}[]};title:string;year:number;posterPath:string;overview:string;state:'pending'|'approved'|'acquiring'|'fulfilled'|'declined'|'withdrawn'|'needs_review';publicNote:string;privateNote?:string;subscribed:boolean;subscriberCount:number;createdAt:string;updatedAt:string}
+export const getSignInInfo=()=>get<{required:boolean;household:boolean;cinema:boolean}>('/auth/info')
+export async function getCurrentAccount():Promise<AccountIdentity|null>{const response=await fetch('/api/v1/auth/me',{cache:'no-store'});if(response.status===401)return null;if(!response.ok)return parseError(response,'Account check unavailable');return response.json()}
+export const getHouseholdRequests=(before=0,principal?:string)=>get<HouseholdRequest[]>(`/household/requests?before=${before}`,principal)
+export const getHouseholdRequest=(id:number)=>get<HouseholdRequest>(`/household/requests/${id}`)
+export const searchHouseholdCatalogue=(kind:'movie'|'series',q:string)=>get<HouseholdTitle[]>(`/household/catalogue?kind=${kind}&q=${encodeURIComponent(q)}`)
+export const getHouseholdTitle=(kind:'movie'|'series',id:number)=>get<HouseholdTitle>(`/household/titles/${id}?kind=${kind}`)
+export const submitHouseholdRequest=(kind:'movie'|'series',tmdbId:number,seasons:number[],principal?:string)=>send<HouseholdRequest>('POST','/household/requests',{kind,tmdbId,seasons},principal)
+export const changeHouseholdSubscription=(id:number,withdraw:boolean,principal?:string)=>send<HouseholdRequest>('POST',`/household/requests/${id}/${withdraw?'withdraw':'join'}`,undefined,principal)
+export const declineHouseholdRequest=(id:number,revision:number,publicNote:string,privateNote:string,principal?:string)=>send('POST',`/household/requests/${id}/decline`,{revision,publicNote,privateNote},principal)
+export const saveHouseholdRequestNote=(id:number,note:string,principal?:string)=>send('PUT',`/household/requests/${id}/note`,{note},principal)
+export const getHouseholdAccounts=(principal?:string)=>get<LocalAccount[]>('/household/accounts',principal)
+export const updateOwnAccount=(revision:number,password:string,displayName:string,newPassword:string,principal?:string)=>send('PUT','/auth/account',{revision,password,displayName,newPassword},principal)
+export const updateHouseholdAccount=(id:number,revision:number,password:string,role:string,status:string,principal?:string)=>send('PATCH',`/household/accounts/${id}`,{revision,password,role,status},principal)
+export const createHouseholdInvitation=(password:string,principal?:string)=>send<{token:string;expiresAt:string}>('POST','/household/invitations',{password},principal)
+export const acceptHouseholdInvitation=(token:string,username:string,displayName:string,password:string)=>send<LocalAccount>('POST','/auth/invitations/accept',{token,username,displayName,password})
+
+export interface HouseholdReview {requestId:number;revision:number;title:string;scope:string;destination:string;rootId:number;profileId:number;profileName:string;present:number;missing:number;offloaded:number;checkedAt:string;fingerprint:string;newTitle:boolean}
+export const reviewHouseholdRequest=(id:number,rootId=0,profileId=0,principal?:string)=>get<HouseholdReview>(`/household/requests/${id}/review?rootId=${rootId}&profileId=${profileId}`,principal)
+export const approveHouseholdRequest=(id:number,rootId:number,profileId:number,fingerprint:string,privateNote:string,reacquire:boolean,principal?:string)=>send('POST',`/household/requests/${id}/approve`,{rootId,profileId,fingerprint,privateNote,reacquire},principal)
+
+export interface CinemaConnectionInfo {configured:boolean;baseUrl?:string;issuer?:string;clientId?:string;redirect?:string}
+export const getCinemaConnection=(principal?:string)=>get<CinemaConnectionInfo>('/auth/cinema/connection',principal)
+export const saveCinemaConnection=(body:{password:string;baseUrl:string;clientId:string;clientSecret:string;redirect:string;disconnect?:boolean},principal?:string)=>send('PUT','/auth/cinema/connection',body,principal)
+export const getCinemaLink=(principal?:string)=>get<{linked:boolean;issuer?:string}>('/auth/cinema/link',principal)
+export const startCinemaLink=(password:string,principal?:string)=>send<{url:string}>('POST','/auth/cinema/link',{password},principal)
+export const unlinkCinema=(password:string,principal?:string)=>send('DELETE','/auth/cinema/link',{password},principal)
+export const startCinemaSignIn=()=>send<{url:string}>('POST','/auth/cinema/start')
+
+export const getHouseholdSeeds=(q='',offset=0)=>get<{items:HouseholdTitle[];hasMore:boolean}>(`/household/discovery/seeds?q=${encodeURIComponent(q)}&offset=${offset}`)
+export const getHouseholdShelf=(kind:'movie'|'series',tmdbId:number,shelf:'related'|'collection')=>get<{title:string;items:HouseholdTitle[]}>(`/household/discovery/shelf?kind=${kind}&tmdbId=${tmdbId}&shelf=${shelf}`)

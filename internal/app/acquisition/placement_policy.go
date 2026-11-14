@@ -14,6 +14,9 @@ import (
 // validateMeasuredPlacement runs under the import lock, after measurement and
 // before staging/rename. Claim-based permission cannot authorize destruction.
 func (s *Service) validateMeasuredPlacement(ctx context.Context, item domain.MediaItem, scope importScope, p sqlite.Placement, replace bool) error {
+	if err := s.validateHouseholdImport(ctx, item, scope, p); err != nil {
+		return err
+	}
 	if scope.ProfileID == 0 {
 		return nil
 	} // journal-only callers have no policy scope

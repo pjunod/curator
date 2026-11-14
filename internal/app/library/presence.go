@@ -25,8 +25,14 @@ func (s *Service) VerifyPresence(ctx context.Context, id int64) error {
 // This pass reads a complete media manifest, without changing library records.
 // Capture revisions BEFORE all filesystem reads; every proof write compares them.
 func (s *Service) verifyPresence(ctx context.Context, id int64, primaryOnly bool) error {
-	if err := s.db.InvalidatePresence(ctx, id); err != nil {
-		return err
+	var invalidateErr error
+	if primaryOnly {
+		invalidateErr = s.db.InvalidatePrimaryPresence(ctx, id)
+	} else {
+		invalidateErr = s.db.InvalidatePresence(ctx, id)
+	}
+	if invalidateErr != nil {
+		return invalidateErr
 	}
 	revision, shared, err := s.db.PresenceRevision(ctx, id)
 	if err != nil {

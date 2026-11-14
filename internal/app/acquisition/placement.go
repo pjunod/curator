@@ -614,6 +614,14 @@ func (s *Service) commitPlacement(ctx context.Context, item domain.MediaItem, sc
 		return 0, err
 	}
 	if p.State == "prepared" {
+		if scope.Household != nil {
+			if s.householdCheck == nil {
+				return 0, sqlite.ErrHouseholdVerification
+			}
+			if err = s.householdCheck(ctx, item.ID); err != nil {
+				return 0, err
+			}
+		}
 		if err = s.validateMeasuredPlacement(ctx, item, scope, p, replace); err != nil {
 			return 0, err
 		}
@@ -644,6 +652,16 @@ func (s *Service) commitPlacement(ctx context.Context, item domain.MediaItem, sc
 		}
 	}
 	cleanupCtx := ctx
+	if scope.Household != nil && p.State == "prepared" {
+		current, e := s.db.GetMediaItemFull(ctx, item.ID)
+		if e == nil {
+			e = s.validateHouseholdPublication(ctx, current, scope, p)
+		}
+		if e != nil {
+			releaseDecision()
+			return 0, e
+		}
+	}
 	if err = s.db.AssertPublicationTargetAvailable(ctx, p.Target); err != nil {
 		releaseDecision()
 		return 0, importControlError(err)
