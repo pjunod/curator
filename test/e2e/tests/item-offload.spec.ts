@@ -173,7 +173,8 @@ for (const width of [390, 1280]) {
     const select = page.getByLabel('Presence in Movies')
     await expect(select).toHaveValue('all') // default Everything
     await expect(page.getByText('Gone')).toBeVisible()
-    await expect(page.getByText('offloaded', { exact: true })).toBeVisible()
+    const offloadedCard = page.locator('.library-card').filter({ hasText: 'Gone' })
+    await expect(offloadedCard.getByText('Offloaded', { exact: true })).toBeVisible()
     await select.selectOption('offloaded')
     await expect(page.getByText('Here')).toHaveCount(0)
     await expect(page.getByText('Gone')).toBeVisible()

@@ -1654,6 +1654,131 @@ a.pill-info:hover {
   font-size: 11px;
 }
 
+/* Library cards separate recorded files from checked availability. Counts are
+   secondary metadata; one stable status line carries the last presence check. */
+.library-card {
+  container-type: inline-size;
+  min-width: 0;
+}
+
+.library-card-art {
+  position: relative;
+}
+
+.library-card-meta {
+  padding: 12px 11px 13px;
+}
+
+.library-card-meta .poster-title {
+  font-size: 14px;
+  line-height: 20px;
+}
+
+.library-card-secondary {
+  display: flex;
+  min-width: 0;
+  margin-top: 2px;
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 18px;
+}
+
+.library-card-metadata {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.library-card-records {
+  flex: none;
+  white-space: pre;
+}
+
+.library-card-status {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  min-height: 32px;
+  margin-top: 9px;
+  font-size: 11px;
+  line-height: 16px;
+  overflow-wrap: anywhere;
+  color: var(--text-muted);
+}
+
+.library-card-status-icon {
+  flex: none;
+  width: 13px;
+  text-align: center;
+  font-size: 13px;
+}
+
+.library-card-status.status-available {
+  color: color-mix(in srgb, var(--ok) 75%, var(--text));
+}
+
+.library-card-status.status-missing {
+  color: color-mix(in srgb, var(--warning) 75%, var(--text-muted));
+}
+
+.library-card-activity {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  right: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 4px;
+  padding: 6px 8px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 6px;
+  background: rgba(15, 18, 26, 0.88);
+  color: #d3cbff;
+  backdrop-filter: blur(8px);
+  font-size: 10px;
+  line-height: 14px;
+  overflow-wrap: anywhere;
+}
+
+.library-card-activity > span:first-child {
+  min-width: 0;
+}
+
+.library-card-percent {
+  color: #c0b5ec;
+}
+
+.library-card-progress {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  overflow: hidden;
+  border-radius: inherit;
+}
+
+.library-card-progress > span {
+  display: block;
+  height: 100%;
+  background: #a498fa;
+}
+
+/* Respond to the actual card width, including the size picker on desktop. */
+@container (max-width: 135px) {
+  .library-card-records {
+    display: none;
+  }
+}
+
+@container (max-width: 160px) {
+  .library-card-meta-series .library-card-records {
+    display: none;
+  }
+}
+
 /* ---- sidebar: theme picker + global search ---- */
 .theme-picker {
   display: flex;
@@ -2699,12 +2824,6 @@ a.pill-info:hover {
 
   .poster-sub .pill {
     display: none; /* completeness pill needs room the card doesn't have */
-  }
-
-  /* An offloaded title must still read as one on a phone: it is the whole
-     point of the filter that these are not missing, they are put away. */
-  .poster-sub .pill.pill-offloaded {
-    display: inline-block;
   }
 
   .cards {
