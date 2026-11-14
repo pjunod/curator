@@ -38,10 +38,13 @@ unlinked Cinema identity must first sign in locally or accept an invitation.
 Cinema sign-in grants household discovery/requests access even if the permanent
 Curator account is an owner. Owner administration and account changes require
 local sign-in. Native clients open the system browser and receive their own
-proof-bound, one-use handoff, never the Cinema bearer or a shared owner key.
+proof-bound, one-use handoff. Finish consent and use the browser return link on
+the same device that started sign-in, then confirm the displayed local account.
+The app requires both its original verifier and that browser-returned completion
+code; it never receives the Cinema bearer or a shared owner key.
 
 Unlink revokes Cinema-derived Curator sessions immediately and durably queues
-remote grant revocation for retry. Local credentials, local sessions and request
+remote grant revocation for fair retry until each remote grant expires. Local credentials, local sessions and request
 history remain. Replacing/disconnecting the saved Cinema login connection
 unlinks all its identities and revokes its derived sessions. Cinema outages
 fail closed for Cinema-derived requests; local sign-in stays independent.

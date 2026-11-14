@@ -17,11 +17,11 @@ func (d *DB) CinemaConnection(ctx context.Context) (domain.CinemaConnection, err
 	return c, err
 }
 func enqueueCinemaRevocations(ctx context.Context, tx *sql.Tx, accountID int64) error {
-	_, err := tx.ExecContext(ctx, `INSERT INTO cinema_revocations(base_url,client_id,client_secret,grant_secret,created_at) SELECT c.base_url,c.client_id,c.client_secret,s.integration_grant,? FROM household_sessions s JOIN cinema_links l ON l.id=s.link_id JOIN cinema_connection c ON c.id=1 AND c.generation=l.connection_generation WHERE s.method='cinema' AND s.integration_grant<>'' AND (?=0 OR l.account_id=?)`, time.Now().UnixMilli(), accountID, accountID)
+	_, err := tx.ExecContext(ctx, `INSERT INTO cinema_revocations(base_url,client_id,client_secret,grant_secret,created_at,expires_at) SELECT c.base_url,c.client_id,c.client_secret,s.integration_grant,?,s.integration_grant_expires FROM household_sessions s JOIN cinema_links l ON l.id=s.link_id JOIN cinema_connection c ON c.id=1 AND c.generation=l.connection_generation WHERE s.method='cinema' AND s.integration_grant<>'' AND (?=0 OR l.account_id=?)`, time.Now().UnixMilli(), accountID, accountID)
 	if err != nil {
 		return err
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO cinema_revocations(base_url,client_id,client_secret,grant_secret,created_at) SELECT c.base_url,c.client_id,c.client_secret,h.grant_secret,? FROM cinema_handoffs h JOIN cinema_connection c ON c.id=1 AND c.generation=h.connection_generation WHERE h.grant_secret<>'' AND (?=0 OR h.account_id=? OR EXISTS(SELECT 1 FROM cinema_links l WHERE l.id=h.ready_link AND l.account_id=?))`, time.Now().UnixMilli(), accountID, accountID, accountID)
+	_, err = tx.ExecContext(ctx, `INSERT INTO cinema_revocations(base_url,client_id,client_secret,grant_secret,created_at,expires_at) SELECT c.base_url,c.client_id,c.client_secret,h.grant_secret,?,h.grant_expires FROM cinema_handoffs h JOIN cinema_connection c ON c.id=1 AND c.generation=h.connection_generation WHERE h.grant_secret<>'' AND (?=0 OR h.account_id=? OR EXISTS(SELECT 1 FROM cinema_links l WHERE l.id=h.ready_link AND l.account_id=?))`, time.Now().UnixMilli(), accountID, accountID, accountID)
 	return err
 }
 func (d *DB) SaveCinemaConnection(ctx context.Context, a domain.Account, digest string, c *domain.CinemaConnection) error {
@@ -94,7 +94,7 @@ func (d *DB) CreateCinemaHandoff(ctx context.Context, h domain.CinemaHandoff) er
 }
 func (d *DB) CinemaHandoff(ctx context.Context, digest string) (domain.CinemaHandoff, error) {
 	var h domain.CinemaHandoff
-	err := d.R.QueryRowContext(ctx, `SELECT state_digest,mode,account_id,credential_generation,session_digest,connection_generation,verifier,cookie_digest,native_challenge,claim,ready_link,expires_at,grant_secret FROM cinema_handoffs WHERE state_digest=? AND expires_at>?`, digest, time.Now().UnixMilli()).Scan(&h.StateDigest, &h.Mode, &h.AccountID, &h.CredentialGeneration, &h.SessionDigest, &h.ConnectionGeneration, &h.Verifier, &h.CookieDigest, &h.NativeChallenge, &h.Claim, &h.ReadyLink, &h.ExpiresAt, &h.Grant)
+	err := d.R.QueryRowContext(ctx, `SELECT state_digest,mode,account_id,credential_generation,session_digest,connection_generation,verifier,cookie_digest,native_challenge,claim,ready_link,expires_at,grant_secret,grant_expires,completion_digest FROM cinema_handoffs WHERE state_digest=? AND expires_at>?`, digest, time.Now().UnixMilli()).Scan(&h.StateDigest, &h.Mode, &h.AccountID, &h.CredentialGeneration, &h.SessionDigest, &h.ConnectionGeneration, &h.Verifier, &h.CookieDigest, &h.NativeChallenge, &h.Claim, &h.ReadyLink, &h.ExpiresAt, &h.Grant, &h.GrantExpiresAt, &h.CompletionDigest)
 	if errors.Is(err, sql.ErrNoRows) {
 		err = ErrNotFound
 	}
@@ -203,7 +203,7 @@ func (d *DB) UnlinkCinema(ctx context.Context, a domain.Account, digest string) 
 	return tx.Commit()
 }
 func (d *DB) ReadyCinemaNative(ctx context.Context, h domain.CinemaHandoff, l domain.CinemaLink) error {
-	result, err := d.W.ExecContext(ctx, `UPDATE cinema_handoffs SET ready_link=?,grant_secret=?,expires_at=?,account_id=(SELECT account_id FROM cinema_links WHERE id=?),credential_generation=(SELECT a.credential_generation FROM household_accounts a JOIN cinema_links l ON l.account_id=a.id WHERE l.id=?) WHERE state_digest=? AND claim=? AND mode='native' AND ready_link=0 AND expires_at>? AND EXISTS(SELECT 1 FROM cinema_links l JOIN cinema_connection c ON c.id=1 WHERE l.id=? AND l.active=1 AND l.generation=? AND l.connection_generation=c.generation AND c.generation=cinema_handoffs.connection_generation)`, l.ID, l.Grant, time.Now().Add(time.Minute).UnixMilli(), l.ID, l.ID, h.StateDigest, h.Claim, time.Now().UnixMilli(), l.ID, l.Generation)
+	result, err := d.W.ExecContext(ctx, `UPDATE cinema_handoffs SET ready_link=?,grant_secret=?,grant_expires=?,completion_digest=?,expires_at=?,account_id=(SELECT account_id FROM cinema_links WHERE id=?),credential_generation=(SELECT a.credential_generation FROM household_accounts a JOIN cinema_links l ON l.account_id=a.id WHERE l.id=?) WHERE state_digest=? AND claim=? AND mode='native' AND ready_link=0 AND expires_at>? AND EXISTS(SELECT 1 FROM cinema_links l JOIN cinema_connection c ON c.id=1 WHERE l.id=? AND l.active=1 AND l.generation=? AND l.connection_generation=c.generation AND c.generation=cinema_handoffs.connection_generation)`, l.ID, l.Grant, l.GrantExpiresAt, h.CompletionDigest, time.Now().Add(time.Minute).UnixMilli(), l.ID, l.ID, h.StateDigest, h.Claim, time.Now().UnixMilli(), l.ID, l.Generation)
 	if err != nil {
 		return err
 	}
@@ -222,7 +222,7 @@ func (d *DB) CreateCinemaSession(ctx context.Context, h domain.CinemaHandoff, l 
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
-	result, err := tx.ExecContext(ctx, `INSERT INTO household_sessions(token_digest,account_id,credential_generation,method,link_id,link_generation,device,created_at,expires_at,integration_grant) SELECT ?,a.id,a.credential_generation,'cinema',l.id,l.generation,?,?,?,? FROM cinema_links l JOIN household_accounts a ON a.id=l.account_id JOIN cinema_connection c ON c.id=1 JOIN cinema_handoffs h ON h.state_digest=? WHERE l.id=? AND l.generation=? AND l.active=1 AND l.connection_generation=c.generation AND c.generation=h.connection_generation AND a.status='active' AND h.claim=? AND h.claim<>'' AND h.expires_at>? AND (h.mode='signin' OR (h.mode='native' AND h.ready_link=l.id AND h.account_id=a.id AND h.credential_generation=a.credential_generation))`, digest, device, time.Now().UnixMilli(), expires.UnixMilli(), l.Grant, h.StateDigest, l.ID, l.Generation, h.Claim, time.Now().UnixMilli())
+	result, err := tx.ExecContext(ctx, `INSERT INTO household_sessions(token_digest,account_id,credential_generation,method,link_id,link_generation,device,created_at,expires_at,integration_grant,integration_grant_expires) SELECT ?,a.id,a.credential_generation,'cinema',l.id,l.generation,?,?,?,?,? FROM cinema_links l JOIN household_accounts a ON a.id=l.account_id JOIN cinema_connection c ON c.id=1 JOIN cinema_handoffs h ON h.state_digest=? WHERE l.id=? AND l.generation=? AND l.active=1 AND l.connection_generation=c.generation AND c.generation=h.connection_generation AND a.status='active' AND h.claim=? AND h.claim<>'' AND h.expires_at>? AND (h.mode='signin' OR (h.mode='native' AND h.ready_link=l.id AND h.account_id=a.id AND h.credential_generation=a.credential_generation AND h.completion_digest=?))`, digest, device, time.Now().UnixMilli(), expires.UnixMilli(), l.Grant, l.GrantExpiresAt, h.StateDigest, l.ID, l.Generation, h.Claim, time.Now().UnixMilli(), h.CompletionDigest)
 	if err != nil {
 		return err
 	}
@@ -238,12 +238,16 @@ func (d *DB) CreateCinemaSession(ctx context.Context, h domain.CinemaHandoff, l 
 	}
 	return tx.Commit()
 }
-func (d *DB) QueueCinemaRevocation(ctx context.Context, c domain.CinemaConnection, grant string) error {
-	_, err := d.W.ExecContext(ctx, `INSERT INTO cinema_revocations(base_url,client_id,client_secret,grant_secret,created_at) VALUES(?,?,?,?,?)`, c.BaseURL, c.ClientID, c.ClientSecret, grant, time.Now().UnixMilli())
+func (d *DB) QueueCinemaRevocation(ctx context.Context, c domain.CinemaConnection, grant string, expiresAt int64) error {
+	_, err := d.W.ExecContext(ctx, `INSERT INTO cinema_revocations(base_url,client_id,client_secret,grant_secret,created_at,expires_at) VALUES(?,?,?,?,?,?)`, c.BaseURL, c.ClientID, c.ClientSecret, grant, time.Now().UnixMilli(), expiresAt*1000)
 	return err
 }
 func (d *DB) CinemaRevocations(ctx context.Context) ([]domain.CinemaRevocation, error) {
-	rows, err := d.R.QueryContext(ctx, `SELECT id,base_url,client_id,client_secret,grant_secret FROM cinema_revocations ORDER BY id LIMIT 32`)
+	now := time.Now().UnixMilli()
+	if _, err := d.W.ExecContext(ctx, `DELETE FROM cinema_revocations WHERE expires_at<=?`, now); err != nil {
+		return nil, err
+	}
+	rows, err := d.R.QueryContext(ctx, `SELECT id,base_url,client_id,client_secret,grant_secret FROM cinema_revocations WHERE next_at<=? ORDER BY next_at,id LIMIT 32`, now)
 	if err != nil {
 		return nil, err
 	}
@@ -271,7 +275,7 @@ func (d *DB) QueueDeadCinemaSessions(ctx context.Context) error {
 	defer func() { _ = tx.Rollback() }()
 	const dead = `s.method='cinema' AND (s.expires_at<=? OR a.status<>'active' OR s.credential_generation<>a.credential_generation OR l.active=0 OR s.link_generation<>l.generation)`
 	clock := time.Now().UnixMilli()
-	if _, err = tx.ExecContext(ctx, `INSERT INTO cinema_revocations(base_url,client_id,client_secret,grant_secret,created_at) SELECT c.base_url,c.client_id,c.client_secret,s.integration_grant,? FROM household_sessions s JOIN household_accounts a ON a.id=s.account_id JOIN cinema_links l ON l.id=s.link_id JOIN cinema_connection c ON c.id=1 AND c.generation=l.connection_generation WHERE `+dead, clock, clock); err != nil {
+	if _, err = tx.ExecContext(ctx, `INSERT INTO cinema_revocations(base_url,client_id,client_secret,grant_secret,created_at,expires_at) SELECT c.base_url,c.client_id,c.client_secret,s.integration_grant,?,s.integration_grant_expires FROM household_sessions s JOIN household_accounts a ON a.id=s.account_id JOIN cinema_links l ON l.id=s.link_id JOIN cinema_connection c ON c.id=1 AND c.generation=l.connection_generation WHERE `+dead, clock, clock); err != nil {
 		return err
 	}
 	if _, err = tx.ExecContext(ctx, `DELETE FROM household_sessions WHERE token_digest IN(SELECT s.token_digest FROM household_sessions s JOIN household_accounts a ON a.id=s.account_id JOIN cinema_links l ON l.id=s.link_id WHERE `+dead+`)`, clock); err != nil {
@@ -279,7 +283,7 @@ func (d *DB) QueueDeadCinemaSessions(ctx context.Context) error {
 	}
 	// An abandoned native handoff still owns a remote grant until revocation is
 	// durably queued. It must never disappear in a generic expiry sweep.
-	if _, err = tx.ExecContext(ctx, `INSERT INTO cinema_revocations(base_url,client_id,client_secret,grant_secret,created_at) SELECT c.base_url,c.client_id,c.client_secret,h.grant_secret,? FROM cinema_handoffs h JOIN cinema_connection c ON c.id=1 AND c.generation=h.connection_generation WHERE h.expires_at<=? AND h.grant_secret<>''`, clock, clock); err != nil {
+	if _, err = tx.ExecContext(ctx, `INSERT INTO cinema_revocations(base_url,client_id,client_secret,grant_secret,created_at,expires_at) SELECT c.base_url,c.client_id,c.client_secret,h.grant_secret,?,h.grant_expires FROM cinema_handoffs h JOIN cinema_connection c ON c.id=1 AND c.generation=h.connection_generation WHERE h.expires_at<=? AND h.grant_secret<>''`, clock, clock); err != nil {
 		return err
 	}
 	if _, err = tx.ExecContext(ctx, `DELETE FROM cinema_handoffs WHERE expires_at<=?`, clock); err != nil {
@@ -294,5 +298,10 @@ func (d *DB) CinemaLinkByID(ctx context.Context, id int64) (domain.CinemaLink, e
 
 func (d *DB) CancelCinemaHandoff(ctx context.Context, state, claim string) error {
 	_, err := d.W.ExecContext(ctx, `DELETE FROM cinema_handoffs WHERE state_digest=? AND claim=? AND ready_link=0`, state, claim)
+	return err
+}
+
+func (d *DB) DeferCinemaRevocation(ctx context.Context, id int64) error {
+	_, err := d.W.ExecContext(ctx, `UPDATE cinema_revocations SET next_at=? WHERE id=?`, time.Now().Add(time.Minute).UnixMilli(), id)
 	return err
 }

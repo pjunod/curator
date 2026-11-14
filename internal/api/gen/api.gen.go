@@ -5958,7 +5958,7 @@ type ServerInterface interface {
 	// StartCinemaNative Start system-browser sign-in with an app S256 challenge
 	// (POST /auth/cinema/native)
 	StartCinemaNative(w http.ResponseWriter, r *http.Request)
-	// FinishCinemaNative Consume a ready one-use native handoff with the app verifier
+	// FinishCinemaNative Consume a native handoff with the app verifier and consenting-device completion code
 	// (POST /auth/cinema/native/result)
 	FinishCinemaNative(w http.ResponseWriter, r *http.Request)
 	// StartCinemaSignIn Start optional Cinema sign-in for an already linked account

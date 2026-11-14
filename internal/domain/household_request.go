@@ -36,6 +36,7 @@ type HouseholdRequest struct {
 type HouseholdTarget struct {
 	ID, RequestID, MediaItemID, EpisodeID int64
 	ApprovalGeneration                    int64
+	OffloadEpoch                          int64
 	Season, Episode                       int
 	State                                 string
 	DownloadID                            int64
@@ -43,31 +44,35 @@ type HouseholdTarget struct {
 }
 
 type HouseholdPolicy struct {
-	ItemID            int64       `json:"itemId"`
-	Kind              MediaKind   `json:"kind"`
-	TMDBID            int64       `json:"tmdbId"`
-	IDs               ExternalIDs `json:"ids"`
-	RootID            int64       `json:"rootId"`
-	ProfileID         int64       `json:"profileId"`
-	RootGeneration    int64       `json:"rootGeneration"`
-	SharedRevision    int64       `json:"sharedRevision"`
-	RootPath          string      `json:"rootPath"`
-	RootIdentity      string      `json:"rootIdentity"`
-	Path              string      `json:"path"`
-	Reacquire         bool        `json:"reacquire"`
-	OffloadOperations []string    `json:"offloadOperations,omitempty"`
+	ItemID             int64       `json:"itemId"`
+	Kind               MediaKind   `json:"kind"`
+	TMDBID             int64       `json:"tmdbId"`
+	IDs                ExternalIDs `json:"ids"`
+	RootID             int64       `json:"rootId"`
+	ProfileID          int64       `json:"profileId"`
+	RootGeneration     int64       `json:"rootGeneration"`
+	SharedRevision     int64       `json:"sharedRevision"`
+	RootPath           string      `json:"rootPath"`
+	RootIdentity       string      `json:"rootIdentity"`
+	Path               string      `json:"path"`
+	ProfileFingerprint string      `json:"profileFingerprint"`
+	Reacquire          bool        `json:"reacquire"`
+	OffloadOperations  []string    `json:"offloadOperations,omitempty"`
 }
 
 // HouseholdOrigin is immutable publication authority for a newly admitted
 // household download. Attaching to existing owner work never creates one.
 type HouseholdOrigin struct {
-	ItemID         int64     `json:"itemId"`
-	Kind           MediaKind `json:"kind"`
-	TMDBID         int64     `json:"tmdbId"`
-	EpisodeIDs     []int64   `json:"episodeIds"`
-	Path           string    `json:"path"`
-	RootID         int64     `json:"rootId"`
-	RootPath       string    `json:"rootPath"`
-	RootIdentity   string    `json:"rootIdentity"`
-	RootGeneration int64     `json:"rootGeneration"`
+	Policy          HouseholdPolicy `json:"-"`
+	OffloadEpoch    int64           `json:"offloadEpoch"`
+	Season, Episode int
+	ItemID          int64     `json:"itemId"`
+	Kind            MediaKind `json:"kind"`
+	TMDBID          int64     `json:"tmdbId"`
+	EpisodeIDs      []int64   `json:"episodeIds"`
+	Path            string    `json:"path"`
+	RootID          int64     `json:"rootId"`
+	RootPath        string    `json:"rootPath"`
+	RootIdentity    string    `json:"rootIdentity"`
+	RootGeneration  int64     `json:"rootGeneration"`
 }

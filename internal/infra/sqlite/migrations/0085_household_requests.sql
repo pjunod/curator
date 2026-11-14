@@ -18,10 +18,9 @@ CREATE TABLE household_requests (
  public_note TEXT NOT NULL DEFAULT '',
  approved_by INTEGER REFERENCES household_accounts(id),
  policy_json TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(policy_json)),
- library_item_id INTEGER NOT NULL DEFAULT 0,
- next_check_at INTEGER NOT NULL DEFAULT 0
+ library_item_id INTEGER NOT NULL DEFAULT 0
 ) STRICT;
-CREATE INDEX household_request_schedule ON household_requests(state,next_check_at);
+CREATE INDEX household_request_schedule ON household_requests(state,id);
 CREATE UNIQUE INDEX household_active_request ON household_requests(fingerprint) WHERE state IN('pending','approved','acquiring','needs_review');
 CREATE TABLE household_request_subscriptions (
  request_id INTEGER NOT NULL REFERENCES household_requests(id),
@@ -44,13 +43,16 @@ CREATE TABLE household_request_targets (
  season INTEGER NOT NULL DEFAULT 0,
  episode INTEGER NOT NULL DEFAULT 0,
  approval_generation INTEGER NOT NULL DEFAULT 1,
+ offload_epoch INTEGER NOT NULL DEFAULT 0,
  state TEXT NOT NULL DEFAULT 'approved' CHECK(state IN('approved','admitted','fulfilled','needs_review')),
+ next_check_at INTEGER NOT NULL DEFAULT 0,
  download_id INTEGER,
  download_generation TEXT NOT NULL DEFAULT '',
  created_at INTEGER NOT NULL,
  UNIQUE(request_id,season,episode)
 ) STRICT;
 -- Leaf claims make a season/episode overlap contend for the same authority.
+CREATE INDEX household_target_schedule ON household_request_targets(state,next_check_at,id);
 CREATE TABLE household_scope_claims (
  kind TEXT NOT NULL,
  tmdb_id INTEGER NOT NULL,
@@ -84,7 +86,19 @@ CREATE TABLE household_download_origins (
  UNIQUE(target_id,approval_generation)
 ) STRICT;
 
+-- +goose StatementBegin
+CREATE TRIGGER household_no_generic_replacement BEFORE INSERT ON replacement_grabs
+WHEN EXISTS(SELECT 1 FROM household_download_origins h JOIN downloads d ON d.id=h.download_id AND d.generation_key=h.generation WHERE d.id=NEW.download_id)
+BEGIN
+ SELECT RAISE(IGNORE);
+END;
+-- +goose StatementEnd
+
+CREATE TABLE household_offload_exclusions(operation_id TEXT NOT NULL,path TEXT NOT NULL,PRIMARY KEY(operation_id,path)) STRICT;
+
 -- +goose Down
+DROP TRIGGER household_no_generic_replacement;
+DROP TABLE household_offload_exclusions;
 DROP TABLE household_download_origins;
 DROP TABLE household_request_decisions;
 DROP TABLE household_scope_claims;

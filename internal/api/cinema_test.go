@@ -202,7 +202,12 @@ func TestCinemaNativeProofBoundHandoff(t *testing.T) {
 	}
 	cookie = rr.Result().Cookies()[0]
 	rr = cinemaCallbackTest(t, h, f, state, "", cookie)
-	if rr.Header().Get("Location") != "/login?cinema=native-ready" {
+	completionURL, e := url.Parse(rr.Header().Get("Location"))
+	if e != nil {
+		t.Fatal(e)
+	}
+	completion := completionURL.Query().Get("code")
+	if completionURL.Scheme != "monarr" || completionURL.Host != "cinema-complete" || len(completion) < 32 {
 		t.Fatal("native consent failed", rr.Header())
 	}
 	rr = householdHTTP(t, h, "POST", "/api/v1/auth/cinema/native/result", "", map[string]string{"state": state, "verifier": strings.Repeat("b", 64)})
@@ -210,6 +215,14 @@ func TestCinemaNativeProofBoundHandoff(t *testing.T) {
 		t.Fatal("wrong application verifier accepted", rr.Code)
 	}
 	rr = householdHTTP(t, h, "POST", "/api/v1/auth/cinema/native/result", "", map[string]string{"state": state, "verifier": verifier})
+	if rr.Code != 409 {
+		t.Fatal("original device polled victim consent without receiving completion", rr.Code)
+	}
+	rr = householdHTTP(t, h, "POST", "/api/v1/auth/cinema/native/result", "", map[string]string{"state": state, "verifier": strings.Repeat("b", 64), "completion": completion})
+	if rr.Code != 409 {
+		t.Fatal("consenting device completed another device's proof", rr.Code)
+	}
+	rr = householdHTTP(t, h, "POST", "/api/v1/auth/cinema/native/result", "", map[string]string{"state": state, "verifier": verifier, "completion": completion})
 	if rr.Code != 200 {
 		t.Fatal(rr.Code, rr.Body.String())
 	}
@@ -220,7 +233,7 @@ func TestCinemaNativeProofBoundHandoff(t *testing.T) {
 	if result.Token == "" {
 		t.Fatal("native device token missing")
 	}
-	rr = householdHTTP(t, h, "POST", "/api/v1/auth/cinema/native/result", "", map[string]string{"state": state, "verifier": verifier})
+	rr = householdHTTP(t, h, "POST", "/api/v1/auth/cinema/native/result", "", map[string]string{"state": state, "verifier": verifier, "completion": completion})
 	if rr.Code != 409 {
 		t.Fatal("native handoff replay accepted", rr.Code)
 	}
@@ -228,4 +241,16 @@ func TestCinemaNativeProofBoundHandoff(t *testing.T) {
 	if err != nil || session.Method != "cinema" || session.IntegrationGrant == "" {
 		t.Fatal("device lost its distinct grant", err)
 	}
+}
+
+func TestCinemaStartBudgetDoesNotLockOutLocalSignIn(t *testing.T) {
+	h, _, owner := householdHTTPAccount(t)
+	for n := 0; n < 10; n++ {
+		rr := householdHTTP(t, h, "POST", "/api/v1/auth/cinema/start", "", nil)
+		if rr.Code != 503 && rr.Code != 429 {
+			t.Fatal(rr.Code, rr.Body.String())
+		}
+	}
+	_ = owner
+	householdHTTPLogin(t, h, "owner", householdTestPassword)
 }

@@ -49,7 +49,11 @@ client proof, state, S256, short-lived single-use codes and source-session-bound
 opaque grants. Cinema authoritatively checks source revocation and idle expiry
 without refreshing login activity. Both standalone SQLite and replicated
 Hiqlite implement the same contract. Native uses the system browser and a second
-one-use Curator handoff bound to an app-generated S256 verifier.
+one-use Curator handoff bound to an app-generated S256 verifier and a fresh
+completion code returned to the consenting device through `monarr://cinema-complete`.
+Polling with the original verifier alone never returns a session. Closing the
+app and losing that verifier requires a fresh sign-in. Confirm the displayed
+local account before saving the device session.
 
 ## Request and acquisition ownership
 
@@ -65,10 +69,19 @@ A season and an episode cannot independently authorize the same work. An
 already-present scope fulfills without searches. Unknown evidence or changed
 identity/policy requires another review. Offloaded episodes are reacquired only
 when explicitly included in that approval. Opening discovery or submitting a
-request never admits work.
+request never admits work. Offload intent stays set until verified primary
+placement; exact pending notifications are narrowed cumulatively for primary
+paths only. Additional-copy monitoring remains suppressed while those flags
+remain. The immutable origin freezes full known provider IDs, quality policy,
+root identity, leaf coordinates and the approved offload epoch through final
+publication. Household-origin failures cannot launch ordinary replacements or
+season plans; uncertain submissions retain the existing same-token retry.
 
 Approved work is a durable intent, retried after restart using stable admission
-identity. Existing acquisition/download/import services execute it. A request
+identity. Per-target due order/backoff survives restart and prevents a long
+request from starving later leaves. After approval, withdrawal removes interest
+and preserves authorized work and its claims; re-review releases claims for
+leaves now present. Existing acquisition/download/import services execute it. A request
 worker must not call broad search-on-add or enable future/unrequested seasons.
 No new downloader, import queue or recovery console is introduced. Withdrawal,
 approval, file arrival and admission races must have one committed outcome.

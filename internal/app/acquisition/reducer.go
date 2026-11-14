@@ -392,7 +392,16 @@ func (s *Service) recordTerminalWith(ctx context.Context, dl sqlite.Download, cf
 			// request-budget gate) instead of grabbing an alternative from it.
 			w.IndexerOutage = &sqlite.IndexerOutageWrite{IndexerID: dl.SourceIndexerID, Until: now.Add(indexerOutageRetry)}
 		}
-		if wants, why := s.replacementDue(dl, t, provisional); len(wants) > 0 {
+		household, originErr := s.db.IsHouseholdDownload(ctx, dl.ID, dl.GenerationKey)
+		if originErr != nil {
+			return false, originErr
+		}
+		wants, why := s.replacementDue(dl, t, provisional)
+		if household {
+			wants = nil
+			why = "household scope needs owner re-review; no ordinary replacement is authorized"
+		}
+		if len(wants) > 0 {
 			w.ReplacementGrab = &sqlite.ReplacementGrabWrite{WantableIDs: wants}
 			// failure_to_next_grab starts with the failure itself; the grab
 			// worker ends it on submit or discards it with nothing to grab.

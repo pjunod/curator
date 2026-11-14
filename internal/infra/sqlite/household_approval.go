@@ -46,6 +46,13 @@ func (d *DB) ApproveHouseholdRequest(ctx context.Context, a domain.Account, dige
 		return ErrRequestChanged
 	}
 	policy := plan.Policy
+	hash, e := householdProfileFingerprint(ctx, tx, policy.ProfileID)
+	if e != nil {
+		return e
+	}
+	if hash != policy.ProfileFingerprint {
+		return ErrRequestChanged
+	}
 	var rootPath, rootIdentity string
 	var generation, shared int64
 	if err = tx.QueryRowContext(ctx, `SELECT r.path,p.identity,p.generation,s.revision FROM root_folders r JOIN library_presence_roots p ON p.root_id=r.id AND p.root_path=r.path CROSS JOIN lifecycle_shared_revision s WHERE r.id=? AND s.id=1`, policy.RootID).Scan(&rootPath, &rootIdentity, &generation, &shared); err != nil {
@@ -97,6 +104,7 @@ func (d *DB) ApproveHouseholdRequest(ctx context.Context, a domain.Account, dige
 		coordinate         domain.RequestEpisode
 		id                 int64
 		missing, offloaded bool
+		offloadEpoch       int64
 	}
 	leaves := []leaf{}
 	scope := request.Scope.Episodes
@@ -116,12 +124,14 @@ func (d *DB) ApproveHouseholdRequest(ctx context.Context, a domain.Account, dige
 				return ErrRequestChanged
 			}
 			current.offloaded = offloaded > 0
+			current.offloadEpoch = offloaded
 		} else {
 			var offloaded int64
 			if err = tx.QueryRowContext(ctx, `SELECT offloaded_at FROM media_items WHERE id=?`, item.ID).Scan(&offloaded); err != nil {
 				return err
 			}
 			current.offloaded = offloaded > 0
+			current.offloadEpoch = offloaded
 		}
 		for _, missing := range plan.Missing {
 			if sameRequestEpisode(missing, coordinate) {
@@ -157,23 +167,15 @@ func (d *DB) ApproveHouseholdRequest(ctx context.Context, a domain.Account, dige
 				return err
 			}
 		}
+		if !current.missing {
+			if _, err = tx.ExecContext(ctx, `DELETE FROM household_scope_claims WHERE request_id=? AND kind=? AND tmdb_id=? AND copy_id=0 AND season=? AND episode=?`, request.ID, string(request.Kind), request.TMDBID, coordinate.Season, coordinate.Episode); err != nil {
+				return err
+			}
+		}
 		leaves = append(leaves, current)
 	}
-	// An explicit re-acquire clears only the approved missing leaves, without
-	// broadening monitoring or changing a season's future-offload inheritance.
-	for _, leaf := range leaves {
-		if !leaf.missing || !leaf.offloaded {
-			continue
-		}
-		if request.Kind == domain.KindMovie {
-			_, err = tx.ExecContext(ctx, `UPDATE media_items SET offloaded_at=0 WHERE id=?`, item.ID)
-		} else {
-			_, err = tx.ExecContext(ctx, `UPDATE episodes SET offloaded_at=0 WHERE id=? AND media_item_id=?`, leaf.id, item.ID)
-		}
-		if err != nil {
-			return err
-		}
-	}
+	// Keep offload flags until verified primary bytes return. Approval cannot
+	// re-enable ordinary monitoring or additional-copy acquisition.
 	now := time.Now().UnixMilli()
 	missing := 0
 	for _, leaf := range leaves {
@@ -182,7 +184,7 @@ func (d *DB) ApproveHouseholdRequest(ctx context.Context, a domain.Account, dige
 			state = "approved"
 			missing++
 		}
-		_, err = tx.ExecContext(ctx, `INSERT INTO household_request_targets(request_id,media_item_id,episode_id,season,episode,state,created_at) VALUES(?,?,?,?,?,?,?) ON CONFLICT(request_id,season,episode) DO UPDATE SET media_item_id=excluded.media_item_id,episode_id=excluded.episode_id,state=excluded.state,approval_generation=household_request_targets.approval_generation+1,download_id=NULL,download_generation=''`, request.ID, item.ID, leaf.id, leaf.coordinate.Season, leaf.coordinate.Episode, state, now)
+		_, err = tx.ExecContext(ctx, `INSERT INTO household_request_targets(request_id,media_item_id,episode_id,season,episode,state,created_at,offload_epoch) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(request_id,season,episode) DO UPDATE SET media_item_id=excluded.media_item_id,episode_id=excluded.episode_id,state=excluded.state,approval_generation=household_request_targets.approval_generation+1,download_id=NULL,download_generation='',next_check_at=0,offload_epoch=excluded.offload_epoch`, request.ID, item.ID, leaf.id, leaf.coordinate.Season, leaf.coordinate.Episode, state, now, leaf.offloadEpoch)
 		if err != nil {
 			return err
 		}
@@ -195,7 +197,7 @@ func (d *DB) ApproveHouseholdRequest(ctx context.Context, a domain.Account, dige
 	if err != nil {
 		return err
 	}
-	if _, err = tx.ExecContext(ctx, `UPDATE household_requests SET state=?,approved_by=?,policy_json=?,library_item_id=?,revision=revision+1,updated_at=?,public_note='',next_check_at=0 WHERE id=?`, state, a.ID, string(data), item.ID, now, request.ID); err != nil {
+	if _, err = tx.ExecContext(ctx, `UPDATE household_requests SET state=?,approved_by=?,policy_json=?,library_item_id=?,revision=revision+1,updated_at=?,public_note='' WHERE id=?`, state, a.ID, string(data), item.ID, now, request.ID); err != nil {
 		return err
 	}
 	if _, err = tx.ExecContext(ctx, `INSERT INTO household_request_notes(request_id,account_id,note) VALUES(?,?,?) ON CONFLICT(request_id,account_id) DO UPDATE SET note=excluded.note`, request.ID, a.ID, plan.PrivateNote); err != nil {
@@ -207,7 +209,7 @@ func (d *DB) ApproveHouseholdRequest(ctx context.Context, a domain.Account, dige
 	return tx.Commit()
 }
 func (d *DB) HouseholdPendingTargets(ctx context.Context) ([]domain.HouseholdTarget, error) {
-	rows, err := d.R.QueryContext(ctx, `SELECT t.id,t.request_id,t.media_item_id,t.episode_id,t.season,t.episode,t.state,t.approval_generation,COALESCE(t.download_id,0),t.download_generation FROM household_request_targets t JOIN household_requests r ON r.id=t.request_id WHERE (r.state IN('approved','acquiring') OR r.state='needs_review' AND t.state='admitted') AND t.state IN('approved','admitted') AND r.next_check_at<=? ORDER BY t.id LIMIT 100`, time.Now().UnixMilli())
+	rows, err := d.R.QueryContext(ctx, `SELECT t.id,t.request_id,t.media_item_id,t.episode_id,t.season,t.episode,t.state,t.approval_generation,COALESCE(t.download_id,0),t.download_generation,t.offload_epoch FROM household_request_targets t JOIN household_requests r ON r.id=t.request_id WHERE (r.state IN('approved','acquiring') OR r.state='needs_review' AND t.state='admitted') AND t.state IN('approved','admitted') AND t.next_check_at<=? ORDER BY t.next_check_at,t.id LIMIT 100`, time.Now().UnixMilli())
 	if err != nil {
 		return nil, err
 	}
@@ -215,7 +217,7 @@ func (d *DB) HouseholdPendingTargets(ctx context.Context) ([]domain.HouseholdTar
 	out := []domain.HouseholdTarget{}
 	for rows.Next() {
 		var v domain.HouseholdTarget
-		if err = rows.Scan(&v.ID, &v.RequestID, &v.MediaItemID, &v.EpisodeID, &v.Season, &v.Episode, &v.State, &v.ApprovalGeneration, &v.DownloadID, &v.DownloadGeneration); err != nil {
+		if err = rows.Scan(&v.ID, &v.RequestID, &v.MediaItemID, &v.EpisodeID, &v.Season, &v.Episode, &v.State, &v.ApprovalGeneration, &v.DownloadID, &v.DownloadGeneration, &v.OffloadEpoch); err != nil {
 			return nil, err
 		}
 		out = append(out, v)
@@ -224,9 +226,26 @@ func (d *DB) HouseholdPendingTargets(ctx context.Context) ([]domain.HouseholdTar
 }
 func (d *DB) HouseholdTarget(ctx context.Context, id int64) (domain.HouseholdTarget, error) {
 	var v domain.HouseholdTarget
-	err := d.R.QueryRowContext(ctx, `SELECT id,request_id,media_item_id,episode_id,season,episode,state,approval_generation,COALESCE(download_id,0),download_generation FROM household_request_targets WHERE id=?`, id).Scan(&v.ID, &v.RequestID, &v.MediaItemID, &v.EpisodeID, &v.Season, &v.Episode, &v.State, &v.ApprovalGeneration, &v.DownloadID, &v.DownloadGeneration)
+	err := d.R.QueryRowContext(ctx, `SELECT id,request_id,media_item_id,episode_id,season,episode,state,approval_generation,COALESCE(download_id,0),download_generation,offload_epoch FROM household_request_targets WHERE id=?`, id).Scan(&v.ID, &v.RequestID, &v.MediaItemID, &v.EpisodeID, &v.Season, &v.Episode, &v.State, &v.ApprovalGeneration, &v.DownloadID, &v.DownloadGeneration, &v.OffloadEpoch)
 	if err == sql.ErrNoRows {
 		return v, ErrNotFound
 	}
 	return v, err
+}
+
+// Reserve a fair retry position before any potentially blocking external work.
+// A crash or per-job timeout leaves this durable deadline intact.
+func (d *DB) ScheduleHouseholdTargetRetry(ctx context.Context, id, generation int64, at time.Time) error {
+	result, err := d.W.ExecContext(ctx, `UPDATE household_request_targets SET next_check_at=? WHERE id=? AND approval_generation=? AND state IN('approved','admitted')`, at.UnixMilli(), id, generation)
+	if err != nil {
+		return err
+	}
+	n, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n != 1 {
+		return ErrRequestChanged
+	}
+	return nil
 }

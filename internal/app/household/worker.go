@@ -58,6 +58,11 @@ func (s *Service) Process(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
+		if err = s.DB.ScheduleHouseholdTargetRetry(work, target.ID, target.ApprovalGeneration, time.Now().Add(time.Minute)); err != nil {
+			release()
+			failures = append(failures, err)
+			continue
+		}
 		job, cancel := context.WithTimeout(work, 90*time.Second)
 		err = s.processTarget(job, target)
 		cancel()
@@ -104,10 +109,27 @@ func (s *Service) processTarget(ctx context.Context, target domain.HouseholdTarg
 		if e != nil || download.GenerationKey != target.DownloadGeneration || download.Superseded || download.State == "failed" || download.State == "imported" {
 			return result("needs_review", "Existing work needs owner review before another acquisition can be authorized.")
 		}
+		stopped, stopErr := s.DB.HouseholdDownloadNeedsReview(ctx, target.DownloadID, target.DownloadGeneration)
+		if stopErr != nil {
+			return stopErr
+		}
+		if stopped || download.MediaItemID != target.MediaItemID || download.CopyID != 0 {
+			return result("needs_review", "Existing work is cancelled, held or parked. Review its controls in Activity.")
+		}
 		return result("waiting", "Approved work is in progress. Fulfillment requires verified primary files.")
 	}
 	if err = s.DB.CheckHouseholdAdmission(ctx, target.ID, target.ApprovalGeneration); err != nil {
 		return result("needs_review", "The approved identity, destination, policy or scope changed. Review it again.")
+	}
+	existing, err := s.DB.FindHouseholdOwnerDownload(ctx, target)
+	if err != nil {
+		return err
+	}
+	if existing != 0 {
+		if err = s.DB.BindExistingHouseholdDownload(ctx, target.ID, target.ApprovalGeneration, existing); err != nil {
+			return result("needs_review", "Existing owner work changed before it could be followed.")
+		}
+		return result("waiting", "Following already authorized work for the requested primary scope.")
 	}
 	request, err := s.DB.HouseholdRequest(ctx, target.RequestID, 0, false)
 	if err != nil {
@@ -115,6 +137,9 @@ func (s *Service) processTarget(ctx context.Context, target domain.HouseholdTarg
 	}
 	if policy.Reacquire {
 		if err = s.Acquisition.CancelHouseholdOffloadDeliveries(ctx, target.MediaItemID, request.Scope, policy.OffloadOperations); err != nil {
+			if errors.Is(err, sqlite.ErrRequestChanged) {
+				return result("needs_review", "Historical offload notifications need owner review before this exact primary scope can return.")
+			}
 			return result("waiting", "Waiting to settle the previously approved offload notifications.")
 		}
 	}

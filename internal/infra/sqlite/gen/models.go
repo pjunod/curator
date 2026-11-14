@@ -61,6 +61,8 @@ type CinemaHandoff struct {
 	BrowserOpened        int64
 	Claim                string
 	GrantSecret          string
+	GrantExpires         int64
+	CompletionDigest     string
 	ReadyLink            int64
 	ExpiresAt            int64
 }
@@ -82,6 +84,8 @@ type CinemaRevocation struct {
 	ClientSecret string
 	GrantSecret  string
 	CreatedAt    int64
+	NextAt       int64
+	ExpiresAt    int64
 }
 
 type CompletedCleanupAttempt struct {
@@ -255,6 +259,11 @@ type HouseholdInvite struct {
 	ConsumedBy        sql.NullInt64
 }
 
+type HouseholdOffloadExclusion struct {
+	OperationID string
+	Path        string
+}
+
 type HouseholdRequest struct {
 	ID            int64
 	Fingerprint   string
@@ -275,7 +284,6 @@ type HouseholdRequest struct {
 	ApprovedBy    sql.NullInt64
 	PolicyJson    string
 	LibraryItemID int64
-	NextCheckAt   int64
 }
 
 type HouseholdRequestDecision struct {
@@ -308,7 +316,9 @@ type HouseholdRequestTarget struct {
 	Season             int64
 	Episode            int64
 	ApprovalGeneration int64
+	OffloadEpoch       int64
 	State              string
+	NextCheckAt        int64
 	DownloadID         sql.NullInt64
 	DownloadGeneration string
 	CreatedAt          int64
@@ -329,16 +339,17 @@ type HouseholdSecurity struct {
 }
 
 type HouseholdSession struct {
-	TokenDigest          string
-	AccountID            int64
-	CredentialGeneration int64
-	Method               string
-	LinkID               int64
-	LinkGeneration       int64
-	Device               string
-	CreatedAt            int64
-	ExpiresAt            int64
-	IntegrationGrant     string
+	TokenDigest             string
+	AccountID               int64
+	CredentialGeneration    int64
+	Method                  string
+	LinkID                  int64
+	LinkGeneration          int64
+	Device                  string
+	CreatedAt               int64
+	ExpiresAt               int64
+	IntegrationGrant        string
+	IntegrationGrantExpires int64
 }
 
 type IgnoredPath struct {

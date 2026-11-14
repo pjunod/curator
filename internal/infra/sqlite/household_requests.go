@@ -163,7 +163,7 @@ func (d *DB) WithdrawHouseholdRequest(ctx context.Context, a domain.Account, dig
 	if n == 0 {
 		return ErrRequestChanged
 	}
-	if _, err = tx.ExecContext(ctx, `UPDATE household_requests SET state=CASE WHEN EXISTS(SELECT 1 FROM household_request_subscriptions WHERE request_id=? AND active=1) THEN state ELSE 'withdrawn' END,revision=revision+1,updated_at=? WHERE id=?`, id, time.Now().UnixMilli(), id); err != nil {
+	if _, err = tx.ExecContext(ctx, `UPDATE household_requests SET state=CASE WHEN EXISTS(SELECT 1 FROM household_request_subscriptions WHERE request_id=? AND active=1) THEN state WHEN approved_by IS NOT NULL THEN state ELSE 'withdrawn' END,revision=revision+1,updated_at=? WHERE id=?`, id, time.Now().UnixMilli(), id); err != nil {
 		return err
 	}
 	return tx.Commit()

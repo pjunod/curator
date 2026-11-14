@@ -598,3 +598,33 @@ func intList(ns []int) string {
 	}
 	return strings.Join(parts, ",")
 }
+
+func (d *DB) HouseholdOffloadExclusions(ctx context.Context, id string) (map[string]bool, error) {
+	rows, err := d.R.QueryContext(ctx, `SELECT path FROM household_offload_exclusions WHERE operation_id=?`, id)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]bool{}
+	for rows.Next() {
+		var path string
+		if err = rows.Scan(&path); err != nil {
+			return nil, err
+		}
+		out[path] = true
+	}
+	return out, rows.Err()
+}
+func (d *DB) ExcludeHouseholdOffloadPaths(ctx context.Context, id string, paths []string) error {
+	tx, err := d.W.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	for _, path := range paths {
+		if _, err = tx.ExecContext(ctx, `INSERT OR IGNORE INTO household_offload_exclusions(operation_id,path) VALUES(?,?)`, id, path); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}

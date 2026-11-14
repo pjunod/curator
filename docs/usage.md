@@ -16,7 +16,10 @@ history. Primary-copy presence and acquisition remain separate facts.
 Movie requests freeze a title identity. Show requests freeze known aired regular
 episodes from the selected seasons; specials, future episodes and unknown dates
 are excluded. Joining a matching active request follows the same work. You can
-withdraw your own pending interest; other subscribers' interest remains. Notes
+withdraw your own pending interest; other subscribers' interest remains.
+After approval, withdrawing interest preserves work already authorized by the
+owner. Offloaded scope stays excluded from ordinary monitoring until verified
+primary files return. Notes
 written by an owner are private to that owner. Members never receive owner paths,
 credentials, download controls or administrative/event endpoints.
 

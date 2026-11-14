@@ -89,9 +89,12 @@ func (s *Service) AcquireHouseholdTarget(ctx context.Context, target domain.Hous
 }
 
 // CancelHouseholdOffloadDeliveries uses the same exact-scope notification
-// narrowing as Re-acquire. Approved leaves' flags were cleared atomically, so
-// later retries cannot resurrect a previously excluded path.
+// narrowing as Re-acquire, with durable primary-only exclusions. Offload flags
+// remain in force until verified primary placement.
 func (s *Service) CancelHouseholdOffloadDeliveries(ctx context.Context, itemID int64, scope domain.RequestScope, operations []string) error {
+	if len(operations) == 0 {
+		return nil
+	}
 	item, err := s.db.GetMediaItemFull(ctx, itemID)
 	if err != nil {
 		return err
@@ -123,6 +126,9 @@ func (s *Service) checkHouseholdImport(ctx context.Context, item domain.MediaIte
 	origin := scope.Household
 	if origin == nil {
 		return nil
+	}
+	if err := s.db.CheckHouseholdOrigin(ctx, *origin, p); err != nil {
+		return importPolicyRefusalf("household identity, profile or offload intent changed: %v", err)
 	}
 	identity, generation, err := s.db.PresenceRootBinding(ctx, origin.RootID, origin.RootPath)
 	if err != nil {

@@ -144,6 +144,7 @@ func (ImportFailed) EventType() string { return "import.failed" }
 type Service struct {
 	completedMu       sync.Mutex
 	storageDecisionMu sync.Mutex
+	offloadNarrowMu   sync.Mutex
 	// Publication authority, per media item (import_targets.go). Shared by
 	// ordinary and recovery imports, including crash reconciliation.
 	importTargets     importTargets

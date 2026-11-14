@@ -32,3 +32,17 @@ for(const width of [1280,390])test(`personal household request and owner review 
   await page.reload();await expect(page.getByRole('button',{name:/The Test Movie/}).first()).toContainText(/Approved|Acquiring/);expect(forbidden).toEqual([])
  }finally{await ownerContext.close()}
 })
+
+test('an owner switch in another tab resets private request rows and open review state',async({page,context})=>{
+ const owner=await(await api.post('/api/v1/auth/sessions',{data:{username:'owner',password,device:'owner setup'}})).json(),headers={Authorization:`Bearer ${owner.token}`}
+ const accounts=await(await api.get('/api/v1/household/accounts',{headers})).json(),member=accounts.find((a:{username:string})=>a.username==='member')
+ expect((await api.patch(`/api/v1/household/accounts/${member.id}`,{headers,data:{revision:member.revision,password,role:'owner',status:'active'}})).status()).toBe(204)
+ const other=await(await api.post('/api/v1/auth/sessions',{data:{username:'member',password,device:'second owner'}})).json()
+ const titles=await(await api.get('/api/v1/household/catalogue?kind=movie&q=The%20Test%20Movie',{headers})).json()
+ const submitted=await(await api.post('/api/v1/household/requests',{headers,data:{kind:'movie',tmdbId:titles[0].tmdbId,seasons:[]}})).json()
+ expect((await api.put(`/api/v1/household/requests/${submitted.id}/note`,{headers,data:{note:'Owner A private note'}})).status()).toBe(204)
+ expect((await api.put(`/api/v1/household/requests/${submitted.id}/note`,{headers:{Authorization:`Bearer ${other.token}`},data:{note:'Owner B private note'}})).status()).toBe(204)
+ const signIn=async(tab:typeof page,username:string)=>{await tab.goto(base+'/login');await tab.getByPlaceholder('Username',{exact:true}).fill(username);await tab.getByPlaceholder('Password',{exact:true}).fill(password);await tab.getByRole('button',{name:'Sign in',exact:true}).click();await expect(tab.getByRole('heading',{name:'Sign in to Curator',exact:true})).toHaveCount(0)}
+ await signIn(page,'owner');await page.goto(base+'/requests');await page.getByRole('button',{name:/The Test Movie/}).first().click();await expect(page.getByLabel('Private note · only you can see this')).toHaveValue('Owner A private note')
+ const second=await context.newPage();await signIn(second,'member');await page.bringToFront();await expect(page.getByRole('dialog')).toHaveCount(0,{timeout:20000});await page.getByRole('button',{name:/The Test Movie/}).first().click();await expect(page.getByLabel('Private note · only you can see this')).toHaveValue('Owner B private note');await expect(page.locator('textarea').filter({hasText:'Owner A private note'})).toHaveCount(0);await second.close()
+})

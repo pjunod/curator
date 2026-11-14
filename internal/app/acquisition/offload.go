@@ -112,16 +112,17 @@ type OffloadPreview struct {
 
 // offloadPlan is a preview plus what execution needs that the page does not.
 type offloadPlan struct {
-	preview  OffloadPreview
-	item     domain.MediaItem
-	movie    bool
-	whole    bool // item scope of a series: the stored whole-show intent
-	seasons  []int
-	episodes []int64 // every episode that becomes offloaded
-	fileless []int64 // those of them with no file at plan time
-	fileEps  map[string][]int64
-	files    []sqlite.OffloadFile
-	roots    []string
+	preview    OffloadPreview
+	item       domain.MediaItem
+	movie      bool
+	whole      bool // item scope of a series: the stored whole-show intent
+	seasons    []int
+	episodes   []int64 // every episode that becomes offloaded
+	fileless   []int64 // those of them with no file at plan time
+	fileEps    map[string][]int64
+	fileCopies map[string]int64
+	files      []sqlite.OffloadFile
+	roots      []string
 }
 
 // offloadStored is the plan an operation executes (offload_operations.plan).
@@ -138,6 +139,7 @@ type offloadStored struct {
 	Fileless []int64 `json:"fileless,omitempty"`
 	// FileEpisodes maps a media file to the episodes it covered, so a partial
 	// Re-acquire can narrow the operation's Cinema requests to what is still gone.
+	FileCopies   map[string]int64   `json:"fileCopies,omitempty"`
 	FileEpisodes map[string][]int64 `json:"fileEpisodes,omitempty"`
 	Labels       []string           `json:"episodeLabels,omitempty"`
 	Roots        []string           `json:"roots,omitempty"`
@@ -328,6 +330,10 @@ func (s *Service) planOffload(ctx context.Context, req OffloadRequest) (*offload
 	}
 	for _, f := range files {
 		listed[f.Path] = true
+		if plan.fileCopies == nil {
+			plan.fileCopies = map[string]int64{}
+		}
+		plan.fileCopies[f.Path] = f.CopyID
 		fp := OffloadFilePlan{Path: f.Path, Kind: "media", Bytes: f.Size, Shared: offloadLinkCount(f.Path) > 1}
 		for _, id := range f.EpisodeIDs {
 			fp.Episodes = append(fp.Episodes, episodeLabel(byEpisode[id]))
@@ -631,7 +637,7 @@ func (s *Service) startOffloadLocked(ctx context.Context, req OffloadRequest) (s
 	}
 	opID := newOffloadID()
 	stored := offloadStored{Request: req, Label: p.Label, Title: plan.item.Title, Year: plan.item.Year, Kind: string(plan.item.Kind),
-		Movie: plan.movie, Seasons: plan.seasons, Episodes: plan.episodes, Fileless: plan.fileless, FileEpisodes: plan.fileEps, Labels: p.Episodes, Roots: plan.roots, Folder: plan.item.Path}
+		Movie: plan.movie, Seasons: plan.seasons, Episodes: plan.episodes, Fileless: plan.fileless, FileEpisodes: plan.fileEps, FileCopies: plan.fileCopies, Labels: p.Episodes, Roots: plan.roots, Folder: plan.item.Path}
 	stored.Request.RequestID, stored.Request.PlanFingerprint = "", ""
 	raw, err := json.Marshal(stored)
 	if err != nil {

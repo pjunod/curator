@@ -100,6 +100,7 @@ type Deps struct {
 type Server struct {
 	authMu        sync.Mutex
 	loginFailures householdLoginFailures
+	cinemaStarts  householdLoginFailures
 	deps          Deps
 
 	streamsCtx         context.Context

@@ -231,6 +231,14 @@ func (d *DB) RecordRunnerTerminal(ctx context.Context, w RunnerTerminalWrite) (b
 		return false, err
 	}
 	defer func() { _ = tx.Rollback() }()
+	var household bool
+	if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM household_download_origins h JOIN downloads d ON d.id=h.download_id AND d.generation_key=h.generation WHERE d.id=?)`, w.DownloadID).Scan(&household); err != nil {
+		return false, err
+	}
+	if household {
+		w.ReplacementGrab = nil
+		w.ReplanPlanID = 0
+	}
 	now := time.Now().UnixMilli()
 	provisional := 0
 	if w.Provisional {

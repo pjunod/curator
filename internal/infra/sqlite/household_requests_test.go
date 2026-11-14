@@ -32,7 +32,7 @@ func householdMoviePlan(t *testing.T, db *DB, owner domain.Account, digest, fing
 	if err != nil {
 		t.Fatal(err)
 	}
-	return HouseholdApproval{RequestID: id, RequestRevision: request.Revision, Item: item, Evidence: evidence, Policy: domain.HouseholdPolicy{Kind: item.Kind, TMDBID: 550, IDs: item.IDs, RootID: evidence.RootID, ProfileID: item.QualityProfileID, RootGeneration: evidence.RootGeneration, SharedRevision: evidence.SharedRevision, RootPath: evidence.RootPath, RootIdentity: evidence.RootIdentity, Path: evidence.Path}, Missing: []domain.RequestEpisode{{}}}, id
+	return HouseholdApproval{RequestID: id, RequestRevision: request.Revision, Item: item, Evidence: evidence, Policy: domain.HouseholdPolicy{ProfileFingerprint: householdPolicyHash(t, db, item.QualityProfileID), Kind: item.Kind, TMDBID: 550, IDs: item.IDs, RootID: evidence.RootID, ProfileID: item.QualityProfileID, RootGeneration: evidence.RootGeneration, SharedRevision: evidence.SharedRevision, RootPath: evidence.RootPath, RootIdentity: evidence.RootIdentity, Path: evidence.Path}, Missing: []domain.RequestEpisode{{}}}, id
 }
 func TestHouseholdConcurrentSubmitJoinAndPrivateNotes(t *testing.T) {
 	db := openTestDB(t)
@@ -224,7 +224,7 @@ func TestHouseholdEpisodeClaimsOverlapAndOffloadScope(t *testing.T) {
 		if e != nil {
 			t.Fatal(e)
 		}
-		return HouseholdApproval{RequestID: rid, RequestRevision: r.Revision, Item: item, Evidence: evidence, Missing: episodes, Policy: domain.HouseholdPolicy{Kind: item.Kind, TMDBID: 100, IDs: item.IDs, RootID: evidence.RootID, ProfileID: item.QualityProfileID, RootGeneration: evidence.RootGeneration, SharedRevision: evidence.SharedRevision, RootPath: evidence.RootPath, RootIdentity: evidence.RootIdentity, Path: evidence.Path, Reacquire: true}}
+		return HouseholdApproval{RequestID: rid, RequestRevision: r.Revision, Item: item, Evidence: evidence, Missing: episodes, Policy: domain.HouseholdPolicy{ProfileFingerprint: householdPolicyHash(t, db, item.QualityProfileID), Kind: item.Kind, TMDBID: 100, IDs: item.IDs, RootID: evidence.RootID, ProfileID: item.QualityProfileID, RootGeneration: evidence.RootGeneration, SharedRevision: evidence.SharedRevision, RootPath: evidence.RootPath, RootIdentity: evidence.RootIdentity, Path: evidence.Path, Reacquire: true}}
 	}
 	first := makePlan("season-1-frozen", []domain.RequestEpisode{{Season: 1, Episode: 1}})
 	overlap := makePlan("overlap", []domain.RequestEpisode{{Season: 1, Episode: 1}, {Season: 1, Episode: 2}})
@@ -247,11 +247,274 @@ func TestHouseholdEpisodeClaimsOverlapAndOffloadScope(t *testing.T) {
 		t.Fatal("approval changed monitoring or future offload inheritance")
 	}
 	for _, ep := range current.Seasons[0].Episodes {
-		if ep.EpisodeNumber == 1 && ep.OffloadedAt != 0 {
-			t.Fatal("approved leaf not cleared")
+		if ep.EpisodeNumber == 1 && ep.OffloadedAt == 0 {
+			t.Fatal("approval cleared offload intent before primary bytes returned")
 		}
 		if ep.EpisodeNumber != 1 && ep.OffloadedAt == 0 {
 			t.Fatal("unapproved leaf's offload flag cleared")
 		}
+	}
+}
+
+func householdPolicyHash(t *testing.T, db *DB, id int64) string {
+	t.Helper()
+	hash, err := db.HouseholdProfileFingerprint(context.Background(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return hash
+}
+
+func TestHouseholdRetryFairnessSurvivesRestart(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+	owner, digest := householdOwner(t, db)
+	plan, id := householdMoviePlan(t, db, owner, digest, "fair")
+	if err := db.ApproveHouseholdRequest(ctx, owner, digest, plan); err != nil {
+		t.Fatal(err)
+	}
+	for n := 1; n <= 10; n++ {
+		if _, err := db.W.ExecContext(ctx, `INSERT INTO household_request_targets(request_id,media_item_id,season,episode,created_at) VALUES(?,?,0,?,0)`, id, plan.Item.ID, n); err != nil {
+			t.Fatal(err)
+		}
+	}
+	targets, err := db.HouseholdPendingTargets(ctx)
+	if err != nil || len(targets) != 11 {
+		t.Fatal(targets, err)
+	}
+	for _, target := range targets[:10] {
+		if err = db.ScheduleHouseholdTargetRetry(ctx, target.ID, target.ApprovalGeneration, time.Now().Add(time.Hour)); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	restarted, e := Open(filepath.Dir(db.Path))
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer func() { _ = restarted.Close() }()
+	// A new reader sees persisted due order; no in-memory round-robin state exists.
+	due, err := restarted.HouseholdPendingTargets(ctx)
+	if err != nil || len(due) != 1 || due[0].ID != targets[10].ID {
+		t.Fatal("eleventh target starved", due, err)
+	}
+}
+func TestHouseholdWithdrawAfterReviewKeepsClaimsAndAuthorizedWork(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+	owner, digest := householdOwner(t, db)
+	plan, id := householdMoviePlan(t, db, owner, digest, "review-withdraw")
+	if err := db.ApproveHouseholdRequest(ctx, owner, digest, plan); err != nil {
+		t.Fatal(err)
+	}
+	targets, err := db.HouseholdPendingTargets(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	target := targets[0]
+	if err = db.SetHouseholdTargetResult(ctx, target.ID, target.ApprovalGeneration, "needs_review", "changed policy"); err != nil {
+		t.Fatal(err)
+	}
+	if err = db.WithdrawHouseholdRequest(ctx, owner, digest, id); err != nil {
+		t.Fatal(err)
+	}
+	request, err := db.HouseholdRequest(ctx, id, owner.ID, true)
+	if err != nil || request.State != "needs_review" || request.SubscriberCount != 0 {
+		t.Fatal("withdraw terminalized authorized work", request, err)
+	}
+	var claims int
+	if err = db.R.QueryRowContext(ctx, `SELECT count(*) FROM household_scope_claims WHERE request_id=?`, id).Scan(&claims); err != nil || claims != 1 {
+		t.Fatal("claim ownership lost", claims, err)
+	}
+}
+func TestHouseholdExistingWorkAndFrozenOriginPolicy(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+	owner, digest := householdOwner(t, db)
+	plan, _ := householdMoviePlan(t, db, owner, digest, "existing")
+	if err := db.ApproveHouseholdRequest(ctx, owner, digest, plan); err != nil {
+		t.Fatal(err)
+	}
+	targets, err := db.HouseholdPendingTargets(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	target := targets[0]
+	downloadID, err := db.InsertDownload(ctx, Download{MediaItemID: plan.Item.ID, Protocol: "nzb", ClientID: 1, State: "grabbed", WantableIDs: []string{fmt.Sprintf("movie:%d", plan.Item.ID)}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	found, err := db.FindHouseholdOwnerDownload(ctx, target)
+	if err != nil || found != downloadID {
+		t.Fatal("existing work requires an indexer", found, err)
+	}
+	if err = db.BindExistingHouseholdDownload(ctx, target.ID, target.ApprovalGeneration, downloadID); err != nil {
+		t.Fatal(err)
+	}
+	download, err := db.GetDownload(ctx, downloadID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stopped, err := db.HouseholdDownloadNeedsReview(ctx, downloadID, download.GenerationKey)
+	if err != nil || stopped {
+		t.Fatal(stopped, err)
+	}
+	if _, err = db.W.ExecContext(ctx, `UPDATE downloads SET parked_at=1 WHERE id=?`, downloadID); err != nil {
+		t.Fatal(err)
+	}
+	stopped, err = db.HouseholdDownloadNeedsReview(ctx, downloadID, download.GenerationKey)
+	if err != nil || !stopped {
+		t.Fatal("parked work followed forever", stopped, err)
+	}
+}
+
+func TestHouseholdReReviewReleasesClaimsForArrivingPrimary(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+	owner, digest := householdOwner(t, db)
+	plan, id := householdMoviePlan(t, db, owner, digest, "present-again")
+	if err := db.ApproveHouseholdRequest(ctx, owner, digest, plan); err != nil {
+		t.Fatal(err)
+	}
+	targets, err := db.HouseholdPendingTargets(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = db.SetHouseholdTargetResult(ctx, targets[0].ID, 1, "needs_review", "refresh"); err != nil {
+		t.Fatal(err)
+	}
+	fid, err := db.UpsertFile(ctx, plan.Item.ID, 0, plan.Item.Path+"/arrived.mkv", 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	availabilityProof(t, db, plan.Item.ID, time.Now(), fid)
+	request, err := db.HouseholdRequest(ctx, id, owner.ID, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan.RequestRevision = request.Revision
+	plan.Missing = nil
+	plan.Evidence, err = db.HouseholdEvidence(ctx, plan.Item.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = db.ApproveHouseholdRequest(ctx, owner, digest, plan); err != nil {
+		t.Fatal(err)
+	}
+	var claims int
+	if err = db.R.QueryRowContext(ctx, `SELECT count(*) FROM household_scope_claims WHERE request_id=?`, id).Scan(&claims); err != nil || claims != 0 {
+		t.Fatal("present leaf retained a permanent claim", claims, err)
+	}
+}
+func TestHouseholdOriginRefusesPolicyDriftAndGenericReplacement(t *testing.T) {
+	for _, change := range []string{"profile", "identity", "offload"} {
+		t.Run(change, func(t *testing.T) {
+			db := openTestDB(t)
+			ctx := context.Background()
+			owner, digest := householdOwner(t, db)
+			plan, _ := householdMoviePlan(t, db, owner, digest, "origin-policy")
+			plan.Policy.IDs.IMDB = "tt123"
+			plan.Item.IDs.IMDB = "tt123"
+			if _, err := db.W.ExecContext(ctx, `UPDATE media_items SET imdb_id='tt123' WHERE id=?`, plan.Item.ID); err != nil {
+				t.Fatal(err)
+			}
+			availabilityProof(t, db, plan.Item.ID, time.Now())
+			plan.Evidence, _ = db.HouseholdEvidence(ctx, plan.Item.ID)
+			if err := db.ApproveHouseholdRequest(ctx, owner, digest, plan); err != nil {
+				t.Fatal(err)
+			}
+			availabilityProof(t, db, plan.Item.ID, time.Now())
+			targets, err := db.HouseholdPendingTargets(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			download, _, err := db.InsertHouseholdDownload(ctx, targets[0].ID, 1, Download{MediaItemID: plan.Item.ID, Protocol: "nzb", ClientID: 1, State: "grabbed", SubmissionPhase: "submitting", Intent: "automatic", Transfer: "transfer", WantableIDs: []string{fmt.Sprintf("movie:%d", plan.Item.ID)}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			origin, err := db.HouseholdDownloadOrigin(ctx, download.ID, download.GenerationKey)
+			if err != nil {
+				t.Fatal(err)
+			}
+			placement := Placement{ItemID: plan.Item.ID, DownloadID: download.ID, SourceGeneration: download.GenerationKey, Target: plan.Item.Path + "/new.mkv"}
+			if err = db.CheckHouseholdOrigin(ctx, *origin, placement); err != nil {
+				t.Fatal("frozen policy refused unchanged import", err)
+			}
+			won, err := db.RecordRunnerTerminal(ctx, RunnerTerminalWrite{DownloadID: download.ID, Transfer: download.Transfer, Outcome: "failed", State: "failed", ReplacementGrab: &ReplacementGrabWrite{WantableIDs: download.WantableIDs}})
+			if err != nil || !won {
+				t.Fatal("terminal", won, err)
+			}
+			if _, err = db.W.ExecContext(ctx, `INSERT INTO replacement_grabs(download_id,wantable_ids,created_at,next_at) VALUES(?,'[]',0,0)`, download.ID); err != nil {
+				t.Fatal(err)
+			}
+			var replacements int
+			if err = db.R.QueryRowContext(ctx, `SELECT count(*) FROM replacement_grabs WHERE download_id=?`, download.ID).Scan(&replacements); err != nil || replacements != 0 {
+				t.Fatal("generic replacement escaped household approval", replacements, err)
+			}
+			switch change {
+			case "profile":
+				_, err = db.W.ExecContext(ctx, `UPDATE quality_profiles SET upgrades_allowed=1-upgrades_allowed WHERE id=?`, plan.Policy.ProfileID)
+			case "identity":
+				_, err = db.W.ExecContext(ctx, `UPDATE media_items SET imdb_id='tt456' WHERE id=?`, plan.Item.ID)
+			case "offload":
+				_, err = db.W.ExecContext(ctx, `UPDATE media_items SET offloaded_at=999999 WHERE id=?`, plan.Item.ID)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err = db.CheckHouseholdOrigin(ctx, *origin, placement); !errors.Is(err, ErrRequestChanged) {
+				t.Fatal("changed policy authorized publication", change, err)
+			}
+		})
+	}
+}
+func TestCinemaRevocationsRetryFairlyAndForgetExpiredSecrets(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+	connection := domain.CinemaConnection{BaseURL: "https://unavailable.example", ClientID: "client", ClientSecret: "secret"}
+	for n := 0; n < 33; n++ {
+		if err := db.QueueCinemaRevocation(ctx, connection, fmt.Sprint(n), time.Now().Add(time.Hour).Unix()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rows, err := db.CinemaRevocations(ctx)
+	if err != nil || len(rows) != 32 {
+		t.Fatal(rows, err)
+	}
+	for _, row := range rows {
+		if err = db.DeferCinemaRevocation(ctx, row.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rows, err = db.CinemaRevocations(ctx)
+	if err != nil || len(rows) != 1 || rows[0].Grant != "32" {
+		t.Fatal("failed old grants starved a reachable new grant", rows, err)
+	}
+	if err = db.QueueCinemaRevocation(ctx, connection, "expired", time.Now().Add(-time.Minute).Unix()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.CinemaRevocations(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var retained int
+	if err = db.R.QueryRowContext(ctx, `SELECT count(*) FROM cinema_revocations WHERE grant_secret='expired'`).Scan(&retained); err != nil || retained != 0 {
+		t.Fatal("expired secret retained", retained, err)
+	}
+}
+
+func TestHouseholdPrimaryProbePreservesAdditionalCopyEvidence(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+	id := availabilityFixture(t, db, domain.MediaItem{Kind: domain.KindMovie, Title: "Copies", IDs: domain.ExternalIDs{TMDB: 7}})
+	availabilityProof(t, db, id, time.Now())
+	if _, err := db.W.ExecContext(ctx, `INSERT INTO library_presence_observations SELECT media_item_id,99,item_revision,presence_fingerprint,shared_revision,root_id,root_path,root_identity,root_generation,scope_path,checked_at,valid,present_file_ids FROM library_presence_observations WHERE media_item_id=? AND copy_id=0`, id); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.InvalidatePrimaryPresence(ctx, id); err != nil {
+		t.Fatal(err)
+	}
+	var valid bool
+	if err := db.R.QueryRowContext(ctx, `SELECT valid FROM library_presence_observations WHERE media_item_id=? AND copy_id=99`, id).Scan(&valid); err != nil || !valid {
+		t.Fatal("primary check invalidated another copy", valid, err)
 	}
 }

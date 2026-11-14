@@ -141,6 +141,10 @@ func (s *Service) Review(ctx context.Context, id, accountID, rootID, profileID i
 	if err != nil {
 		return out, err
 	}
+	plan.Policy.ProfileFingerprint, err = s.DB.HouseholdProfileFingerprint(ctx, plan.Policy.ProfileID)
+	if err != nil {
+		return out, err
+	}
 	out.RequestID = id
 	out.Revision = request.Revision
 	out.Title = request.Title

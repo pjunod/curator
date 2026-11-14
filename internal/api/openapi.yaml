@@ -3599,7 +3599,7 @@ paths:
   /auth/cinema/native/result:
     post:
       operationId: finishCinemaNative
-      summary: Consume a ready one-use native handoff with the app verifier
+      summary: Consume a native handoff with the app verifier and consenting-device completion code
       responses:
         "200":
           description: Device-scoped Curator session; no Cinema credentials

@@ -82,7 +82,7 @@ export class MonarrClient {
   // headers back as well as the parsed body.
   getSignInInfo=()=>this.request<{required:boolean;household:boolean;cinema:boolean}>('/auth/info')
   startCinemaNative=(challenge:string)=>this.request<{url:string;state:string}>('/auth/cinema/native',{method:'POST',body:JSON.stringify({challenge})})
-  finishCinemaNative=(state:string,verifier:string)=>this.request<{token:string;account:LocalAccount;expiresAt:string}|undefined>('/auth/cinema/native/result',{method:'POST',body:JSON.stringify({state,verifier})})
+  finishCinemaNative=(state:string,verifier:string,completion:string)=>this.request<{token:string;account:LocalAccount;expiresAt:string}|undefined>('/auth/cinema/native/result',{method:'POST',body:JSON.stringify({state,verifier,completion})})
   getCurrentAccount=()=>this.request<AccountIdentity>('/auth/me')
   createAccountSession=(username:string,password:string,device:string)=>this.request<{token:string;account:LocalAccount;expiresAt:string}>('/auth/sessions',{method:'POST',body:JSON.stringify({username,password,device})})
   logoutAccount=()=>this.request<void>('/auth/logout',{method:'POST'})
@@ -137,7 +137,7 @@ export class MonarrClient {
         if (text.trim()) message = text.trim()
       }
       if (response.status === 401) {
-        message = this.connection.sessionToken?'Your Curator account session ended. Sign in again.':'Authentication failed. Check the API key in Access → API access.'
+        message = path==='/auth/sessions'?'The Curator username or password was not accepted.':this.connection.sessionToken?'Your Curator account session ended. Sign in again.':'Authentication failed. Check the API key in Access → API access.'
       }
       throw new ApiError(message, response.status, code)
     }

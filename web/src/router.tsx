@@ -1,3 +1,4 @@
+import {HouseholdPrincipal} from './HouseholdPrincipal'
 import {MemberPortal,HouseholdRequestsPage,AccountPage,JoinHouseholdPage} from './Household'
 import { parsePreviewKey } from './metadataPreview'
 import { useEffect, useState } from 'react'
@@ -178,10 +179,10 @@ function Layout(){
  const account=useQuery({queryKey:['account'],queryFn:getCurrentAccount,enabled:!publicPage&&info.isSuccess,retry:false,refetchInterval:15000})
  if(publicPage)return <main className="household-shell"><Outlet/></main>
  if(info.isPending||info.data?.required&&account.isPending)return <main className="household-shell" role="status">Checking account access…</main>
- if(info.error||account.error)return <main className="household-shell"><p role="alert">Account access could not be checked.</p><button onClick={()=>{void info.refetch();void account.refetch()}}>Try again</button></main>
+ if(info.error||account.error)return <main className="household-shell"><p role="alert">Account access could not be checked.</p><button onClick={()=>{void info.refetch();void account.refetch()}}>Try again</button><Link to="/login">Sign in with a local Curator account</Link></main>
  if(info.data?.required&&!account.data)return <main className="household-shell"><LoginPage/></main>
- if(account.data&&account.data.accessRole!=='owner')return <MemberPortal identity={account.data}/>
- return <OwnerLayout/>
+ const principal=account.data?`${account.data.account.id}:${account.data.method}:${account.data.accessRole}`:'open'
+ return <HouseholdPrincipal.Provider key={principal} value={principal}>{account.data&&account.data.accessRole!=='owner'?<MemberPortal identity={account.data}/>:<OwnerLayout/>}</HouseholdPrincipal.Provider>
 }
 function OwnerLayout() {
   const status = useQuery({ queryKey: ['status'], queryFn: getStatus, refetchInterval: 30_000 })

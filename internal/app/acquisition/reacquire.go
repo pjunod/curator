@@ -207,6 +207,8 @@ func (s *Service) cancelOffloadDeliveries(ctx context.Context, sc reacquireScope
 	}
 }
 func (s *Service) cancelOffloadDeliveriesRestricted(ctx context.Context, sc reacquireScope, only []string) error {
+	s.offloadNarrowMu.Lock()
+	defer s.offloadNarrowMu.Unlock()
 	const why = "cancelled: re-acquired before cinema confirmed it"
 	ops, err := s.db.PendingOffloadOperationsForItem(ctx, sc.item.ID)
 	if err != nil {
@@ -240,24 +242,39 @@ func (s *Service) cancelOffloadDeliveriesRestricted(ctx context.Context, sc reac
 		if !overlap {
 			continue
 		}
-		var keepPaths []string
-		if sc.clear != "movie" && !stored.Movie {
-			for _, f := range files {
-				if f.Kind != "media" || f.State != "deleted" {
-					continue
-				}
-				// A path is back when any of its episodes is in this scope or
-				// was already brought back (its flag is clear in the
-				// snapshot taken before this clear).
-				back := false
+		excluded, err := s.db.HouseholdOffloadExclusions(ctx, op.ID)
+		if err != nil {
+			return err
+		}
+		var keepPaths, removePaths []string
+		for _, f := range files {
+			if f.Kind != "media" || f.State != "deleted" {
+				continue
+			}
+			back := excluded[f.Path]
+			if only == nil { // Ordinary owner re-acquire retains its existing all-copy scope.
+				back = back || sc.clear == "movie" || stored.Movie
 				for _, id := range stored.FileEpisodes[f.Path] {
 					back = back || sc.episodes[id] || !stillOffloaded[id]
 				}
-				if !back {
-					keepPaths = append(keepPaths, f.Path)
+			} else if _, known := stored.FileCopies[f.Path]; !known {
+				return fmt.Errorf("%w: historical offload file has no copy attribution", sqlite.ErrRequestChanged)
+			} else if stored.FileCopies[f.Path] == 0 {
+				back = back || sc.clear == "movie"
+				for _, id := range stored.FileEpisodes[f.Path] {
+					back = back || sc.episodes[id]
 				}
 			}
+			if back {
+				removePaths = append(removePaths, f.Path)
+			} else {
+				keepPaths = append(keepPaths, f.Path)
+			}
 		}
+		if err = s.db.ExcludeHouseholdOffloadPaths(ctx, op.ID, removePaths); err != nil {
+			return err
+		}
+
 		var keep []sqlite.OutboxWrite
 		if len(keepPaths) > 0 {
 			if keep, err = s.offloadOutbox(ctx, op.ID, sc.item, keepPaths, false); err != nil {

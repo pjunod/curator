@@ -162,16 +162,19 @@ type householdLoginFailures struct {
 }
 
 func (s *Server) beginHouseholdPassword(r *http.Request) (func(bool), bool) {
+	return beginHouseholdAttempt(r, &s.loginFailures)
+}
+func beginHouseholdAttempt(r *http.Request, failures *householdLoginFailures) (func(bool), bool) {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
 		host = r.RemoteAddr
 	}
 	now := time.Now()
-	s.loginFailures.Lock()
-	if s.loginFailures.entries == nil {
-		s.loginFailures.entries = map[string][]time.Time{}
+	failures.Lock()
+	if failures.entries == nil {
+		failures.entries = map[string][]time.Time{}
 	}
-	for key, times := range s.loginFailures.entries {
+	for key, times := range failures.entries {
 		keep := times[:0]
 		for _, at := range times {
 			if now.Sub(at) < time.Minute {
@@ -179,13 +182,13 @@ func (s *Server) beginHouseholdPassword(r *http.Request) (func(bool), bool) {
 			}
 		}
 		if len(keep) == 0 {
-			delete(s.loginFailures.entries, key)
+			delete(failures.entries, key)
 		} else {
-			s.loginFailures.entries[key] = keep
+			failures.entries[key] = keep
 		}
 	}
-	blocked := len(s.loginFailures.entries[host]) >= 8 || len(s.loginFailures.entries) >= 4096
-	s.loginFailures.Unlock()
+	blocked := len(failures.entries[host]) >= 8 || len(failures.entries) >= 4096
+	failures.Unlock()
 	if blocked {
 		return nil, false
 	}
@@ -199,9 +202,9 @@ func (s *Server) beginHouseholdPassword(r *http.Request) (func(bool), bool) {
 	return func(success bool) {
 		<-householdPasswordSlots
 		if !success {
-			s.loginFailures.Lock()
-			s.loginFailures.entries[host] = append(s.loginFailures.entries[host], time.Now())
-			s.loginFailures.Unlock()
+			failures.Lock()
+			failures.entries[host] = append(failures.entries[host], time.Now())
+			failures.Unlock()
 		}
 	}, true
 }
@@ -331,7 +334,10 @@ func (s *Server) CreateAccountSession(w http.ResponseWriter, r *http.Request) {
 	s.loginHousehold(w, r, body.Username, body.Password, body.Device, true)
 }
 func (s *Server) requireLocalAccount(w http.ResponseWriter, r *http.Request, owner bool) (domain.Account, bool) {
-	p := currentPrincipal(r)
+	p, ok := s.householdActor(w, r)
+	if !ok {
+		return domain.Account{}, false
+	}
 	if !p.Authenticated || p.Machine || p.Method != "local" || p.Account.ID <= 0 || owner && p.Account.Role != "owner" {
 		writeError(w, 403, "sign in with an authorized local Curator account")
 		return domain.Account{}, false

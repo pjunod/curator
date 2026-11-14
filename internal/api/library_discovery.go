@@ -71,7 +71,7 @@ func (s *Server) GetLibraryDiscoveryItems(w http.ResponseWriter, r *http.Request
 	}
 	// Conflicting provider identities must not silently choose one seed.
 	facts := s.availabilityFacts(r.Context(), []domain.AvailabilityTarget{{LibraryItemID: id, Kind: seed.Item.Kind, IDs: domain.ExternalIDs{TMDB: seed.Item.TMDBID, TVDB: seed.Item.TVDBID, IMDB: seed.Item.IMDBID}}})
-	if len(facts) != 1 || facts[0].Catalog != "present" || facts[0].LibraryItemID != id {
+	if !s.validLibrarySeed(r, seed) {
 		writeError(w, 409, "library seed identity is unavailable or conflicting")
 		return
 	}
@@ -93,7 +93,7 @@ func (s *Server) GetLibraryDiscoveryItems(w http.ResponseWriter, r *http.Request
 	}
 	seed = currentSeed
 	facts = s.availabilityFacts(r.Context(), []domain.AvailabilityTarget{{LibraryItemID: id, Kind: seed.Item.Kind, IDs: domain.ExternalIDs{TMDB: seed.Item.TMDBID, TVDB: seed.Item.TVDBID, IMDB: seed.Item.IMDBID}}})
-	if len(facts) != 1 || facts[0].Catalog != "present" || facts[0].LibraryItemID != id {
+	if !s.validLibrarySeed(r, seed) {
 		writeError(w, 409, "library seed identity changed; select it again")
 		return
 	}
@@ -114,3 +114,8 @@ func (s *Server) GetLibraryDiscoveryItems(w http.ResponseWriter, r *http.Request
 	}{title, "tmdb", seedDTO, items})
 }
 func ptrAvailability(v apigen.Availability) *apigen.Availability { return &v }
+
+func (s *Server) validLibrarySeed(r *http.Request, seed ports.LibrarySeed) bool {
+	facts := s.availabilityFacts(r.Context(), []domain.AvailabilityTarget{{LibraryItemID: seed.LibraryItemID, Kind: seed.Item.Kind, IDs: domain.ExternalIDs{TMDB: seed.Item.TMDBID, TVDB: seed.Item.TVDBID, IMDB: seed.Item.IMDBID}}})
+	return len(facts) == 1 && facts[0].Catalog == "present" && facts[0].LibraryItemID == seed.LibraryItemID
+}

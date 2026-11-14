@@ -1,6 +1,6 @@
 # Household accounts and requests — implementation status
 
-**Status:** implemented; final review and regressions pending · **Updated:**
+**Status:** Astra findings fixed; static recheck and regressions pending · **Updated:**
 2026-11-13 · **Base:** owner discovery PR
 [#160](https://github.com/pjunod/curator/pull/160), merged as
 `97149893fc6d28c5edb4655ebce5bbfd6beaabec`.
@@ -93,3 +93,22 @@ outage/unlink, native proof and stale-server results. Isolated browser fixtures
 cover desktop/390px member-to-owner flows without enabling auth on the shared
 legacy acceptance server. Compile checks are not execution evidence. No household
 regression suite has run before the final review. No live deployment is requested.
+
+## Final implementation review and fixes
+
+Astra requested changes on Curator `123d8c70` / Cinema `6f12ce9d`. The
+implementation now has per-leaf durable due order, post-approval subscription
+semantics and claim release on present-scope re-review; primary-only verification;
+retained offload epochs and durable primary-only notification exclusions; no
+ordinary replacement dispatch for household origins; immutable full-ID/profile/
+leaf/epoch checks at publication; existing-owner transfer attachment before
+indexer search; fair expiring remote revocations; separate initiation throttles;
+shared mobile attempt generations; same-device completion proof; private query
+partitioning with stale principal action refusal; and pre/post-provider full-ID
+seed checks. Cinema fixes include exact callbacks, cold-page layout mounting,
+atomic schema preflight/verification, strict historical empty-tail rewinds,
+deterministic cleanup, delayed-writer expiry and an atomic active-client cap.
+
+New store, API, mobile and real-browser fixtures cover these boundaries. Only
+compilation, typechecking and generation have run on the fixes. Astra's targeted
+static recheck must clear before regression execution, PR checks and merging.

@@ -257,7 +257,7 @@ func (s *Server) beginCinema(w http.ResponseWriter, r *http.Request, mode string
 		writeError(w, 503, "account storage unavailable")
 		return
 	}
-	finish, allowed := s.beginHouseholdPassword(r)
+	finish, allowed := beginHouseholdAttempt(r, &s.cinemaStarts)
 	if !allowed {
 		writeError(w, 429, "too many sign-in starts; try again shortly")
 		return
@@ -379,7 +379,7 @@ func (s *Server) CinemaCallback(w http.ResponseWriter, r *http.Request) {
 		if !owned {
 			ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 5*time.Second)
 			defer cancel()
-			if s.deps.Store.QueueCinemaRevocation(ctx, c, identity.Grant) != nil {
+			if s.deps.Store.QueueCinemaRevocation(ctx, c, identity.Grant, identity.ExpiresAt) != nil {
 				_ = cinemaCall(ctx, c, "revoke", map[string]string{"clientId": c.ClientID, "clientSecret": c.ClientSecret, "grant": identity.Grant}, nil)
 			}
 		}
@@ -398,13 +398,20 @@ func (s *Server) CinemaCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	link.Grant = identity.Grant
+	link.GrantExpiresAt = identity.ExpiresAt * 1000
 	if h.Mode == "native" {
+		completion, e := newHouseholdToken()
+		if e != nil {
+			fail()
+			return
+		}
+		h.CompletionDigest = digestSession(completion)
 		if err = s.deps.Store.ReadyCinemaNative(r.Context(), h, link); err != nil {
 			fail()
 			return
 		}
 		owned = true
-		http.Redirect(w, r, "/login?cinema=native-ready", http.StatusSeeOther)
+		http.Redirect(w, r, "monarr://cinema-complete?"+url.Values{"state": {state}, "code": {completion}}.Encode(), http.StatusSeeOther)
 		return
 	}
 	token, err := newHouseholdToken()
@@ -426,8 +433,9 @@ func (s *Server) FinishCinemaNative(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var b struct {
-		State    string `json:"state"`
-		Verifier string `json:"verifier"`
+		State      string `json:"state"`
+		Verifier   string `json:"verifier"`
+		Completion string `json:"completion"`
 	}
 	if !decodeHouseholdBody(w, r, &b) {
 		return
@@ -443,6 +451,10 @@ func (s *Server) FinishCinemaNative(w http.ResponseWriter, r *http.Request) {
 	}
 	if h.ReadyLink == 0 {
 		w.WriteHeader(http.StatusAccepted)
+		return
+	}
+	if len(b.Completion) < 32 || len(b.Completion) > 256 || subtle.ConstantTimeCompare([]byte(digestSession(b.Completion)), []byte(h.CompletionDigest)) != 1 {
+		writeError(w, 409, "Return from Cinema on the device that started sign-in")
 		return
 	}
 	link, err := s.deps.Store.CinemaLinkByID(r.Context(), h.ReadyLink)
@@ -461,6 +473,7 @@ func (s *Server) FinishCinemaNative(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	link.Grant = h.Grant
+	link.GrantExpiresAt = h.GrantExpiresAt
 	a, err := s.deps.Store.AccountByID(r.Context(), link.AccountID)
 	if err != nil {
 		writeError(w, 503, "sign-in completed; refresh the account")
@@ -492,6 +505,9 @@ func (s *Server) RunCinemaRevocations(ctx context.Context) {
 		rows, err := s.deps.Store.CinemaRevocations(ctx)
 		if err == nil {
 			for _, r := range rows {
+				if s.deps.Store.DeferCinemaRevocation(ctx, r.ID) != nil {
+					continue
+				}
 				c := domain.CinemaConnection{BaseURL: r.BaseURL, ClientID: r.ClientID, ClientSecret: r.ClientSecret}
 				if cinemaCall(ctx, c, "revoke", map[string]string{"clientId": c.ClientID, "clientSecret": c.ClientSecret, "grant": r.Grant}, nil) == nil {
 					_ = s.deps.Store.FinishCinemaRevocation(ctx, r.ID)

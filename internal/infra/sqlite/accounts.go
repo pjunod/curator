@@ -122,7 +122,7 @@ func (d *DB) DropAccountSession(ctx context.Context, digest string) error {
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
-	if _, err = tx.ExecContext(ctx, `INSERT INTO cinema_revocations(base_url,client_id,client_secret,grant_secret,created_at) SELECT c.base_url,c.client_id,c.client_secret,s.integration_grant,? FROM household_sessions s JOIN cinema_links l ON l.id=s.link_id JOIN cinema_connection c ON c.id=1 AND c.generation=l.connection_generation WHERE s.token_digest=? AND s.method='cinema' AND s.integration_grant<>''`, time.Now().UnixMilli(), digest); err != nil {
+	if _, err = tx.ExecContext(ctx, `INSERT INTO cinema_revocations(base_url,client_id,client_secret,grant_secret,created_at,expires_at) SELECT c.base_url,c.client_id,c.client_secret,s.integration_grant,?,s.integration_grant_expires FROM household_sessions s JOIN cinema_links l ON l.id=s.link_id JOIN cinema_connection c ON c.id=1 AND c.generation=l.connection_generation WHERE s.token_digest=? AND s.method='cinema' AND s.integration_grant<>''`, time.Now().UnixMilli(), digest); err != nil {
 		return err
 	}
 	if _, err = tx.ExecContext(ctx, `DELETE FROM household_sessions WHERE token_digest=?`, digest); err != nil {

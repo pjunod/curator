@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"fmt"
 	"github.com/pjunod/monarr/internal/app/availability"
 	"github.com/pjunod/monarr/internal/infra/sqlite"
 	"github.com/pjunod/monarr/internal/ports"
@@ -23,6 +24,10 @@ func (s *Server) householdService() *household.Service {
 }
 func (s *Server) householdActor(w http.ResponseWriter, r *http.Request) (principal, bool) {
 	p := currentPrincipal(r)
+	if expected := r.Header.Get("X-Curator-Principal"); expected != "" && expected != fmt.Sprintf("%d:%s:%s", p.Account.ID, p.Method, p.accessRole()) {
+		writeError(w, 409, "Account changed. Refresh before continuing.")
+		return p, false
+	}
 	if !p.Authenticated || p.Machine || p.Account.ID <= 0 {
 		writeError(w, 403, "sign in to a personal Curator account")
 		return p, false
@@ -306,9 +311,18 @@ func (s *Server) HouseholdDiscoveryShelf(w http.ResponseWriter, r *http.Request)
 		writeError(w, 409, "library seed changed")
 		return
 	}
+	if !s.validLibrarySeed(r, seed) {
+		writeError(w, 409, "library seed identity is conflicting")
+		return
+	}
 	title, items, err := s.deps.LibraryDiscovery.Items(r.Context(), seed, shelf)
 	if err != nil {
 		writeError(w, 503, "recommendations could not be refreshed; try another library title")
+		return
+	}
+	current, e := s.deps.LibraryDiscovery.Seed(r.Context(), seed.LibraryItemID, kind, tmdb)
+	if e != nil || domain.ExternalIDsConflict(domain.ExternalIDs{TMDB: seed.Item.TMDBID, TVDB: seed.Item.TVDBID, IMDB: seed.Item.IMDBID}, domain.ExternalIDs{TMDB: current.Item.TMDBID, TVDB: current.Item.TVDBID, IMDB: current.Item.IMDBID}) || !s.validLibrarySeed(r, current) {
+		writeError(w, 409, "library seed changed; choose it again")
 		return
 	}
 	writeJSON(w, 200, map[string]any{"title": title, "items": safeHouseholdSearchResults(r.Context(), s.deps.Store, items)})

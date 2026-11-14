@@ -23,7 +23,7 @@ func readHouseholdTarget(ctx context.Context, q scopeQuerier, id int64) (domain.
 	var v domain.HouseholdTarget
 	var policy domain.HouseholdPolicy
 	var data, state string
-	err := q.QueryRowContext(ctx, `SELECT t.id,t.request_id,t.media_item_id,t.episode_id,t.season,t.episode,t.state,t.approval_generation,COALESCE(t.download_id,0),t.download_generation,r.policy_json,r.state FROM household_request_targets t JOIN household_requests r ON r.id=t.request_id WHERE t.id=?`, id).Scan(&v.ID, &v.RequestID, &v.MediaItemID, &v.EpisodeID, &v.Season, &v.Episode, &v.State, &v.ApprovalGeneration, &v.DownloadID, &v.DownloadGeneration, &data, &state)
+	err := q.QueryRowContext(ctx, `SELECT t.id,t.request_id,t.media_item_id,t.episode_id,t.season,t.episode,t.state,t.approval_generation,COALESCE(t.download_id,0),t.download_generation,t.offload_epoch,r.policy_json,r.state FROM household_request_targets t JOIN household_requests r ON r.id=t.request_id WHERE t.id=?`, id).Scan(&v.ID, &v.RequestID, &v.MediaItemID, &v.EpisodeID, &v.Season, &v.Episode, &v.State, &v.ApprovalGeneration, &v.DownloadID, &v.DownloadGeneration, &v.OffloadEpoch, &data, &state)
 	if errors.Is(err, sql.ErrNoRows) {
 		return v, policy, state, ErrNotFound
 	}
@@ -41,7 +41,7 @@ func checkHouseholdPolicy(ctx context.Context, q scopeQuerier, p domain.Househol
 	if err != nil {
 		return err
 	}
-	if kind != p.Kind || tmdb != p.TMDBID || root != p.RootID || profile != p.ProfileID || path != p.Path || rootPath != p.RootPath || identity != p.RootIdentity || generation != p.RootGeneration || shared != p.SharedRevision || domain.ExternalIDsConflict(p.IDs, domain.ExternalIDs{TMDB: tmdb, TVDB: tvdb, IMDB: imdb}) {
+	if kind != p.Kind || tmdb != p.TMDBID || root != p.RootID || profile != p.ProfileID || path != p.Path || rootPath != p.RootPath || identity != p.RootIdentity || generation != p.RootGeneration || shared != p.SharedRevision || !householdIDsMatch(p.IDs, domain.ExternalIDs{TMDB: tmdb, TVDB: tvdb, IMDB: imdb}) {
 		return ErrRequestChanged
 	}
 	var conflicting bool
@@ -51,7 +51,7 @@ func checkHouseholdPolicy(ctx context.Context, q scopeQuerier, p domain.Househol
 	if conflicting {
 		return ErrRequestChanged
 	}
-	if kind == domain.KindMovie && offloaded > 0 {
+	if kind == domain.KindMovie && (offloaded != t.OffloadEpoch || offloaded > 0 && !p.Reacquire) {
 		return ErrRequestChanged
 	}
 	if kind == domain.KindSeries {
@@ -61,9 +61,16 @@ func checkHouseholdPolicy(ctx context.Context, q scopeQuerier, p domain.Househol
 			return err
 		}
 		date, e := time.Parse("2006-01-02", air)
-		if e != nil || date.After(time.Now().UTC()) || season != t.Season || episode != t.Episode || offloaded > 0 {
+		if e != nil || date.After(time.Now().UTC()) || season != t.Season || episode != t.Episode || offloaded != t.OffloadEpoch || offloaded > 0 && !p.Reacquire {
 			return ErrRequestChanged
 		}
+	}
+	profileHash, e := householdProfileFingerprint(ctx, q, p.ProfileID)
+	if e != nil {
+		return e
+	}
+	if profileHash != p.ProfileFingerprint {
+		return ErrRequestChanged
 	}
 	var claimed bool
 	if err = q.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM household_scope_claims WHERE kind=? AND tmdb_id=? AND copy_id=0 AND season=? AND episode=? AND request_id=?)`, string(p.Kind), p.TMDBID, t.Season, t.Episode, t.RequestID).Scan(&claimed); err != nil {
@@ -157,7 +164,7 @@ func (d *DB) InsertHouseholdDownload(ctx context.Context, id, generation int64, 
 	if err != nil {
 		return Download{}, false, err
 	}
-	origin := domain.HouseholdOrigin{ItemID: target.MediaItemID, Kind: policy.Kind, TMDBID: policy.TMDBID, Path: policy.Path, RootID: policy.RootID, RootPath: policy.RootPath, RootIdentity: policy.RootIdentity, RootGeneration: policy.RootGeneration}
+	origin := domain.HouseholdOrigin{OffloadEpoch: target.OffloadEpoch, Season: target.Season, Episode: target.Episode, Policy: policy, ItemID: target.MediaItemID, Kind: policy.Kind, TMDBID: policy.TMDBID, Path: policy.Path, RootID: policy.RootID, RootPath: policy.RootPath, RootIdentity: policy.RootIdentity, RootGeneration: policy.RootGeneration}
 	if target.EpisodeID != 0 {
 		origin.EpisodeIDs = []int64{target.EpisodeID}
 	}
@@ -185,8 +192,8 @@ func (d *DB) InsertHouseholdDownload(ctx context.Context, id, generation int64, 
 	return result, true, err
 }
 func (d *DB) HouseholdDownloadOrigin(ctx context.Context, id int64, generation string) (*domain.HouseholdOrigin, error) {
-	var data string
-	err := d.R.QueryRowContext(ctx, `SELECT scope_json FROM household_download_origins WHERE download_id=? AND generation=?`, id, generation).Scan(&data)
+	var data, policy string
+	err := d.R.QueryRowContext(ctx, `SELECT scope_json,policy_json FROM household_download_origins WHERE download_id=? AND generation=?`, id, generation).Scan(&data, &policy)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -195,6 +202,9 @@ func (d *DB) HouseholdDownloadOrigin(ctx context.Context, id int64, generation s
 	}
 	var origin domain.HouseholdOrigin
 	if err = json.Unmarshal([]byte(data), &origin); err != nil {
+		return nil, err
+	}
+	if err = json.Unmarshal([]byte(policy), &origin.Policy); err != nil {
 		return nil, err
 	}
 	return &origin, nil
@@ -217,7 +227,7 @@ func (d *DB) BindExistingHouseholdDownload(ctx context.Context, targetID, genera
 		return err
 	}
 	download := downloadFromRow(row)
-	if download.MediaItemID != target.MediaItemID || download.CopyID != 0 || download.Superseded || !slices.Contains([]string{"planned", "submitting", "grabbed", "downloading", "downloaded", "awaiting_import", "importing"}, download.State) {
+	if download.MediaItemID != target.MediaItemID || download.CopyID != 0 || download.Superseded || !download.ParkedAt.IsZero() || !slices.Contains([]string{"planned", "submitting", "grabbed", "downloading", "downloaded", "awaiting_import", "importing"}, download.State) {
 		return ErrRequestChanged
 	}
 	want := fmt.Sprintf("movie:%d", target.MediaItemID)
@@ -225,7 +235,7 @@ func (d *DB) BindExistingHouseholdDownload(ctx context.Context, targetID, genera
 		want = fmt.Sprintf("episode:%d:%d:%d", target.MediaItemID, target.Season, target.Episode)
 	}
 	var stopped bool
-	if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM import_attempt_controls WHERE download_id=? AND generation_key=? AND outcome IN('cancelled','completed'))`, download.ID, download.GenerationKey).Scan(&stopped); err != nil {
+	if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM import_attempt_controls WHERE download_id=? AND generation_key=? AND outcome IN('cancelled','completed')) OR EXISTS(SELECT 1 FROM downloads WHERE id=? AND runner_outcome IN('cancelled','failed')) OR EXISTS(SELECT 1 FROM publications WHERE download_id=? AND generation=? AND (state='import_failed' OR holds>0))`, download.ID, download.GenerationKey, download.ID, download.ID, download.GenerationKey).Scan(&stopped); err != nil {
 		return err
 	}
 	if stopped {
@@ -305,22 +315,45 @@ func (d *DB) SetHouseholdTargetResult(ctx context.Context, id, generation int64,
 	} else if state != "waiting" {
 		return ErrRequestChanged
 	}
+	if _, err = tx.ExecContext(ctx, `UPDATE household_request_targets SET next_check_at=? WHERE id=? AND approval_generation=?`, time.Now().Add(time.Minute).UnixMilli(), id, generation); err != nil {
+		return err
+	}
 	if state == "waiting" && requestStatus == "needs_review" {
 		// Following admitted work cannot erase the reason a fresh owner review
 		// is required for the remaining scope.
-		_, err = tx.ExecContext(ctx, `UPDATE household_requests SET next_check_at=? WHERE id=?`, time.Now().Add(time.Minute).UnixMilli(), target.RequestID)
-		if err != nil {
-			return err
-		}
+
 		return tx.Commit()
 	}
 	requestState := ""
 	if state == "needs_review" {
 		requestState = "needs_review"
 	}
-	_, err = tx.ExecContext(ctx, `UPDATE household_requests SET state=CASE WHEN NOT EXISTS(SELECT 1 FROM household_request_targets t WHERE t.request_id=household_requests.id AND t.state<>'fulfilled') THEN 'fulfilled' WHEN ?<>'' THEN ? ELSE state END,public_note=?,next_check_at=?,revision=revision+1,updated_at=? WHERE id=?`, requestState, requestState, note, time.Now().Add(time.Minute).UnixMilli(), time.Now().UnixMilli(), target.RequestID)
+	_, err = tx.ExecContext(ctx, `UPDATE household_requests SET state=CASE WHEN NOT EXISTS(SELECT 1 FROM household_request_targets t WHERE t.request_id=household_requests.id AND t.state<>'fulfilled') THEN 'fulfilled' WHEN ?<>'' THEN ? ELSE state END,public_note=?,revision=revision+1,updated_at=? WHERE id=?`, requestState, requestState, note, time.Now().UnixMilli(), target.RequestID)
 	if err != nil {
 		return err
 	}
 	return tx.Commit()
+}
+
+func (d *DB) IsHouseholdDownload(ctx context.Context, id int64, generation string) (bool, error) {
+	var yes bool
+	err := d.R.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM household_download_origins WHERE download_id=? AND generation=?)`, id, generation).Scan(&yes)
+	return yes, err
+}
+func (d *DB) FindHouseholdOwnerDownload(ctx context.Context, t domain.HouseholdTarget) (int64, error) {
+	want := fmt.Sprintf("movie:%d", t.MediaItemID)
+	if t.EpisodeID != 0 {
+		want = fmt.Sprintf("episode:%d:%d:%d", t.MediaItemID, t.Season, t.Episode)
+	}
+	var id int64
+	err := d.R.QueryRowContext(ctx, `SELECT d.id FROM downloads d WHERE d.media_item_id=? AND COALESCE(d.copy_id,0)=0 AND d.superseded=0 AND d.parked_at=0 AND d.state IN('planned','submitting','grabbed','downloading','downloaded','awaiting_import','importing') AND d.runner_outcome NOT IN('cancelled','failed') AND NOT EXISTS(SELECT 1 FROM household_download_origins h WHERE h.download_id=d.id AND h.generation=d.generation_key) AND NOT EXISTS(SELECT 1 FROM import_attempt_controls i WHERE i.download_id=d.id AND i.generation_key=d.generation_key AND i.outcome IN('cancelled','completed')) AND (EXISTS(SELECT 1 FROM json_each(d.wantable_ids) w WHERE w.value=?) OR (?<>0 AND d.plan_id<>0 AND EXISTS(SELECT 1 FROM json_each(d.reserved_episodes) e WHERE e.value=?))) ORDER BY d.id LIMIT 1`, t.MediaItemID, want, t.EpisodeID, t.EpisodeID).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, nil
+	}
+	return id, err
+}
+func (d *DB) HouseholdDownloadNeedsReview(ctx context.Context, id int64, generation string) (bool, error) {
+	var stopped bool
+	err := d.R.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM downloads d WHERE d.id=? AND d.generation_key=? AND (d.superseded=1 OR d.parked_at>0 OR d.runner_outcome IN('cancelled','failed') OR d.state NOT IN('planned','submitting','grabbed','downloading','downloaded','awaiting_import','importing') OR EXISTS(SELECT 1 FROM import_attempt_controls i WHERE i.download_id=d.id AND i.generation_key=d.generation_key AND i.outcome IN('cancelled','completed')) OR EXISTS(SELECT 1 FROM publications p WHERE p.download_id=d.id AND (p.state='import_failed' OR p.holds>0))))`, id, generation).Scan(&stopped)
+	return stopped, err
 }
