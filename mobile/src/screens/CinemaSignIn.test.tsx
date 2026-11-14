@@ -6,6 +6,11 @@ import {AccountSignIn} from './AccountSignIn'
 import {ConnectScreen} from './ConnectScreen'
 import type {SystemStatus} from '../types'
 const {alert,openURL,urls}=vi.hoisted(()=>({alert:vi.fn(),openURL:vi.fn().mockResolvedValue(undefined),urls:new Set<(event:{url:string})=>void>()}))
+vi.mock('../api',()=>({MonarrClient:class {
+ connection:unknown
+ constructor(connection:unknown){this.connection=connection}
+ getSignInInfo(){} startCinemaNative(){} finishCinemaNative(){} logoutAccount(){} createAccountSession(){} getStatus(){}
+}}))
 vi.mock('react-native',()=>({Text:'text',View:'view',Alert:{alert},Linking:{openURL,addEventListener:(_kind:string,fn:(e:{url:string})=>void)=>{urls.add(fn);return {remove:()=>urls.delete(fn)}}},Platform:{OS:'ios'},KeyboardAvoidingView:'view',StyleSheet:{create:(value:unknown)=>value}}))
 vi.mock('expo-camera',()=>({CameraView:'camera',useCameraPermissions:()=>[{granted:true},vi.fn().mockResolvedValue({granted:true})]}))
 vi.mock('../discovery',()=>({discoverMonarrServers:vi.fn().mockResolvedValue([])}))
