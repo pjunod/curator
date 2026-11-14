@@ -159,6 +159,7 @@ type Service struct {
 	log               *slog.Logger
 	rssSweepMu        sync.Mutex
 	planDispatchMu    sync.Mutex
+	seasonRetryCursor atomic.Int64
 	newIndexer        IndexerFactory
 	newClient         ClientFactory
 

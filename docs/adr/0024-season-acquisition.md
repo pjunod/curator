@@ -27,3 +27,16 @@ protected files are skipped. Singles during genuine incomplete discovery can
 later duplicate pack bytes; that availability tradeoff is explicit. Seven-day
 uncertainty retry accepts possible duplicates and records a persistent warning.
 One acquisition/import process remains required; deployment is excluded.
+
+## Failed discovery recovery — 2026-11-13
+
+Optimistic snapshot/custody races are scheduling deferrals: clear discovery
+evidence and compare again after 30 seconds without exhausting the failure
+budget. The admission transaction still checks the library revision.
+
+The season coordinator also recovers exhausted searches when an aired,
+monitored episode remains missing and unreserved. It retries after five
+minutes, doubling to a one-hour ceiling on repeated failures. Every recovery
+uses a fresh background checkpoint; an atomic check against the newest job
+prevents superseding a concurrent request. Completed comparisons, provider
+budgets, offloads, monitoring and re-grab caps retain their existing rules.

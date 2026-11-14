@@ -13,6 +13,10 @@ import (
 	"github.com/pjunod/monarr/internal/ports"
 )
 
+// ErrAcquisitionSnapshotChanged means discovery lost an optimistic concurrency race.
+// The caller must compare fresh state before admitting anything.
+var ErrAcquisitionSnapshotChanged = errors.New("acquisition snapshot changed")
+
 // AcquisitionPlan has public bounded decision facts, never transport URLs.
 type AcquisitionPlan struct {
 	ID                  int64           `json:"id"`
@@ -40,7 +44,7 @@ func (d *DB) AdmitAcquisitionPlan(ctx context.Context, p AcquisitionPlan, revisi
 		return 0, err
 	}
 	if current != revision {
-		return 0, fmt.Errorf("acquisition snapshot changed")
+		return 0, ErrAcquisitionSnapshotChanged
 	}
 	now := time.Now().UnixMilli()
 	res, err := tx.ExecContext(ctx, `INSERT INTO acquisition_plans(media_item_id,copy_id,season,state,snapshot_fingerprint,decision,added_at,updated_at) VALUES(?,?,?,'admitted',?,?,?,?)`, p.MediaItemID, p.CopyID, p.Season, p.SnapshotFingerprint, string(p.Decision), now, now)
@@ -61,7 +65,7 @@ func (d *DB) AdmitAcquisitionPlan(ctx context.Context, p AcquisitionPlan, revisi
 				return 0, err
 			}
 			if n > 0 {
-				return 0, fmt.Errorf("episode custody changed")
+				return 0, fmt.Errorf("%w: episode custody changed", ErrAcquisitionSnapshotChanged)
 			}
 		}
 		for _, ep := range dl.ReservedEpisodes {
@@ -71,7 +75,7 @@ func (d *DB) AdmitAcquisitionPlan(ctx context.Context, p AcquisitionPlan, revisi
 				return 0, err
 			}
 			if n > 0 {
-				return 0, fmt.Errorf("episode custody changed")
+				return 0, fmt.Errorf("%w: episode custody changed", ErrAcquisitionSnapshotChanged)
 			}
 		}
 		wants, _ := json.Marshal(dl.WantableIDs)

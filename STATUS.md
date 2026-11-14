@@ -1,5 +1,31 @@
 # Monarr — Project Status
 
+## Missing episode search recovery — 2026-11-13 · v0.51.2
+
+**Owner:** Codex · **Branch:** `codex/missing-episode-retry` · **State:** independent review found no blockers; final local gates passed.
+
+The failed Strangers with Candy season comparison exhausted three attempts on
+`acquisition snapshot changed`, leaving S01E07 without a queued search. Optimistic
+snapshot/custody races now refresh discovery and defer without spending the
+failure budget. The existing 30-second coordinator recovers exhausted searches
+for missing episodes with bounded backoff, fresh background authority, bounded
+rotating batches, and an atomic latest-failure enqueue guard.
+
+Regressions cover a revision change during indexer discovery followed by a
+successful retry; startup recovery; monitoring, offloads, reservations, re-grab
+caps, malformed scopes, batch fairness, bounded backoff, completed work and
+provider deadlines; and a newer completed request racing recovery. Independent
+adversarial review found no blockers. Pinned lint, full Go tests, 174 web tests
+and all 267 browser tests passed. PR, remote CI and deployment remain pending.
+
+Live acquisition: targeted Stick S02E03 search grabbed a release as download
+1347; Runner failed it for zero downloadable articles. Its automatic replacement
+1348 failed health too; no successful import has been confirmed. The targeted Strangers with Candy S01E07 search found no eligible source;
+its sole single-episode source is PAR-failed and blocklisted. An attempted wider
+season comparison was blocked by automatic approval review because it could
+also acquire unrelated upgrades. No blocklist override or broader acquisition
+has been performed.
+
 ## Resolved cancelled imports — 2026-11-13 · v0.51.1
 
 **Owner:** Codex · **Branch:** `codex/cancelled-import-attention` ·
