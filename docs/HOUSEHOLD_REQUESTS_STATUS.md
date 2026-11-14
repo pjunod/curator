@@ -146,3 +146,10 @@ Current main `19d865c` is integrated; feature VERSION remains `0.52.0` and nativ
 version `0.29.0`, build 42. PR qualification, exact-head checks and merge remain.
 Cinema's companion uses its required merge train. No live deployment or real
 Cinema account linking has been performed.
+
+## Pull requests
+
+Curator [PR #162](https://github.com/pjunod/curator/pull/162) is submitted with
+all local gates passing. Cinema companion PR #1586 is submitted as WIP to its
+enabled merge train; both applications remain independently usable. Protected
+current-candidate checks and both merge receipts remain pending.
