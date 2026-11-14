@@ -612,7 +612,7 @@ func (d *DB) HouseholdOffloadExclusions(ctx context.Context, id string) (map[str
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	out := map[string]bool{}
 	for rows.Next() {
 		var path string

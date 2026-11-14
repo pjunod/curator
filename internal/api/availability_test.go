@@ -107,7 +107,13 @@ func TestHouseholdShelfValidatesFullSeedIdentityBeforeAndAfterProviderIO(t *test
 				t.Fatal(err)
 			}
 			conflict := func() {
-				if _, err := db.CreateMediaItem(ctx, domain.MediaItem{Kind: domain.KindMovie, Title: "Conflict", IDs: domain.ExternalIDs{TMDB: 89, IMDB: "tt88"}}); err != nil {
+				other, err := db.CreateMediaItem(ctx, domain.MediaItem{Kind: domain.KindMovie, Title: "Conflict", IDs: domain.ExternalIDs{TMDB: 89}})
+				if err != nil {
+					t.Fatal(err)
+				}
+				// Simulate conflicting authoritative provider IDs arriving in a
+				// concurrent rematch, after normal add validation.
+				if _, err = db.W.ExecContext(ctx, `UPDATE media_items SET imdb_id='tt88' WHERE id=?`, other); err != nil {
 					t.Fatal(err)
 				}
 			}

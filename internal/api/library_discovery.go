@@ -70,7 +70,7 @@ func (s *Server) GetLibraryDiscoveryItems(w http.ResponseWriter, r *http.Request
 		return
 	}
 	// Conflicting provider identities must not silently choose one seed.
-	facts := s.availabilityFacts(r.Context(), []domain.AvailabilityTarget{{LibraryItemID: id, Kind: seed.Item.Kind, IDs: domain.ExternalIDs{TMDB: seed.Item.TMDBID, TVDB: seed.Item.TVDBID, IMDB: seed.Item.IMDBID}}})
+
 	if !s.validLibrarySeed(r, seed) {
 		writeError(w, 409, "library seed identity is unavailable or conflicting")
 		return
@@ -92,7 +92,7 @@ func (s *Server) GetLibraryDiscoveryItems(w http.ResponseWriter, r *http.Request
 		return
 	}
 	seed = currentSeed
-	facts = s.availabilityFacts(r.Context(), []domain.AvailabilityTarget{{LibraryItemID: id, Kind: seed.Item.Kind, IDs: domain.ExternalIDs{TMDB: seed.Item.TMDBID, TVDB: seed.Item.TVDBID, IMDB: seed.Item.IMDBID}}})
+	facts := s.availabilityFacts(r.Context(), []domain.AvailabilityTarget{{LibraryItemID: id, Kind: seed.Item.Kind, IDs: domain.ExternalIDs{TMDB: seed.Item.TMDBID, TVDB: seed.Item.TVDBID, IMDB: seed.Item.IMDBID}}})
 	if !s.validLibrarySeed(r, seed) {
 		writeError(w, 409, "library seed identity changed; select it again")
 		return

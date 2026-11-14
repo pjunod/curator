@@ -251,7 +251,7 @@ func (d *DB) CinemaRevocations(ctx context.Context) ([]domain.CinemaRevocation, 
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	out := []domain.CinemaRevocation{}
 	for rows.Next() {
 		var r domain.CinemaRevocation

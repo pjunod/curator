@@ -241,7 +241,7 @@ func (d *DB) BindExistingHouseholdDownload(ctx context.Context, targetID, genera
 	if stopped {
 		return ErrRequestChanged
 	}
-	if !slices.Contains(download.WantableIDs, want) && !(policy.Kind == domain.KindSeries && download.PlanID != 0 && slices.Contains(download.ReservedEpisodes, target.EpisodeID)) {
+	if !slices.Contains(download.WantableIDs, want) && (policy.Kind != domain.KindSeries || download.PlanID == 0 || !slices.Contains(download.ReservedEpisodes, target.EpisodeID)) {
 		return ErrRequestOverlap
 	}
 	binding, err := tx.ExecContext(ctx, `UPDATE household_request_targets SET state='admitted',download_id=?,download_generation=? WHERE id=? AND approval_generation=? AND download_id IS NULL`, download.ID, download.GenerationKey, targetID, generation)

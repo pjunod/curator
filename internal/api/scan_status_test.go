@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -97,13 +98,17 @@ func TestScanStatusStorageFailureIsVisible(t *testing.T) {
 	if err := e.db.Close(); err != nil {
 		t.Fatal(err)
 	}
-	// With no readable auth configuration, an unauthenticated request must
-	// not reach the handler. An already authenticated operator can still see
-	// the original actionable storage failure rather than a synthetic status.
+	// Durable account authority fails closed when its database is unreadable.
+	// An obsolete process-local cookie cannot bypass that boundary. The
+	// status handler itself must still report the original storage failure.
 	if rr := do(t, e.h, http.MethodGet, "/api/v1/library/scan", ""); rr.Code != http.StatusUnauthorized {
 		t.Fatalf("unavailable auth configuration opened gate: %d", rr.Code)
 	}
-	rr := doWithHeader(t, e.h, http.MethodGet, "/api/v1/library/scan", "", "Cookie", sessionCookie+"="+token)
+	if rr := doWithHeader(t, e.h, http.MethodGet, "/api/v1/library/scan", "", "Cookie", sessionCookie+"="+token); rr.Code != http.StatusUnauthorized {
+		t.Fatalf("obsolete cookie bypassed unreadable durable authority: %d", rr.Code)
+	}
+	rr := httptest.NewRecorder()
+	e.srv.GetScanStatus(rr, httptest.NewRequest(http.MethodGet, "/api/v1/library/scan", nil))
 	if rr.Code != http.StatusInternalServerError {
 		t.Fatalf("unavailable status: %d %s", rr.Code, rr.Body.String())
 	}

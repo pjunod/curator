@@ -56,7 +56,7 @@ func (d *DB) HouseholdRequests(ctx context.Context, accountID int64, owner bool,
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	out := []domain.HouseholdRequest{}
 	for rows.Next() {
 		v, err := scanHouseholdRequest(rows)

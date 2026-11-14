@@ -1,6 +1,6 @@
 # Household accounts and requests — implementation status
 
-**Status:** Astra production review cleared; final regressions running · **Updated:**
+**Status:** reviewed and locally qualified; protected PR checks pending · **Updated:**
 2026-11-13 · **Base:** owner discovery PR
 [#160](https://github.com/pjunod/curator/pull/160), merged as
 `97149893fc6d28c5edb4655ebce5bbfd6beaabec`.
@@ -129,3 +129,20 @@ Astra cleared production fixes on Curator `99eb022` / Cinema `e0f60d0c3`.
 Two worker-fixture-only corrections (valid automatic intent and actual download
 generation in the origin assertion) were explicitly cleared without another
 review. Final suites now run before PR qualification and merge. No deployment.
+
+## Final local qualification
+
+Astra's production and current-main composition reviews cleared all findings
+before execution. Full Go regressions and required lint pass. Web has 174 passing
+tests; mobile has 155; the real-binary desktop/phone suite has 271. OpenAPI and
+SQL generation reproduces the committed output with no changes. New runtime
+cases include request/approval at 1280px and 390px, cross-tab owner note isolation,
+stale member action refusal, same-device native completion, offload rollback and
+attachment without indexers. Fixture-only corrections preserved the reviewed
+production safeguards (metadata preview port, journaled local offload state,
+protected metrics and fail-closed durable authority during storage failure).
+
+Current main `19d865c` is integrated; feature VERSION remains `0.52.0` and native
+version `0.29.0`, build 42. PR qualification, exact-head checks and merge remain.
+Cinema's companion uses its required merge train. No live deployment or real
+Cinema account linking has been performed.

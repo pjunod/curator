@@ -46,24 +46,24 @@ func cinemaCall(ctx context.Context, c domain.CinemaConnection, path string, bod
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(c.BaseURL, "/")+"/api/v1/delegation/"+path, bytes.NewReader(raw))
 	if err != nil {
-		return errors.New("Cinema connection is invalid")
+		return errors.New("cinema connection is invalid")
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 	response, err := cinemaHTTPClient.Do(req)
 	if err != nil {
-		return errors.New("Cinema is unavailable; local Curator sign-in still works")
+		return errors.New("cinema is unavailable; local Curator sign-in still works")
 	}
 	defer func() { _ = response.Body.Close() }()
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return errors.New("Cinema did not authorize this sign-in")
+		return errors.New("cinema did not authorize this sign-in")
 	}
 	if out == nil {
 		return nil
 	}
 	dec := json.NewDecoder(io.LimitReader(response.Body, 64<<10))
 	if dec.Decode(out) != nil || dec.Decode(new(any)) != io.EOF {
-		return errors.New("Cinema returned an invalid response")
+		return errors.New("cinema returned an invalid response")
 	}
 	return nil
 }
@@ -527,7 +527,7 @@ func validCinemaVerifier(value string) bool {
 		return false
 	}
 	for _, c := range []byte(value) {
-		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || strings.ContainsRune("-._~", rune(c))) {
+		if (c < 'a' || c > 'z') && (c < 'A' || c > 'Z') && (c < '0' || c > '9') && !strings.ContainsRune("-._~", rune(c)) {
 			return false
 		}
 	}

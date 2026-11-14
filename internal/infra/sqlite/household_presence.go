@@ -63,7 +63,7 @@ func readHouseholdEvidence(ctx context.Context, q scopeQuerier, id int64) (House
 		if err != nil {
 			return v, err
 		}
-		defer rows.Close()
+		defer func() { _ = rows.Close() }()
 		for rows.Next() {
 			var episode int64
 			if err = rows.Scan(&episode); err != nil {

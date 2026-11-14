@@ -206,6 +206,13 @@ func TestHouseholdEpisodeClaimsOverlapAndOffloadScope(t *testing.T) {
 	ctx := context.Background()
 	owner, digest := householdOwner(t, db)
 	id := availabilityFixture(t, db, domain.MediaItem{Kind: domain.KindSeries, Title: "Frozen show", IDs: domain.ExternalIDs{TMDB: 100}, QualityProfileID: 1, Seasons: []domain.Season{{Number: 1, OffloadedAt: 1, Episodes: []domain.Episode{{SeasonNumber: 1, EpisodeNumber: 1, AirDate: "2020-01-01", OffloadedAt: 1}, {SeasonNumber: 1, EpisodeNumber: 2, AirDate: "2020-01-02", OffloadedAt: 1}, {SeasonNumber: 1, EpisodeNumber: 3, AirDate: "2099-01-01", OffloadedAt: 1}}}}})
+	// Offload is a local journaled intent, never accepted from provider metadata.
+	if _, err := db.W.ExecContext(ctx, `UPDATE seasons SET offloaded_at=1 WHERE media_item_id=?`, id); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.W.ExecContext(ctx, `UPDATE episodes SET offloaded_at=1 WHERE media_item_id=?`, id); err != nil {
+		t.Fatal(err)
+	}
 	availabilityProof(t, db, id, time.Now())
 	item, err := db.GetMediaItemFull(ctx, id)
 	if err != nil {

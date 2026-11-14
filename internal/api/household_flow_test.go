@@ -8,9 +8,11 @@ import (
 	"github.com/pjunod/monarr/internal/domain"
 	"github.com/pjunod/monarr/internal/infra/bus"
 	"github.com/pjunod/monarr/internal/infra/sqlite"
+	"github.com/pjunod/monarr/internal/ports"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -42,7 +44,7 @@ func householdHTTP(t *testing.T, h http.Handler, method, path, token string, bod
 }
 func householdHTTPAccount(t *testing.T) (http.Handler, *sqlite.DB, string) {
 	t.Helper()
-	h, db := newLibraryServer(t, stubProvider{configured: true})
+	h, db := newLibraryServer(t, householdPreviewProvider{stubProvider{configured: true}})
 	rr := householdHTTP(t, h, "PUT", "/api/v1/settings", "", map[string]any{"authUsername": "owner", "authPassword": householdTestPassword, "authRequired": true})
 	if rr.Code != 204 {
 		t.Fatal(rr.Code, rr.Body.String())
@@ -109,8 +111,8 @@ func TestHouseholdMemberRoutesAndLocalRecovery(t *testing.T) {
 	// Mixed old settings must fail before changing even unrelated saved values.
 	before, _ := db.GetMeta(context.Background(), "app_name")
 	rr = householdHTTP(t, h, "PUT", "/api/v1/settings", owner, map[string]any{"authRequired": false, "appName": "must not commit"})
-	if rr.Code != 400 {
-		t.Fatal("legacy settings reopened auth", rr.Code)
+	if rr.Code != 403 {
+		t.Fatal("legacy settings guard did not refuse the mixed write", rr.Code)
 	}
 	after, _ := db.GetMeta(context.Background(), "app_name")
 	if after != before {
@@ -223,4 +225,32 @@ func TestHouseholdSeriesSubmissionFreezesOnlyUniqueKnownAiredRegularEpisodes(t *
 	if rr.Code != 409 {
 		t.Fatal("special-season request accepted", rr.Code)
 	}
+}
+
+// Household hydration uses the same read-only preview port as production TMDB.
+// Legacy library-handler fixtures implement only the older MetadataProvider.
+type householdPreviewProvider struct{ stubProvider }
+
+func (p householdPreviewProvider) PreviewExternal(ctx context.Context, kind domain.MediaKind, ref domain.ExternalRef) (domain.MediaItem, error) {
+	return householdPreviewRecord(ctx, p, kind, ref)
+}
+func (p householdSeriesProvider) PreviewExternal(ctx context.Context, kind domain.MediaKind, ref domain.ExternalRef) (domain.MediaItem, error) {
+	return householdPreviewRecord(ctx, p, kind, ref)
+}
+func householdPreviewRecord(ctx context.Context, p ports.MetadataProvider, kind domain.MediaKind, ref domain.ExternalRef) (domain.MediaItem, error) {
+	id, err := strconv.ParseInt(ref.Value, 10, 64)
+	if err != nil {
+		return domain.MediaItem{}, err
+	}
+	var item domain.MediaItem
+	if kind == domain.KindSeries {
+		item, err = p.GetSeries(ctx, id)
+	} else {
+		item, err = p.GetMovie(ctx, id)
+		if item.ReleaseDate == "" {
+			item.ReleaseDate = "1999-01-01"
+		}
+	}
+	item.Source = "tmdb"
+	return item, err
 }

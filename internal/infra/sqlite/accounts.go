@@ -73,7 +73,7 @@ func (d *DB) ListAccounts(ctx context.Context) ([]domain.Account, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	out := []domain.Account{}
 	for rows.Next() {
 		a, err := scanAccount(rows)

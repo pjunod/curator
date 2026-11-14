@@ -213,7 +213,7 @@ func (d *DB) HouseholdPendingTargets(ctx context.Context) ([]domain.HouseholdTar
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	out := []domain.HouseholdTarget{}
 	for rows.Next() {
 		var v domain.HouseholdTarget
