@@ -17,6 +17,7 @@ import (
 	"github.com/pjunod/monarr/internal/domain/downloadpriority"
 	"github.com/pjunod/monarr/internal/domain/mediainfo"
 	"github.com/pjunod/monarr/internal/domain/quality"
+	"github.com/pjunod/monarr/internal/infra/sqlite"
 	"github.com/pjunod/monarr/internal/ports"
 )
 
@@ -39,7 +40,7 @@ func (s *Server) libraryErr(w http.ResponseWriter, err error) {
 		writeCodedError(w, http.StatusConflict, "already_exists", err.Error())
 	case errors.Is(err, library.ErrFolderConflict):
 		writeCodedError(w, http.StatusConflict, "folder_conflict", err.Error())
-	case errors.As(err, new(*library.IdentityConflictError)):
+	case errors.Is(err, sqlite.ErrIdentityConflict), errors.As(err, new(*library.IdentityConflictError)):
 		writeCodedError(w, http.StatusConflict, "identity_conflict", err.Error())
 	case errors.Is(err, library.ErrInvalidExternalID):
 		writeCodedError(w, http.StatusBadRequest, "invalid_external_id", err.Error())
@@ -725,7 +726,21 @@ func (s *Server) SetEpisodeMonitored(w http.ResponseWriter, r *http.Request, id 
 // RefreshLibraryItem implements POST /library/{id}/refresh: re-hydrate the
 // item's metadata from its provider and return the updated detail.
 func (s *Server) RefreshLibraryItem(w http.ResponseWriter, r *http.Request, id int64) {
-	item, err := s.deps.Library.RefreshItem(r.Context(), id)
+	var item domain.MediaItem
+	var err error
+	if r.Body != nil && r.ContentLength != 0 {
+		var match struct {
+			Previous    int64 `json:"previousTmdbId"`
+			Replacement int64 `json:"tmdbId"`
+		}
+		if err = json.NewDecoder(http.MaxBytesReader(w, r.Body, 2048)).Decode(&match); err != nil {
+			writeError(w, 400, "invalid metadata match")
+			return
+		}
+		item, err = s.deps.Library.CorrectMovieMatch(r.Context(), id, match.Previous, match.Replacement)
+	} else {
+		item, err = s.deps.Library.RefreshItem(r.Context(), id)
+	}
 	if err != nil {
 		s.libraryErr(w, err)
 		return

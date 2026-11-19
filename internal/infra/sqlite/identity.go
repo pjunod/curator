@@ -126,7 +126,7 @@ func (d *DB) IdentityRevision(ctx context.Context) (int64, error) {
 
 // ReplaceIdentitySnapshot atomically replaces one provider's replaceable
 // aliases and country snapshot. Manual and historical aliases survive.
-func (d *DB) ReplaceIdentitySnapshot(ctx context.Context, itemID int64, source string, aliases []domain.TitleAlias, countries []domain.CountryEvidence, now time.Time) error {
+func (d *DB) ReplaceIdentitySnapshot(ctx context.Context, itemID int64, source string, aliases []domain.TitleAlias, countries []domain.CountryEvidence, now time.Time, expectedTMDB ...int64) error {
 	if strings.TrimSpace(source) == "" {
 		return fmt.Errorf("identity source is required")
 	}
@@ -135,6 +135,9 @@ func (d *DB) ReplaceIdentitySnapshot(ctx context.Context, itemID int64, source s
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
+	if err := checkHydratedMatch(ctx, tx, itemID, expectedTMDB); err != nil {
+		return err
+	}
 	q := d.Write.WithTx(tx)
 	if err := q.DeleteReplaceableProviderAliases(ctx, sqlitegen.DeleteReplaceableProviderAliasesParams{MediaItemID: itemID, Source: source}); err != nil {
 		return err
@@ -176,12 +179,15 @@ func (d *DB) ReplaceIdentitySnapshot(ctx context.Context, itemID int64, source s
 
 // RecordIdentityFailure retains the last complete snapshot but records that
 // the latest required refresh failed, disabling convention eligibility.
-func (d *DB) RecordIdentityFailure(ctx context.Context, itemID int64, source string, attemptedAt, retryAfter time.Time, message string) error {
+func (d *DB) RecordIdentityFailure(ctx context.Context, itemID int64, source string, attemptedAt, retryAfter time.Time, message string, expectedTMDB ...int64) error {
 	tx, err := d.W.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
+	if err := checkHydratedMatch(ctx, tx, itemID, expectedTMDB); err != nil {
+		return err
+	}
 	q := d.Write.WithTx(tx)
 	existing, getErr := q.GetIdentitySource(ctx, sqlitegen.GetIdentitySourceParams{MediaItemID: itemID, Source: source})
 	if getErr != nil && !errors.Is(getErr, sql.ErrNoRows) {
@@ -339,6 +345,18 @@ func (d *DB) UpdateMediaIdentity(ctx context.Context, itemID int64, incoming dom
 // RefreshMediaItemMetadata commits verified external IDs, provider metadata,
 // episode rows, historical-title evidence, and cache invalidation together.
 func (d *DB) RefreshMediaItemMetadata(ctx context.Context, itemID int64, fresh domain.MediaItem) error {
+	return d.refreshMatchedMetadata(ctx, itemID, fresh, 0)
+}
+
+// ReplaceMovieMatch uses the reviewed old ID as a compare-and-swap.
+func (d *DB) ReplaceMovieMatch(ctx context.Context, itemID, oldID int64, fresh domain.MediaItem) error {
+	if oldID <= 0 || fresh.IDs.TMDB <= 0 {
+		return ErrIdentityConflict
+	}
+	return d.refreshMatchedMetadata(ctx, itemID, fresh, oldID)
+}
+
+func (d *DB) refreshMatchedMetadata(ctx context.Context, itemID int64, fresh domain.MediaItem, oldID int64) error {
 	tx, err := d.W.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -350,6 +368,25 @@ func (d *DB) RefreshMediaItemMetadata(ctx context.Context, itemID int64, fresh d
 		return wrapNotFound(err)
 	}
 	merged := domain.ExternalIDs{TMDB: stored.TmdbID, IMDB: stored.ImdbID, TVDB: stored.TvdbID}
+	if oldID != 0 {
+		if stored.Kind != "movie" || stored.Source != "tmdb" || stored.TmdbID != oldID {
+			return ErrIdentityConflict
+		}
+		var busy bool
+		if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM media_files WHERE media_item_id=?) OR EXISTS(SELECT 1 FROM downloads WHERE media_item_id=? AND state NOT IN ('failed','imported','notified'))`, itemID, itemID).Scan(&busy); err != nil {
+			return err
+		}
+		if busy {
+			return fmt.Errorf("%w: use Re-match for installed files and finish active downloads first", ErrIdentityConflict)
+		}
+		merged = domain.ExternalIDs{}
+		if _, err = tx.ExecContext(ctx, `DELETE FROM media_aliases WHERE media_item_id=? AND role!='manual'`, itemID); err != nil {
+			return err
+		}
+		if _, err = tx.ExecContext(ctx, `DELETE FROM media_identity_sources WHERE media_item_id=?`, itemID); err != nil {
+			return err
+		}
+	}
 	if err := mergeExternalIDs(&merged, fresh.IDs); err != nil {
 		return err
 	}
@@ -377,13 +414,16 @@ func (d *DB) RefreshMediaItemMetadata(ctx context.Context, itemID int64, fresh d
 	if err := q.UpdateMediaExternalIDs(ctx, sqlitegen.UpdateMediaExternalIDsParams{TmdbID: merged.TMDB, ImdbID: merged.IMDB, TvdbID: merged.TVDB, UpdatedAt: now.UnixMilli(), ID: itemID}); err != nil {
 		return err
 	}
-	if stored.Title != "" && fresh.Title != "" && matcher.NormalizeTitle(stored.Title) != matcher.NormalizeTitle(fresh.Title) {
+	if oldID == 0 && stored.Title != "" && fresh.Title != "" && matcher.NormalizeTitle(stored.Title) != matcher.NormalizeTitle(fresh.Title) {
 		_, aliasErr := q.InsertMediaAlias(ctx, aliasParams(itemID, domain.TitleAlias{
 			Title: stored.Title, Source: "local", Scope: "work", Role: "historical", Searchable: true,
 		}))
 		if aliasErr != nil && !isConstraint(aliasErr) {
 			return aliasErr
 		}
+	}
+	if _, err = tx.ExecContext(ctx, `DELETE FROM metadata_match_issues WHERE item_id=?`, itemID); err != nil {
+		return err
 	}
 	if err := updateMediaItemMetadata(ctx, q, itemID, fresh); err != nil {
 		return err
@@ -392,6 +432,21 @@ func (d *DB) RefreshMediaItemMetadata(ctx context.Context, itemID int64, fresh d
 		return err
 	}
 	return tx.Commit()
+}
+
+// Enrichment fetched before a match correction cannot write facts for the old title.
+func checkHydratedMatch(ctx context.Context, tx *sql.Tx, id int64, expected []int64) error {
+	if len(expected) == 0 {
+		return nil
+	}
+	var tmdb int64
+	if err := tx.QueryRowContext(ctx, "SELECT tmdb_id FROM media_items WHERE id=?", id).Scan(&tmdb); err != nil {
+		return err
+	}
+	if tmdb != expected[0] {
+		return ErrIdentityConflict
+	}
+	return nil
 }
 
 func mergeExternalIDs(stored *domain.ExternalIDs, incoming domain.ExternalIDs) error {

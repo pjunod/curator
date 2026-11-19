@@ -365,3 +365,28 @@ func checkLateReplacementPublicationReplay(t *testing.T, directChildDelete bool)
 		t.Fatalf("late child publication queued an extra operation: %v", err)
 	}
 }
+
+func TestArchiveBlockedCleanupKeepsDeletionUnverified(t *testing.T) {
+	db, job, a := importControlFixture(t)
+	ctx := context.Background()
+	target := ActivityIdentity{ID: job.ID, GenerationKey: job.GenerationKey, Epoch: strconv.FormatInt(a.Epoch, 10)}
+	_, err := db.W.ExecContext(ctx, `INSERT INTO download_dispositions(download_id,generation_key,requested_at,state) VALUES(?,?,1,'blocked')`, job.ID, job.GenerationKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = db.ArchiveBlockedCleanup(ctx, target); err != nil {
+		t.Fatal(err)
+	}
+	requested, verified, err := db.DownloadDeletionStatus(ctx, job.ID, job.GenerationKey)
+	if err != nil || !requested || verified {
+		t.Fatalf("deletion fence: %v %v %v", requested, verified, err)
+	}
+	rows, err := db.ActivityIndex(ctx, "#"+strconv.FormatInt(job.ID, 10), false)
+	if err != nil || len(rows) != 1 || rows[0].DeletionState != "archived" {
+		t.Fatalf("archive projection: %+v %v", rows, err)
+	}
+	target.Epoch = "12"
+	if err = db.ArchiveBlockedCleanup(ctx, target); err == nil {
+		t.Fatal("accepted stale attempt")
+	}
+}

@@ -3830,6 +3830,14 @@ type OffloadRequest struct {
 // OffloadRequestScope item is the whole movie or show.
 type OffloadRequestScope string
 
+// OperatorIssue defines model for OperatorIssue.
+type OperatorIssue struct {
+	Id     int64  `json:"id"`
+	Kind   string `json:"kind"`
+	Reason string `json:"reason"`
+	Title  string `json:"title"`
+}
+
 // PathMapping defines model for PathMapping.
 type PathMapping struct {
 	// Local Same location as Monarr sees it.
@@ -3842,7 +3850,8 @@ type PathMapping struct {
 // PipelineSummary defines model for PipelineSummary.
 type PipelineSummary struct {
 	// HeldPublications Publications the environment is holding — a full or blocked library, completed storage unavailable or outside the configured roots, a manifest missing or unreadable. They wait (retried on the retry ladder, never ended by their deadline); each row says why.
-	HeldPublications int `json:"heldPublications"`
+	HeldPublications int              `json:"heldPublications"`
+	Issues           *[]OperatorIssue `json:"issues,omitempty"`
 
 	// OverdueRows Downloads older than their state's allowance (the pipeline:overdue health check).
 	OverdueRows int              `json:"overdueRows"`
@@ -5606,6 +5615,12 @@ type RemoveLibraryFileParams struct {
 	Search *bool `form:"search,omitempty" json:"search,omitempty"`
 }
 
+// RefreshLibraryItemJSONBody defines parameters for RefreshLibraryItem.
+type RefreshLibraryItemJSONBody struct {
+	PreviousTmdbId int64 `json:"previousTmdbId"`
+	TmdbId         int64 `json:"tmdbId"`
+}
+
 // SearchReleasesParams defines parameters for SearchReleases.
 type SearchReleasesParams struct {
 	Season  *int `form:"season,omitempty" json:"season,omitempty"`
@@ -5908,6 +5923,9 @@ type PreviewOffloadJSONRequestBody = OffloadRequest
 
 // ReacquireLibraryItemJSONRequestBody defines body for ReacquireLibraryItem for application/json ContentType.
 type ReacquireLibraryItemJSONRequestBody = OffloadRequest
+
+// RefreshLibraryItemJSONRequestBody defines body for RefreshLibraryItem for application/json ContentType.
+type RefreshLibraryItemJSONRequestBody RefreshLibraryItemJSONBody
 
 // StartRematchJSONRequestBody defines body for StartRematch for application/json ContentType.
 type StartRematchJSONRequestBody = RematchRequest

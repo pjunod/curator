@@ -26,6 +26,7 @@ import {
   posterUrl,
   RATING_SOURCE_LABELS,
   refreshLibraryItem,
+  searchMetadata,
   removeLibraryFile,
   resolveLibraryReviewFlag,
   ApiError,
@@ -1229,6 +1230,23 @@ export function MediaDetailPage() {
   const [editing, setEditing] = useState(search.assignFolder === true)
   const [importing, setImporting] = useState(false)
   const [rematching, setRematching] = useState(false)
+  const [matchQuery, setMatchQuery] = useState<string | null>(null)
+  const [matchSearch, setMatchSearch] = useState('')
+  const matches = useQuery({
+    queryKey: ['movie-match', matchSearch],
+    queryFn: () => searchMetadata('movie', matchSearch),
+    enabled: matchQuery !== null && !!matchSearch,
+  })
+  const correctMatch = useMutation({
+    mutationFn: (match: {previousTmdbId: number; tmdbId: number}) => refreshLibraryItem(Number(id), match),
+    onSuccess: () => {
+      setMatchQuery(null)
+      void qc.invalidateQueries({queryKey: ['library-item', id]})
+      void qc.invalidateQueries({queryKey: ['library']})
+      void qc.invalidateQueries({queryKey: ['pipeline']})
+      setAutoMsg('Metadata match updated.')
+    },
+  })
   // Offload… target: the title, one season or one episode.
   const [offloading, setOffloading] = useState<{ request: OffloadRequest; label: string; operation?: OffloadOperation } | null>(null)
   // Interactive search target: null = closed. copyId selects an additional
@@ -1460,7 +1478,7 @@ export function MediaDetailPage() {
       if (e.offloaded) offloadedEpisodes++
     }
   }
-  const showHasFiles = m.files.length > 0
+  const canOffload = (m.kind === 'movie' || m.kind === 'series') && (!m.offloaded || m.files.length > 0 || offloadedEpisodes < allEpisodes)
 
   return (
     <>
@@ -1608,7 +1626,10 @@ export function MediaDetailPage() {
             )}
             <button onClickCapture={focusActionTrigger} onClick={() => setImporting(true)}>Import file…</button>
             {m.files.length > 0 && <button onClickCapture={focusActionTrigger} onClick={() => setRematching(true)}>Re-match…</button>}
-            {(m.kind === 'movie' || m.kind === 'series') && showHasFiles && (
+            {m.kind === 'movie' && m.source === 'tmdb' && !m.files.length && <button onClickCapture={focusActionTrigger} onClick={() => {
+              correctMatch.reset(); setMatchQuery(m.title); setMatchSearch(m.title)
+            }}>Correct metadata match…</button>}
+            {canOffload && (
               <button onClickCapture={focusActionTrigger} title="Delete the files and keep the title; Re-acquire gets it back"
                 onClick={() => setOffloading({ request: { scope: 'item' }, label: m.title })}>Offload…</button>
             )}
@@ -1698,6 +1719,21 @@ export function MediaDetailPage() {
       )}
 
       {importing && <ImportFileDialog item={m} onClose={() => setImporting(false)} />}
+      {matchQuery !== null && <ActionDialog title={`Correct metadata match for ${m.title}`} onClose={() => setMatchQuery(null)}>
+        <p>Current TMDB movie ID {m.ids.tmdb}. Choose the movie to associate with this library entry.</p>
+        <form onSubmit={e => { e.preventDefault(); setMatchSearch(matchQuery.trim()) }}>
+          <label>Movie title <input value={matchQuery} onChange={e => setMatchQuery(e.target.value)} /></label>
+          <button disabled={!matchQuery.trim()}>Search TMDB</button>
+        </form>
+        {matches.isFetching && <p role="status">Searching…</p>}
+        {matches.error && <p role="alert">{matches.error.message}</p>}
+        {matches.data?.length === 0 && <p>No matching movies.</p>}
+        <ul>{matches.data?.filter(r => r.tmdbId > 0).map(r => <li key={r.tmdbId}>
+          {r.title} {r.year || ''} · TMDB {r.tmdbId}{' '}
+          <button disabled={r.inLibrary || r.tmdbId === m.ids.tmdb || correctMatch.isPending} onClick={() => correctMatch.mutate({previousTmdbId: m.ids.tmdb, tmdbId: r.tmdbId})}>{r.inLibrary ? 'In library' : 'Use this match'}</button>
+        </li>)}</ul>
+        {correctMatch.error && <p role="alert">{correctMatch.error.message}</p>}
+      </ActionDialog>}
       {rematching && <RematchDialog item={m} onClose={() => setRematching(false)} />}
       <OffloadOperations itemId={m.id} onOpen={(op) => setOffloading({
         request: { scope: op.scope, season: op.season, episodeId: op.episodeId },
@@ -1783,7 +1819,7 @@ export function MediaDetailPage() {
                           </button>
                         )}
                         <button onClickCapture={focusActionTrigger} onClick={() => setSearching({ season: s.number })}>Search pack</button>
-                        {have > 0 && <button onClickCapture={focusActionTrigger} onClick={() => setOffloading({ request: { scope: 'season', season: s.number }, label: `${m.title} · ${label}` })}>Offload…</button>}
+                        <button onClickCapture={focusActionTrigger} onClick={() => setOffloading({ request: { scope: 'season', season: s.number }, label: `${m.title} · ${label}` })}>Offload…</button>
                         {episodesOffloaded > 0 && <button className="btn-accent" disabled={reacq.isPending} onClick={() => reacq.mutate({ request: { scope: 'season', season: s.number }, label })}>Re-acquire {episodesOffloaded}</button>}
                       </>
                     )}
@@ -1847,12 +1883,10 @@ export function MediaDetailPage() {
                                   >
                                     Search
                                   </button>
-                                  {e.hasFile && (
-                                    <button onClickCapture={focusActionTrigger}
+                                  <button onClickCapture={focusActionTrigger}
                                       onClick={() => setOffloading({ request: { scope: 'episode', episodeId: e.id }, label: `${m.title} · ${e.seasonNumber}x${String(e.episodeNumber).padStart(2, '0')}` })}>
-                                      Offload…
-                                    </button>
-                                  )}
+                                    Offload…
+                                  </button>
                                 </>
                               )}
                             </td>

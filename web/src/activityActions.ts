@@ -2,7 +2,7 @@ import { ApiError, getActivity, type ImportActivityItem, type ImportActivityPage
 
 export type ActivityView = 'progress' | 'attention' | 'history'
 export type ActivityScope = 'all' | 'imports'
-export type ActivityActionKind = 'retry' | 'delete' | 'approve'
+export type ActivityActionKind = 'retry' | 'delete' | 'approve' | 'archive'
 export type ActivityIdentity = { id: number; generationKey: string; epoch: string }
 export type ActivityAction = {
   kind: ActivityActionKind | 'choose_files'

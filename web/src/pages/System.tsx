@@ -11,6 +11,7 @@ import {
   fmtRelative,
   getBackups,
   getConnections,
+  getCompletedInventory,
   getHealth,
   getPipeline,
   pipelineTile,
@@ -114,10 +115,12 @@ function ConnectionsCard() {
           {pipe.data.overdueRows > 0 && (
             <p className="pipeline-overdue">
               <span className="pill pill-warning">{pipe.data.overdueRows} overdue</span>{' '}
-              download(s) have outlived their state&apos;s allowance — see the
-              pipeline:overdue health check for which.
+              download or import records are past their deadline.
             </p>
           )}
+          {!!pipe.data.issues?.length && <ul id="affected-jobs">{pipe.data.issues.map(issue => <li key={`${issue.kind}-${issue.id}`}>
+            <a href={issue.kind === 'metadata' ? `/library/${issue.id}` : `/activity?job=${issue.id}#attention`}>{issue.title}</a> · {issue.reason}
+          </li>)}</ul>}
         </div>
       )}
       {rows.length === 0 ? (
@@ -201,6 +204,11 @@ export function SystemPage() {
   useEffect(() => { setTab(location.hash.replace(/^#/, '') === 'storage' ? 'storage' : 'diagnostics') }, [location.hash])
   const qc = useQueryClient()
   const health = useQuery({ queryKey: ['health'], queryFn: getHealth, refetchInterval: 30_000 })
+  const completed = useQuery({
+    queryKey: ['completed-inventory'], queryFn: getCompletedInventory,
+    enabled: tab === 'diagnostics' && !!health.data?.checks.some(check => check.name === 'completed-folders' && check.status === 'warning' && check.message?.includes('entries need attention')),
+    refetchInterval: 30_000,
+  })
   const tasks = useQuery({ queryKey: ['tasks'], queryFn: getTasks, refetchInterval: 5_000 })
   const backups = useQuery({ queryKey: ['backups'], queryFn: getBackups, refetchInterval: 60_000 })
   const { events, connected } = useEventStream()
@@ -242,7 +250,14 @@ export function SystemPage() {
                 <td>
                   <span className={`pill pill-${c.status}`}>{c.status}</span>
                 </td>
-                <td className="muted">{c.message ?? ''}</td>
+                <td className="muted">{c.message ?? ''} {c.status === 'warning' && c.name === 'pipeline:overdue' && <a href="#affected-jobs">View affected jobs</a>}
+                {c.status === 'warning' && c.name === 'completed-folders' && <>
+                  {completed.data?.roots.flatMap(root => root.entries.filter(entry => !['active','retained','storage'].includes(entry.status)).map(entry =>
+                    <div key={entry.path}>{entry.receipts?.length ? entry.receipts.map(receipt =>
+                      <a key={receipt.downloadId} href={`/activity?job=${receipt.downloadId}#attention`}>{receipt.title}</a>) : entry.path}
+                      {' · '}{fmtBytes(entry.bytes)} · {entry.reason}</div>))}
+                  <a href="/system#storage">Review storage</a>
+                </>}</td>
                 <td className="muted">{fmtRelative(c.checkedAt)}</td>
               </tr>
             ))}

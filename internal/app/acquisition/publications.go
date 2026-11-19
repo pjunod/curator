@@ -410,6 +410,10 @@ func (s *Service) runPublicationImport(ctx context.Context, dl sqlite.Download, 
 		s.returnPublication(ctx, &dl, pub, importErr.Error(), false)
 		return importErr
 	}
+	if importErr != nil && missingLibraryDestination(importErr, item, dl.CopyID) {
+		s.holdPublication(ctx, &dl, pub, "Library destination is missing. Restore or assign the folder, then retry import. "+importErr.Error())
+		return importErr
+	}
 	if importErr != nil && errors.Is(importErr, ErrImportBlocked) {
 		// The environment, not the payload: it waits, held, offered again on
 		// the retry ladder; no deadline ends it while this is its last stop.
@@ -474,6 +478,23 @@ func (s *Service) publicationSidecars(ctx context.Context, item domain.MediaItem
 		}
 	}
 	return s.decidePublicationSidecars(ctx, item, pub, m, placed, done, fresh)
+}
+
+// A missing source is handled by manifest verification. A missing library
+// path keeps the published source available for an operator to recover.
+func missingLibraryDestination(err error, item domain.MediaItem, copyID int64) bool {
+	var pathErr *os.PathError
+	if !errors.As(err, &pathErr) || !errors.Is(pathErr, os.ErrNotExist) {
+		return false
+	}
+	dest := item.Path
+	for _, c := range item.Copies {
+		if c.ID == copyID && c.Path != "" {
+			dest = c.Path
+			break
+		}
+	}
+	return filepath.IsAbs(dest) && within(dest, pathErr.Path)
 }
 
 // noManifestGrace is how long a publication directory may lack its

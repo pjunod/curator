@@ -1,5 +1,13 @@
 # Monarr — Project Status
 
+## Activity recovery and fileless titles · 0.53.1
+
+Activity can keep stopped jobs in History and retry an unpublished import
+after its destination disappears. System links warning records to the job or
+library item. Fileless titles support Offload, and fileless TMDB movies can
+be matched again from their detail page.
+
+
 ## Missing episode search recovery — 2026-11-13 · v0.51.2
 
 **Owner:** Codex · **Branch:** `codex/missing-episode-retry` · **State:** [PR #163](https://github.com/pjunod/curator/pull/163) open; independent review found no blockers; final local gates passed.

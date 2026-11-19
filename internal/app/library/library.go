@@ -1015,6 +1015,27 @@ func (s *Service) RefreshItem(ctx context.Context, id int64) (domain.MediaItem, 
 	return s.db.GetMediaItemFull(ctx, id)
 }
 
+func (s *Service) CorrectMovieMatch(ctx context.Context, id, oldID, newID int64) (domain.MediaItem, error) {
+	if oldID <= 0 || newID <= 0 || oldID == newID {
+		return domain.MediaItem{}, ErrInvalidExternalID
+	}
+	fresh, err := s.meta.GetMovie(ctx, newID)
+	if err != nil {
+		return domain.MediaItem{}, err
+	}
+	if fresh.IDs.TMDB != newID || fresh.Title == "" {
+		return domain.MediaItem{}, ErrInvalidExternalID
+	}
+	fresh.Source = "tmdb"
+	if err = s.db.ReplaceMovieMatch(ctx, id, oldID, fresh); err != nil {
+		return domain.MediaItem{}, err
+	}
+	if err = s.EnqueueIdentityRefresh(ctx, id, true); err != nil {
+		s.log.Warn("identity enrichment deferred after metadata correction", "id", id, "err", err)
+	}
+	return s.db.GetMediaItemFull(ctx, id)
+}
+
 // CopyRequest describes a new additional acquisition target for an item.
 type CopyRequest struct {
 	BookType         quality.BookType // required for a book edition; empty for video copies
@@ -1200,6 +1221,14 @@ func (s *Service) RefreshAll(ctx context.Context) error {
 				continue
 			}
 			s.log.Warn("library: refresh failed", "id", item.ID, "title", item.Title, "err", err)
+			var remote *ports.RemoteError
+			if errors.As(err, &remote) && remote.Category == ports.RemoteNotFound {
+				_, recordErr := s.db.W.ExecContext(ctx, `INSERT INTO metadata_match_issues(item_id,provider,provider_id) SELECT id,source,tmdb_id FROM media_items WHERE id=? AND source=? AND tmdb_id=? ON CONFLICT(item_id) DO UPDATE SET provider=excluded.provider,provider_id=excluded.provider_id`, item.ID, item.Source, item.IDs.TMDB)
+				if recordErr != nil {
+					return recordErr
+				}
+				continue
+			}
 			if firstErr == nil {
 				firstErr = fmt.Errorf("refreshing %q: %w", item.Title, err)
 			}

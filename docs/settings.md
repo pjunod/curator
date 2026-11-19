@@ -1007,7 +1007,7 @@ outside your LAN, because plain HTTP exposes the header in transit.
 | `backlog.search` | 12 h | active search for wanted items |
 | `library.reconcile` | 12 h | disk scan |
 | `importlists.sync` | 12 h | import list sync |
-| `metadata.refresh` | 12 h | re-hydrates every item from its provider: new episodes for continuing series, poster/status/**rating** updates |
+| `metadata.refresh` | 12 h | re-hydrates every item from its provider: new episodes for continuing series, poster/status/**rating** updates. A missing provider title appears on System with a link to its library entry. Other provider failures remain task errors. |
 | `backup.run` | 24 h | SQLite `VACUUM INTO` snapshot |
 | `db.wal-checkpoint` | 1 h | WAL checkpoint |
 
