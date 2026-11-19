@@ -23,6 +23,7 @@ type CompletedReceipt struct {
 	DeliveryManaged bool   `json:"deliveryManaged"`
 	// Internal custody can outlive the visible Activity row.
 	Dismissed bool `json:"-"`
+	Archived  bool `json:"archived,omitempty"`
 }
 
 func (d *DB) CompletedReceipts(ctx context.Context) ([]CompletedReceipt, error) {
@@ -45,7 +46,7 @@ func (d *DB) CompletedReceipts(ctx context.Context) ([]CompletedReceipt, error) 
 		0,
 		(EXISTS(SELECT 1 FROM downloads d WHERE d.generation_key=r.generation_key AND d.delivery_expected=1)
 		 OR EXISTS(SELECT 1 FROM publications p WHERE p.path = r.path))
-		,coalesce(d.media_item_id,0), coalesce(d.copy_id,0)
+		,coalesce(d.media_item_id,0), coalesce(d.copy_id,0), d.id IS NOT NULL AND d.id=r.download_id AND d.id IN (`+archivedDownloadIDs+`)
 		FROM completed_receipts r LEFT JOIN downloads d ON d.generation_key=r.generation_key
 		ORDER BY r.download_id, r.path, r.generation_key`)
 	if err != nil {
@@ -57,7 +58,7 @@ func (d *DB) CompletedReceipts(ctx context.Context) ([]CompletedReceipt, error) 
 		var r CompletedReceipt
 		if err := rows.Scan(&r.DownloadID, &r.Path, &r.ClientID, &r.Title, &r.State,
 			&r.Protocol, &r.PayloadRemoved, &r.Live, &r.Dismissed, &r.GenerationKey, &r.LegacyReview, &r.DeliveryManaged,
-			&r.MediaItemID, &r.CopyID); err != nil {
+			&r.MediaItemID, &r.CopyID, &r.Archived); err != nil {
 			return nil, err
 		}
 		// Held for review: the storage under the payload changed (a fence on

@@ -848,7 +848,7 @@ func (d *DB) ReturnPublicationUncounted(ctx context.Context, id int64, reason st
 // (the System page's pipeline tiles).
 func (d *DB) CountHeldPublications(ctx context.Context) (int, error) {
 	var n int
-	err := d.R.QueryRowContext(ctx, `SELECT COUNT(*) FROM publications WHERE state='discovered' AND last_stop='environment'`).Scan(&n)
+	err := d.R.QueryRowContext(ctx, `SELECT COUNT(*) FROM publications WHERE `+heldPublicationsWhere).Scan(&n)
 	return n, err
 }
 
@@ -1411,7 +1411,7 @@ func (d *DB) FailOverdueDownload(ctx context.Context, dl Download, reason string
 // past), legacy parked and superseded rows excepted.
 func (d *DB) CountOverdueDownloads(ctx context.Context, now time.Time) (int, error) {
 	var n int
-	err := d.R.QueryRowContext(ctx, `SELECT COUNT(*) FROM downloads WHERE state NOT IN ('imported','notified','failed') AND deadline_at>0 AND deadline_at<? AND superseded=0 AND parked_at=0`, now.UnixMilli()).Scan(&n)
+	err := d.R.QueryRowContext(ctx, `SELECT COUNT(*) FROM downloads WHERE `+overdueDownloadsWhere, now.UnixMilli()).Scan(&n)
 	return n, err
 }
 

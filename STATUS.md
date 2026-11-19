@@ -1,5 +1,9 @@
 # Monarr — Project Status
 
+## Archived import diagnostics · 0.53.3
+
+System excludes archived cleanup from held and overdue import counts. Storage shows retained bytes and links to the job in History.
+
 ## Completed Runner holds · 0.53.2
 
 Completed transfers retire their live controls and preserve the original hold in job history.

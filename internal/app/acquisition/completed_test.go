@@ -1004,3 +1004,40 @@ func TestLegacyReviewDeleteRefusesAnOrdinarySiblingDownload(t *testing.T) {
 		})
 	}
 }
+
+func TestArchivedPublicationKeepsMeasuredBytesInInventory(t *testing.T) {
+	svc, db, item, root := completedFixture(t)
+	ctx := context.Background()
+	path := filepath.Join(root, "episode")
+	writeCompleted(t, filepath.Join(path, "episode.mkv"), 15)
+	dl := insertImportable(t, db, item, path)
+	dl.State = "downloaded"
+	if err := db.UpdateDownloadHandoff(ctx, dl); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.InsertPublication(ctx, sqlite.PublicationWrite{DownloadID: dl.ID, Kind: "completed", Path: path, Generation: "delivery"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.W.ExecContext(ctx, "INSERT INTO download_dispositions(download_id,generation_key,requested_at,state) SELECT id,generation_key,1,'archived' FROM downloads WHERE id=?", dl.ID); err != nil {
+		t.Fatal(err)
+	}
+	check := func(status string, attention int) {
+		t.Helper()
+		if err := svc.ScanCompleted(ctx); err != nil {
+			t.Fatal(err)
+		}
+		inv, err := svc.CompletedInventory(ctx)
+		if err != nil || inv.Attention != attention {
+			t.Fatalf("inventory %+v, %v", inv, err)
+		}
+		entry := inventoryRoot(t, svc, root).Entries[0]
+		if entry.Bytes != 15 || entry.Status != status || !entry.DeliveryManaged || entry.WholeDeletable || !entry.Receipts[0].Archived {
+			t.Fatalf("entry %+v", entry)
+		}
+	}
+	check("retained", 0)
+	if err := os.Symlink("episode.mkv", filepath.Join(path, "link")); err != nil {
+		t.Fatal(err)
+	}
+	check("symlink", 1)
+}
