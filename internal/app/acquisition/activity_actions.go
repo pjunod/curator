@@ -285,16 +285,16 @@ func (s *Service) checkActivityReceipt(ctx context.Context, dl sqlite.Download, 
 		return fmt.Errorf("checking Runner receipt: %w", err)
 	}
 	if !found {
-		return fmt.Errorf("Runner has no receipt for this transfer. Inspect the original job in Runner")
+		return fmt.Errorf("no Runner receipt found for this transfer. Inspect the original job in Runner")
 	}
 	if adm.RequestToken != dl.Transfer || dl.Handle != "" && adm.JobID != dl.Handle ||
 		dl.RunnerInstanceID != "" && adm.RunnerInstanceID != dl.RunnerInstanceID ||
 		dl.RunnerAdmissionGeneration != "" && adm.Generation != dl.RunnerAdmissionGeneration {
-		return fmt.Errorf("Runner returned a receipt for a different job; inspect the original transfer")
+		return fmt.Errorf("receipt belongs to a different Runner job; inspect the original transfer")
 	}
 	terminal, ok := admissionTerminal(adm)
 	if !ok {
-		return fmt.Errorf("Runner has no terminal receipt yet. Use the hold instructions in Activity")
+		return fmt.Errorf("no terminal receipt from Runner yet. Use the hold instructions in Activity")
 	}
 	fact := ports.RunnerFact{Kind: ports.FactTerminal, Transfer: dl.Transfer, Handle: ports.Handle(adm.JobID), Terminal: &terminal, Source: "operator receipt check"}
 	if err := s.observe(ctx, dl, cfg, fact); err != nil {
