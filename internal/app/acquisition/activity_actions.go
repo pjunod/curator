@@ -98,7 +98,7 @@ func (s *Service) ActivityActions(ctx context.Context, dl sqlite.Download) (Acti
 			out.Reason = "This job uses an unsupported Runner control version."
 			out.Prerequisite = "Update Curator to understand this Runner version."
 		}
-		if control.Version == 1 && control.RetryPolicy == "resume_same_job" && !control.ManualPause {
+		if control.Version == 1 && !control.ManualPause && (control.RetryPolicy == "resume_same_job" || control.RetryPolicy == "scheduled_retry" || control.RetryPolicy == "reobserve_mount") {
 			out.Actions = append(out.Actions, ActivityAction{Kind: "retry", Label: "Retry", Enabled: true})
 		}
 		return out, nil
@@ -431,7 +431,7 @@ func (s *Service) deleteActivityJob(ctx context.Context, operation string, dl sq
 					}
 				}
 			}
-		} else if dl.Handle != "" {
+		} else {
 			if err := s.verifyExternalActivityAbsence(ctx, dl, client); err != nil {
 				return err
 			}
@@ -456,8 +456,7 @@ func (s *Service) deleteActivityJob(ctx context.Context, operation string, dl sq
 		// The persisted Delete authorizes this generation's manifest entries only.
 		// Per-file cleanup still checks the live manifest, source and mount identity.
 		if _, statErr := os.Lstat(pub.Path); errors.Is(statErr, os.ErrNotExist) {
-			_, e = s.cleanupPublicationLocked(withOperatorCleanup(ctx, "verifying prior job deletion"), pub.ID)
-			if e != nil {
+			if e = s.finishAbsentDispositionPublication(ctx, dl, pub); e != nil {
 				return e
 			}
 			continue
@@ -493,7 +492,7 @@ func (s *Service) deleteActivityJob(ctx context.Context, operation string, dl sq
 	}
 	// Manual imports grant read authority over their originals; deletion only
 	// owns Curator's scratch/publication. Originals are deliberately untouched.
-	if dl.Protocol != "manual" && dl.ClientID != 0 && len(pubs) == 0 && (dl.ImportPath != "" || dl.SavePath != "") && dl.RunnerOutcome == ports.OutcomeCompleted {
+	if dl.DeliveryExpected && dl.Protocol != "manual" && dl.ClientID != 0 && len(pubs) == 0 && (dl.ImportPath != "" || dl.SavePath != "") && dl.RunnerOutcome == ports.OutcomeCompleted {
 		return fmt.Errorf("the completed files have no verified publication manifest; reconnect Runner and retry discovery")
 	}
 	if e = s.db.VerifyDownloadDeletion(ctx, dl.ID, dl.GenerationKey, t.DispositionRevision); e != nil {
@@ -525,8 +524,11 @@ func (s *Service) reconcileActivityScratch(ctx context.Context, dl sqlite.Downlo
 			continue
 		}
 		targetCtx, release := s.lockImportTarget(ctx, p.ItemID)
-		if p.State == "prepared" {
-			s.reconcilePlacement(context.WithValue(targetCtx, activityDispositionContext{}, true), p)
+		if p.State == "prepared" || p.State == "retained" {
+			if reconcileErr := s.reconcilePlacement(context.WithValue(targetCtx, activityDispositionContext{}, true), p); reconcileErr != nil && !errors.Is(reconcileErr, errPlacementNotPublished) {
+				release()
+				return errors.Join(errActivityPending, reconcileErr)
+			}
 			fresh, readErr := s.db.GetPlacement(targetCtx, p.ID)
 			if readErr != nil {
 				release()
@@ -542,7 +544,10 @@ func (s *Service) reconcileActivityScratch(ctx context.Context, dl sqlite.Downlo
 		} else if _, backupErr := os.Lstat(p.Backup); p.Backup != "" && !errors.Is(backupErr, os.ErrNotExist) {
 			// Existing placement reconciliation preserves/recovers the prior Library
 			// file. We never reinterpret a backup as disposable download scratch.
-			s.reconcilePlacement(context.WithValue(targetCtx, activityDispositionContext{}, true), p)
+			if reconcileErr := s.reconcilePlacement(context.WithValue(targetCtx, activityDispositionContext{}, true), p); reconcileErr != nil && !errors.Is(reconcileErr, errPlacementNotPublished) {
+				release()
+				return errors.Join(errActivityPending, reconcileErr)
+			}
 			fresh, readErr := s.db.GetPlacement(targetCtx, p.ID)
 			if readErr != nil {
 				e = readErr
@@ -642,8 +647,12 @@ func (s *Service) verifyExternalActivityAbsence(ctx context.Context, dl sqlite.D
 	if err != nil {
 		return err
 	}
-	if _, present := matchStatus(dl, statuses); present {
-		return fmt.Errorf("delete this job and its data in the download client, then retry deletion here")
+	for _, st := range statuses {
+		// Duplicates and conflicting handle/transfer bindings are evidence of
+		// presence or ambiguity, never evidence that the owner has retired it.
+		if (dl.Transfer != "" && st.Transfer == dl.Transfer) || (dl.Handle != "" && string(st.Handle) == dl.Handle) {
+			return fmt.Errorf("delete this exact job and its data in the download client, then retry deletion here")
+		}
 	}
 	path := dl.ImportPath
 	if path == "" {

@@ -457,6 +457,16 @@ func TestActivityDeleteSeedsUnseenManifestAndReplaysMountedAbsence(t *testing.T)
 }
 
 func TestActivityDeleteRecoversPartialPackAndCinemaOutboxTogether(t *testing.T) {
+	t.Run("publication still present", func(t *testing.T) {
+		checkActivityDeleteRecoversPartialPackAndCinemaOutbox(t, false)
+	})
+	t.Run("historical publication already absent", func(t *testing.T) {
+		checkActivityDeleteRecoversPartialPackAndCinemaOutbox(t, true)
+	})
+}
+
+func checkActivityDeleteRecoversPartialPackAndCinemaOutbox(t *testing.T, alreadyAbsent bool) {
+	t.Helper()
 	f := setupV2(t, nil)
 	notifierID, err := f.db.AddNotifier(f.ctx, ports.NotifierConfig{
 		Type: "plurx", Name: "Cinema", Enabled: true, OnImport: true, Settings: map[string]string{"url": "http://cinema"},
@@ -472,9 +482,19 @@ func TestActivityDeleteRecoversPartialPackAndCinemaOutboxTogether(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	publicationID, err := f.db.InsertPublication(f.ctx, sqlite.PublicationWrite{
+	publication := sqlite.PublicationWrite{
 		DownloadID: dl.ID, Kind: "completed", Generation: pub.Generation, Path: pub.Path, Cohort: "live",
-	})
+	}
+	if alreadyAbsent {
+		manifest, err := os.ReadFile(filepath.Join(pub.Path, ports.ManifestFileName))
+		if err != nil {
+			t.Fatal(err)
+		}
+		publication.Cohort = "historical"
+		publication.Source = "file"
+		publication.ManifestJSON = string(manifest)
+	}
+	publicationID, err := f.db.InsertPublication(f.ctx, publication)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -505,6 +525,11 @@ func TestActivityDeleteRecoversPartialPackAndCinemaOutboxTogether(t *testing.T) 
 	if err != nil || fileID == 0 {
 		t.Fatalf("stage committed episode: id=%d err=%v", fileID, err)
 	}
+	if alreadyAbsent {
+		if err := os.RemoveAll(pub.Path); err != nil {
+			t.Fatal(err)
+		}
+	}
 	if n := f.count(`SELECT COUNT(*) FROM notifier_deliveries WHERE download_id=?`, dl.ID); n != 0 {
 		t.Fatalf("before aggregate recovery, got %d Cinema notifications", n)
 	}
@@ -523,7 +548,8 @@ func TestActivityDeleteRecoversPartialPackAndCinemaOutboxTogether(t *testing.T) 
 		t.Fatalf("fixture failed to interrupt aggregate recovery: %+v err=%v", blocked, err)
 	}
 	_, before := f.publicationFiles(pub.Path)
-	if before[firstName].Outcome == "placed" || before[secondName].Outcome == "discarded" || !exists(first) || !exists(second) {
+	if before[firstName].Outcome == "placed" || before[secondName].Outcome == "discarded" ||
+		exists(first) == alreadyAbsent || exists(second) == alreadyAbsent {
 		t.Fatalf("failed outbox write advanced file outcomes or deletion: %+v", before)
 	}
 	if _, err := f.db.W.ExecContext(f.ctx, `DROP TRIGGER fail_disposition_outbox`); err != nil {
@@ -546,6 +572,9 @@ func TestActivityDeleteRecoversPartialPackAndCinemaOutboxTogether(t *testing.T) 
 	if stored.State != "removed" || files[firstName].Outcome != "placed" || files[firstName].LibraryPath != destination ||
 		files[secondName].Outcome != "discarded" || exists(pub.Path) {
 		t.Fatalf("partial placement or remaining file resolution was lost: publication=%+v files=%+v", stored, files)
+	}
+	if alreadyAbsent && stored.CleanupApprovedAt.IsZero() {
+		t.Fatal("historical generation was retired without its cleanup approval")
 	}
 	if got, err := os.ReadFile(destination); err != nil || string(got) != "episode that placed" {
 		t.Fatalf("deletion changed the installed episode: %q err=%v", got, err)

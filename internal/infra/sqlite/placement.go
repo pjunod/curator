@@ -113,6 +113,31 @@ func (d *DB) UpdatePreparedPlacement(ctx context.Context, p Placement) error {
 	return nil
 }
 
+// UpdateObservedPlacement can reopen a retained journal only after the
+// coordinator proved its already-installed object. It grants no new writer.
+func (d *DB) UpdateObservedPlacement(ctx context.Context, p Placement) error {
+	if p.ID == "" || p.PublishedFileGeneration == "" || (p.State != "prepared" && p.State != "retained") {
+		return ErrPlacementGenerationChanged
+	}
+	p.State = "prepared"
+	raw, e := json.Marshal(p)
+	if e != nil {
+		return e
+	}
+	result, e := d.W.ExecContext(ctx, `UPDATE import_placements SET state='prepared',data=?,updated_at=? WHERE id=? AND state IN ('prepared','retained') AND json_extract(data,'$.source_generation')=? AND target=? AND COALESCE(json_extract(data,'$.import_attempt_epoch'),-1)=?`, string(raw), time.Now().UnixMilli(), p.ID, p.SourceGeneration, p.Target, placementEpoch(p))
+	if e != nil {
+		return e
+	}
+	n, e := result.RowsAffected()
+	if e != nil {
+		return e
+	}
+	if n != 1 {
+		return ErrPlacementGenerationChanged
+	}
+	return nil
+}
+
 func (d *DB) GetPlacement(ctx context.Context, id string) (Placement, error) {
 	var raw string
 	err := d.R.QueryRowContext(ctx, `SELECT data FROM import_placements WHERE id=?`, id).Scan(&raw)

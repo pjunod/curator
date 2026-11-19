@@ -1452,7 +1452,7 @@ func (d *DB) CountHistoricalPublications(ctx context.Context) (int, error) {
 // file gone and the directory perhaps left behind. The oldest-touched come
 // first so a publication that keeps failing cannot starve the rest.
 func (d *DB) PublicationsToSweep(ctx context.Context, limit int) ([]Publication, error) {
-	rows, err := d.R.QueryContext(ctx, `SELECT `+publicationColumns+` FROM publications WHERE state IN ('imported','notified','import_failed') AND (cohort='live' OR cleanup_approved_at>0) AND cleanup_paused_at=0
+	rows, err := d.R.QueryContext(ctx, `SELECT `+publicationColumns+` FROM publications WHERE state IN ('imported','notified','import_failed') AND (cohort='live' OR cleanup_approved_at>0 OR (cohort='historical' AND state='import_failed')) AND cleanup_paused_at=0
 		AND (EXISTS (SELECT 1 FROM publication_files f WHERE f.publication_id=publications.id AND f.removed_at=0 AND f.outcome IN ('placed','discarded','pending'))
 		     OR NOT EXISTS (SELECT 1 FROM publication_files f WHERE f.publication_id=publications.id AND f.removed_at=0))
 		ORDER BY updated_at, id LIMIT ?`, limit)

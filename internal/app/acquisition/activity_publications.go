@@ -2,8 +2,10 @@ package acquisition
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"time"
 
 	"github.com/pjunod/monarr/internal/infra/sqlite"
 	"github.com/pjunod/monarr/internal/ports"
@@ -26,11 +28,79 @@ func (s *Service) reconcileDispositionPublication(ctx context.Context, dl sqlite
 	if err = s.recordFileManifest(ctx, pub, m); err != nil {
 		return err
 	}
+	return s.reconcileDispositionManifest(ctx, dl, pub, m)
+}
+
+func (s *Service) finishAbsentDispositionPublication(ctx context.Context, dl sqlite.Download, pub sqlite.Publication) error {
+	// The caller has already verified the mount. Sync the observed absence
+	// before settling any file outcomes against the missing publication.
+	if err := syncRemovedPublicationParent(pub.Path); err != nil {
+		return err
+	}
+	if pub.State == "discovered" || pub.State == "importing" {
+		if pub.ManifestSource == "file" || pub.ManifestSource == "v1_record" {
+			var manifest ports.Manifest
+			if err := json.Unmarshal([]byte(pub.ManifestJSON), &manifest); err != nil {
+				return fmt.Errorf("the recorded publication manifest is invalid: %w", err)
+			}
+			manifest.Source = pub.ManifestSource
+			if err := verifyManifestShape(manifest, pub.Generation); err != nil {
+				return fmt.Errorf("the recorded publication manifest is invalid: %w", err)
+			}
+			if err := s.reconcileDispositionManifest(ctx, dl, pub, manifest); err != nil {
+				return err
+			}
+		} else {
+			// Without the manifest, a placement may still need its file outcome
+			// and notification. Preserve that work for a retry with the manifest.
+			var hasPlacement bool
+			if err := s.db.R.QueryRowContext(ctx, `SELECT EXISTS(
+				SELECT 1 FROM import_placements WHERE state IN ('committed','cleaned')
+				AND json_extract(data,'$.download_id')=? AND json_extract(data,'$.source_generation')=?
+				AND (json_extract(data,'$.source_payload_generation')=?
+					OR (COALESCE(json_extract(data,'$.source_payload_generation'),'')=''
+						AND instr(json_extract(data,'$.source'),?)=1)))`,
+				dl.ID, dl.GenerationKey, pub.Generation, filepath.Clean(pub.Path)+string(filepath.Separator)).Scan(&hasPlacement); err != nil {
+				return err
+			}
+			if hasPlacement {
+				return fmt.Errorf("the recorded publication manifest is needed to finish accounting for installed Library files")
+			}
+		}
+	}
+	result, err := s.db.W.ExecContext(ctx, `UPDATE publications SET
+		state=CASE WHEN state IN ('discovered','importing') THEN 'import_failed' ELSE state END,
+		cleanup_approved_at=CASE WHEN cohort='historical' AND cleanup_approved_at=0 THEN ? ELSE cleanup_approved_at END,
+		cleanup_paused_at=0 WHERE id=? AND download_id=? AND generation=?`,
+		time.Now().UnixMilli(), pub.ID, dl.ID, pub.Generation)
+	if err != nil {
+		return err
+	}
+	if n, err := result.RowsAffected(); err != nil {
+		return err
+	} else if n != 1 {
+		return fmt.Errorf("publication identity changed before cleanup")
+	}
+	cleanupCtx := context.WithValue(withOperatorCleanup(ctx, "verifying prior job deletion"), activityDispositionContext{}, true)
+	cleanup, err := s.cleanupPublicationLocked(cleanupCtx, pub.ID)
+	if err != nil {
+		return err
+	}
+	if cleanup.Skipped != "" && cleanup.Skipped != "already removed" {
+		return fmt.Errorf("cleanup stopped: %s", cleanup.Skipped)
+	}
+	if len(cleanup.Kept) > 0 {
+		return fmt.Errorf("cleanup could not verify every job file: %s", cleanup.Kept[0])
+	}
+	return nil
+}
+
+func (s *Service) reconcileDispositionManifest(ctx context.Context, dl sqlite.Download, pub sqlite.Publication, m ports.Manifest) error {
 	files := make([]sqlite.PublicationFile, 0, len(m.Files))
 	for _, f := range m.Files {
 		files = append(files, sqlite.PublicationFile{Path: f.Path, Bytes: f.Bytes, SHA256: f.SHA256})
 	}
-	if err = s.db.SeedPublicationFiles(ctx, pub.ID, files); err != nil {
+	if err := s.db.SeedPublicationFiles(ctx, pub.ID, files); err != nil {
 		return err
 	}
 	item, err := s.db.GetMediaItemFull(ctx, dl.MediaItemID)

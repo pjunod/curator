@@ -291,6 +291,8 @@ func (s *Service) cleanupPublicationLocked(ctx context.Context, publicationID in
 			return res, e
 		}
 		if !approved {
+			// Rotate ineligible historical rows through the bounded sweep too.
+			_, _ = s.db.W.ExecContext(ctx, `UPDATE publications SET updated_at=? WHERE id=?`, time.Now().UnixMilli(), pub.ID)
 			res.Skipped = ErrHistoricalCohort.Error()
 			return res, nil
 		}
@@ -519,6 +521,8 @@ func (s *Service) cleanupPublicationFile(ctx context.Context, pub sqlite.Publica
 		if size != expected.Bytes || actual != digest {
 			return fmt.Errorf("the source bytes do not match the manifest digest; nothing deleted")
 		}
+	} else if observed, _ := ctx.Value(activityDispositionContext{}).(bool); observed {
+		return fmt.Errorf("this legacy file has no recorded digest or object identity; its ownership cannot be verified for deletion")
 	} else {
 		s.log.Info("publication cleanup has no legacy source digest; checking size and identity", "publication", pub.ID, "file", f.Path)
 	}

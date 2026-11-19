@@ -168,6 +168,19 @@ func (d *DB) CreateActivityOperation(ctx context.Context, id, action string, pay
 			return ActivityOperation{}, e
 		}
 	}
+	if action == "delete" {
+		for _, target := range targets {
+			if target.State == "blocked" {
+				continue
+			}
+			_, e = tx.ExecContext(ctx, `WITH RECURSIVE obligations(id,generation) AS (
+ SELECT ?,? UNION SELECT r.child_id,r.child_generation FROM replacement_admissions r JOIN obligations p ON r.parent_id=p.id AND r.parent_generation=p.generation WHERE r.phase='cancel_pending')
+ INSERT INTO activity_disposition_links(download_id,generation_key,operation_id,target_id,target_generation) SELECT id,generation,?,?,? FROM obligations`, target.ID, target.GenerationKey, id, target.ID, target.GenerationKey)
+			if e != nil {
+				return ActivityOperation{}, e
+			}
+		}
+	}
 	jobPayload, _ := json.Marshal(map[string]string{"id": id})
 	if _, e = tx.ExecContext(ctx, `INSERT INTO jobs(kind,payload,priority,run_after,max_attempts,dedupe_key,created_at,updated_at) VALUES(?,?,10,?,1000000,?,?,?)`, ActivityActionJobKind, string(jobPayload), now, "activity:"+id, now, now); e != nil {
 		return ActivityOperation{}, e

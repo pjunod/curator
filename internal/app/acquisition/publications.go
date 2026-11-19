@@ -43,6 +43,16 @@ func (s *Service) publicationManifest(pub sqlite.Publication) (ports.Manifest, b
 			return m, false, fmt.Errorf("%w: %s is not a manifest: %v", errManifestInvalid, ports.ManifestFileName, err)
 		}
 		m.Source = "file"
+		// A new path list cannot replace an already recorded publication seal.
+		if pub.ManifestJSON != "" {
+			var recorded ports.Manifest
+			if e := json.Unmarshal([]byte(pub.ManifestJSON), &recorded); e == nil && recorded.Digest != "" {
+				liveDigest, e := ports.ManifestDigest(m.Files)
+				if e != nil || liveDigest != recorded.Digest {
+					return m, false, fmt.Errorf("%w: publication file list changed from its recorded seal", errManifestInvalid)
+				}
+			}
+		}
 		if err := verifyManifestShape(m, pub.Generation); err != nil {
 			return m, false, fmt.Errorf("%w: %v", errManifestInvalid, err)
 		}

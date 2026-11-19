@@ -1521,6 +1521,9 @@ func (s *Service) grab(ctx context.Context, req GrabRequest, manual bool) (int64
 			releaseAllocation()
 			return inserted.ID, nil
 		}
+	} else if origin := replacementGrabOwner(ctx); origin > 0 {
+		captured, _ := ctx.Value(replacementGrabOwnerKey{}).(replacementGrabOrigin)
+		inserted, err = s.db.InsertReplacementDownload(allocationCtx, download, origin, captured.Generation)
 	} else {
 		inserted, err = s.db.InsertDownloadRecord(allocationCtx, download)
 	}
@@ -1547,7 +1550,7 @@ func (s *Service) grab(ctx context.Context, req GrabRequest, manual bool) (int64
 	// moment later. The id is in the trace's first line because that is
 	// where someone starts reading when a transfer goes wrong.
 	dl := sqlite.Download{ID: id, GenerationKey: inserted.GenerationKey, MediaItemID: item.ID, ReleaseTitle: req.Title,
-		State: "grabbed", Transfer: transfer, Indexer: req.Indexer, Protocol: req.Protocol, ClientID: cfg.ID}
+		State: "grabbed", Transfer: transfer, Indexer: req.Indexer, Protocol: req.Protocol, ClientID: cfg.ID, Handoff: inserted.Handoff}
 	if inserted.State == "submitting" {
 		dl.State = "submitting"
 	}
@@ -1560,20 +1563,6 @@ func (s *Service) grab(ctx context.Context, req GrabRequest, manual bool) (int64
 		dl.Season = req.Season
 		dl.DeliveryExpected = inserted.DeliveryExpected
 		return s.resumeManualRequest(ctx, id)
-	}
-	if origin := replacementGrabOwner(ctx); origin > 0 {
-		original, e := s.db.GetDownload(ctx, origin)
-		if e != nil {
-			return id, e
-		}
-		generation := original.GenerationKey
-		if captured, ok := ctx.Value(replacementGrabOwnerKey{}).(replacementGrabOrigin); ok {
-			generation = captured.Generation
-		}
-		if e = s.db.RecordReplacementOrigin(ctx, origin, generation, inserted.ID, inserted.GenerationKey); e != nil {
-			_ = s.db.RejectDownloadSubmission(ctx, inserted.ID, inserted.GenerationKey, inserted.Transfer, e.Error())
-			return id, e
-		}
 	}
 
 	unlockDownload := s.lockDownload(id)

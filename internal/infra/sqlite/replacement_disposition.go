@@ -39,26 +39,50 @@ func bindReplacementAdmission(ctx context.Context, tx *sql.Tx, parentID int64, p
 	}
 	return nil
 }
-func (d *DB) BindReplacementAdmission(ctx context.Context, parentID int64, parentGen string, childID int64, childGen string) error {
-	tx, e := d.W.BeginTx(ctx, nil)
-	if e != nil {
-		return e
-	}
-	defer func() { _ = tx.Rollback() }()
-	if e = bindReplacementAdmission(ctx, tx, parentID, parentGen, childID, childGen); e != nil {
-		return e
-	}
-	return tx.Commit()
-}
 func (d *DB) CompleteReplacementAdmission(ctx context.Context, childID int64, childGen string) error {
 	_, e := d.W.ExecContext(ctx, `UPDATE replacement_admissions SET phase=CASE WHEN EXISTS(SELECT 1 FROM download_dispositions x WHERE x.download_id=parent_id AND x.generation_key=parent_generation) THEN 'cancel_pending' ELSE 'admitted' END WHERE child_id=? AND child_generation=? AND phase='admitting'`, childID, childGen)
 	return e
 }
 
-func (d *DB) RecordReplacementOrigin(ctx context.Context, parentID int64, parentGen string, childID int64, childGen string) error {
-	if e := d.BindReplacementAdmission(ctx, parentID, parentGen, childID, childGen); e != nil {
-		return e
+// InsertReplacementDownload makes the submitting intent and the parent's
+// obligation visible together, even when a worker restarts before remote Add.
+func (d *DB) InsertReplacementDownload(ctx context.Context, dl Download, parentID int64, parentGen string) (Download, error) {
+	params, err := downloadInsertParams(dl)
+	if err != nil {
+		return Download{}, err
 	}
-	_, e := d.W.ExecContext(ctx, `UPDATE downloads SET handoff_log=json_insert(handoff_log,'$[#]',json_object('step','replacement_linked','at',?,'detail',?)) WHERE id=? AND generation_key=? AND NOT EXISTS(SELECT 1 FROM json_each(handoff_log) h WHERE json_extract(h.value,'$.step')='replacement_linked')`, time.Now().UnixMilli(), fmt.Sprintf("Replacement for acquisition attempt %d", parentID), childID, childGen)
-	return e
+	tx, err := d.W.BeginTx(ctx, nil)
+	if err != nil {
+		return Download{}, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if parentGen == "" {
+		err = tx.QueryRowContext(ctx, `SELECT generation_key FROM downloads WHERE id=?`, parentID).Scan(&parentGen)
+		if errors.Is(err, sql.ErrNoRows) {
+			return Download{}, ErrParentDispositionRequested
+		}
+		if err != nil {
+			return Download{}, err
+		}
+	}
+	q := d.Write.WithTx(tx)
+	childID, err := q.InsertDownload(ctx, params)
+	if err != nil {
+		return Download{}, err
+	}
+	if err = bindReplacementAdmission(ctx, tx, parentID, parentGen, childID, params.GenerationKey); err != nil {
+		return Download{}, err
+	}
+	if _, err = tx.ExecContext(ctx, `UPDATE downloads SET handoff_log=json_insert(handoff_log,'$[#]',json_object('step','replacement_linked','at',?,'detail',?)) WHERE id=? AND generation_key=?`,
+		time.Now().UnixMilli(), fmt.Sprintf("Replacement for acquisition attempt %d", parentID), childID, params.GenerationKey); err != nil {
+		return Download{}, err
+	}
+	row, err := q.GetDownload(ctx, childID)
+	if err != nil {
+		return Download{}, err
+	}
+	if err = tx.Commit(); err != nil {
+		return Download{}, err
+	}
+	return downloadFromRow(row), nil
 }

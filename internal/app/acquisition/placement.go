@@ -1274,72 +1274,80 @@ func (s *Service) reconcilePlacements(ctx context.Context) {
 		// (or moved) the row while this pass waited for it.
 		p, e := s.db.GetPlacement(targetCtx, row.ID)
 		if e == nil && (p.State == "prepared" || p.State == "committed") {
-			s.reconcilePlacement(targetCtx, p)
+			if err := s.reconcilePlacement(targetCtx, p); err != nil && !errors.Is(err, errPlacementNotPublished) {
+				s.log.Warn("placement reconciliation pending", "id", p.ID, "err", err)
+			}
 		}
 		releaseTarget()
 	}
 }
 
 // reconcilePlacement settles one journal row; the caller holds its title.
-func (s *Service) reconcilePlacement(ctx context.Context, p sqlite.Placement) {
+var errPlacementNotPublished = errors.New("the staged object is not installed at the target")
+
+func (s *Service) reconcilePlacement(ctx context.Context, p sqlite.Placement) error {
+	observed, _ := ctx.Value(activityDispositionContext{}).(bool)
 	if p.State == "committed" {
-		if e := s.cleanupPlacement(ctx, p); e != nil {
-			s.log.Warn("placement cleanup pending", "id", p.ID, "err", e)
-		}
-		return
+		return s.cleanupPlacement(ctx, p)
 	}
-	if superseded, e := s.db.IsSupersededStage(ctx, p.ID); e == nil && superseded {
+	if superseded, e := s.db.IsSupersededStage(ctx, p.ID); !observed && e == nil && superseded {
 		s.sweepSupersededStage(ctx, p, true)
-		return
+		return nil
 	}
 	var recovery RecoveryImport
 	var recoveryObservation string
 	if p.RecoveryImport != "" {
 		r, e := s.RecoveryImport(ctx, p.RecoveryImport)
 		if e != nil {
-			return
+			return e
 		}
 		recovery = r
-		if r.State == "cancel_pending" || r.State == "cancelled" {
+		if !observed && (r.State == "cancel_pending" || r.State == "cancelled") {
 			if e = s.rollbackPlacement(ctx, p); e != nil {
 				s.log.Warn("cancelled placement needs reconciliation", "id", p.ID, "err", e)
 			}
-			return
+			return nil
 		}
 		recoveryObservation, e = s.recoveryFinalObservation(ctx, r)
 		if e != nil {
-			return
+			return e
 		}
 		if e = s.validateRecoveryTarget(ctx, r); e != nil {
-			return
+			return e
 		}
 	}
 	// Reconcile only already published bytes. An old unplaced intention cannot
 	// replace a newer library file merely because the daemon restarted.
 	info, statErr := os.Lstat(p.Target)
+	if errors.Is(statErr, os.ErrNotExist) {
+		return errPlacementNotPublished
+	}
 	if statErr != nil {
-		return
+		return statErr
 	}
 	generation := deliveryFileGeneration(info)
 	if !placementPublishedByIdentity(p, info) {
 		if !legacyPlacementIdentitySnapshot(p) || !info.Mode().IsRegular() {
-			return
+			return errPlacementNotPublished
 		}
 		// A journal from before stage identities were recorded can only be
 		// matched by its digest.
 		got, _, g, e := fileDigestSnapshot(ctx, p.Target)
-		if e != nil || got != p.SHA256 || !publishedPlacementMatchesIntent(p, info, g, true) {
-			return
+		if e != nil {
+			return e
+		}
+		if got != p.SHA256 || !publishedPlacementMatchesIntent(p, info, g, true) {
+			return errPlacementNotPublished
 		}
 		generation = g
 	}
 	if e := syncPath(p.Target); e != nil {
-		return
+		return e
 	}
 	p.PublishedFileGeneration = generation
 	storage, parentIdentity, identityErr := placementParentIdentity(p.Target)
 	if identityErr != nil {
-		return
+		return identityErr
 	}
 	if p.StorageIdentity == "" {
 		p.StorageIdentity = storage
@@ -1353,15 +1361,20 @@ func (s *Service) reconcilePlacement(ctx context.Context, p sqlite.Placement) {
 	if p.TargetParentIdentity == "" {
 		p.TargetParentIdentity = parentIdentity
 	}
-	if e := s.db.UpdatePreparedPlacement(ctx, p); e != nil {
-		return
+	update := s.db.UpdatePreparedPlacement
+	if observed {
+		update = s.db.UpdateObservedPlacement
 	}
+	if e := update(ctx, p); e != nil {
+		return e
+	}
+	p.State = "prepared"
 	decisionCtx, release := s.lockStorageDecision(ctx)
 	if p.RecoveryImport != "" {
 		currentObservation, observeErr := s.recoveryFinalObservation(decisionCtx, recovery)
 		if observeErr != nil || currentObservation != recoveryObservation {
 			release()
-			return
+			return fmt.Errorf("recovery observation changed during placement reconciliation")
 		}
 	}
 	current, statErr := os.Lstat(p.Target)
@@ -1370,11 +1383,11 @@ func (s *Service) reconcilePlacement(ctx context.Context, p sqlite.Placement) {
 		deliveryFileGeneration(current) != p.PublishedFileGeneration || storage != p.StorageIdentity ||
 		parentIdentity != p.TargetParentIdentity || parentIdentity != p.StorageRootIdentity {
 		release()
-		return
+		return fmt.Errorf("installed placement identity changed before metadata adoption")
 	}
 	if e := syncPublicationDirectory(p.Target); e != nil {
 		release()
-		return
+		return e
 	}
 	commit := s.db.CommitPlacement
 	if observed, _ := ctx.Value(activityDispositionContext{}).(bool); observed {
@@ -1383,10 +1396,9 @@ func (s *Service) reconcilePlacement(ctx context.Context, p sqlite.Placement) {
 	_, e := commit(decisionCtx, p)
 	release()
 	if e != nil {
-		s.log.Error("placement commit remains pending", "id", p.ID, "err", e)
-	} else if e = s.cleanupPlacement(ctx, p); e != nil {
-		s.log.Warn("placement cleanup pending", "id", p.ID, "err", e)
+		return e
 	}
+	return s.cleanupPlacement(ctx, p)
 }
 
 // A previous rename is not evidence that its fsync succeeded. Recovery repeats

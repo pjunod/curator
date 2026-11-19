@@ -169,6 +169,13 @@ func (s *Server) GetActivityJobLog(w http.ResponseWriter, r *http.Request, id in
 		s.acqErr(w, e)
 		return
 	}
+	if dl.Error != "" {
+		message := dl.Error
+		if len(message) > 8192 {
+			message = message[:8192] + "…"
+		}
+		events = append(events, event{dl.UpdatedAt.UTC().Format(time.RFC3339Nano), "recorded job error", message})
+	}
 	for _, h := range dl.Handoff {
 		events = append(events, event{time.UnixMilli(h.At).UTC().Format(time.RFC3339Nano), strings.ReplaceAll(h.Step, "_", " "), h.Detail})
 	}

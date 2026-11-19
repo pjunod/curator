@@ -11,6 +11,14 @@ CREATE TABLE activity_operation_targets (
  generation_key TEXT NOT NULL, state TEXT NOT NULL, payload TEXT NOT NULL,
  PRIMARY KEY(operation_id,download_id)
 );
+-- A bulk member also owns unacknowledged descendants. Late publications
+-- replay that original member without changing the user's frozen selection.
+CREATE TABLE activity_disposition_links (
+ download_id INTEGER NOT NULL,generation_key TEXT NOT NULL,
+ operation_id TEXT NOT NULL REFERENCES activity_operations(id),
+ target_id INTEGER NOT NULL,target_generation TEXT NOT NULL,
+ PRIMARY KEY(download_id,generation_key,operation_id,target_id)
+);
 CREATE TABLE activity_action_events (
  id INTEGER PRIMARY KEY, operation_id TEXT NOT NULL, download_id INTEGER NOT NULL,
  generation_key TEXT NOT NULL, at INTEGER NOT NULL, step TEXT NOT NULL, message TEXT NOT NULL
@@ -44,10 +52,13 @@ CREATE TRIGGER dispose_late_publication AFTER INSERT ON publications
 WHEN EXISTS(SELECT 1 FROM download_dispositions x JOIN downloads d ON d.id=x.download_id AND d.generation_key=x.generation_key WHERE d.id=NEW.download_id)
 BEGIN
  UPDATE download_dispositions SET revision=revision+1,verified_at=0,state='requested',message='Finishing deletion of a late publication' WHERE download_id=NEW.download_id AND generation_key=(SELECT generation_key FROM downloads WHERE id=NEW.download_id);
- UPDATE activity_operation_targets SET state='pending',payload=json_set(payload,'$.state','pending','$.message','Cleaning a late publication') WHERE download_id=NEW.download_id AND generation_key=(SELECT generation_key FROM downloads WHERE id=NEW.download_id) AND operation_id=(SELECT o.id FROM activity_operations o WHERE o.action='delete' AND EXISTS(SELECT 1 FROM activity_operation_targets t WHERE t.operation_id=o.id AND t.download_id=NEW.download_id AND t.generation_key=(SELECT generation_key FROM downloads WHERE id=NEW.download_id)) ORDER BY o.created_at DESC LIMIT 1);
- UPDATE activity_operations SET updated_at=updated_at+1 WHERE id=(SELECT o.id FROM activity_operations o WHERE o.action='delete' AND EXISTS(SELECT 1 FROM activity_operation_targets t WHERE t.operation_id=o.id AND t.download_id=NEW.download_id AND t.generation_key=(SELECT generation_key FROM downloads WHERE id=NEW.download_id)) ORDER BY o.created_at DESC LIMIT 1);
+ UPDATE download_dispositions SET revision=revision+1,verified_at=0,state='requested',message='Finishing deletion of a replacement publication'
+ WHERE (download_id,generation_key) IN (SELECT target_id,target_generation FROM activity_disposition_links WHERE download_id=NEW.download_id AND generation_key=(SELECT generation_key FROM downloads WHERE id=NEW.download_id) AND target_id!=NEW.download_id);
+ UPDATE activity_operation_targets SET state='pending',payload=json_set(payload,'$.state','pending','$.message','Cleaning a late publication')
+ WHERE (operation_id,download_id,generation_key) IN (SELECT l.operation_id,l.target_id,l.target_generation FROM activity_disposition_links l WHERE l.download_id=NEW.download_id AND l.generation_key=(SELECT generation_key FROM downloads WHERE id=NEW.download_id) AND l.operation_id=(SELECT l2.operation_id FROM activity_disposition_links l2 JOIN activity_operations o2 ON o2.id=l2.operation_id WHERE l2.download_id=l.download_id AND l2.generation_key=l.generation_key ORDER BY o2.created_at DESC,o2.id DESC LIMIT 1));
+ UPDATE activity_operations SET updated_at=updated_at+1 WHERE id IN (SELECT l.operation_id FROM activity_disposition_links l WHERE l.download_id=NEW.download_id AND l.generation_key=(SELECT generation_key FROM downloads WHERE id=NEW.download_id) AND EXISTS(SELECT 1 FROM activity_operation_targets t WHERE t.operation_id=l.operation_id AND t.download_id=l.target_id AND t.state='pending'));
  INSERT OR IGNORE INTO jobs(kind,payload,priority,run_after,max_attempts,dedupe_key,created_at,updated_at)
- SELECT 'activity.action',json_object('id',o.id),10,0,1000000,'activity:'||o.id,o.created_at,o.created_at FROM activity_operations o WHERE o.action='delete' AND EXISTS(SELECT 1 FROM activity_operation_targets t WHERE t.operation_id=o.id AND t.download_id=NEW.download_id AND t.generation_key=(SELECT generation_key FROM downloads WHERE id=NEW.download_id)) ORDER BY o.created_at DESC LIMIT 1;
+ SELECT 'activity.action',json_object('id',o.id),10,0,1000000,'activity:'||o.id,o.updated_at,o.updated_at FROM activity_operations o WHERE EXISTS(SELECT 1 FROM activity_disposition_links l JOIN activity_operation_targets t ON t.operation_id=l.operation_id AND t.download_id=l.target_id WHERE l.download_id=NEW.download_id AND l.generation_key=(SELECT generation_key FROM downloads WHERE id=NEW.download_id) AND l.operation_id=o.id AND t.state='pending');
 END;
 -- +goose StatementEnd
 -- Keep unresolved action authority even when ordinary history expires.
@@ -116,6 +127,7 @@ DROP TRIGGER dispose_late_publication;
 DROP TRIGGER fence_deleted_publication;
 DROP TRIGGER suppress_deleted_replacement;
 DROP TABLE replacement_admissions;
+DROP TABLE activity_disposition_links;
 DROP TABLE activity_action_events;
 DROP TABLE activity_operation_targets;
 DROP TABLE download_dispositions;
