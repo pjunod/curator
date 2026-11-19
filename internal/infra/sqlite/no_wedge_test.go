@@ -194,3 +194,46 @@ func TestHeldIsOnlyWhileDiscovered(t *testing.T) {
 		t.Fatal("a hold was reported ended twice")
 	}
 }
+
+func TestArchivedImportDiagnostics(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+	exec := func(query string) {
+		t.Helper()
+		if _, err := db.W.ExecContext(ctx, query); err != nil {
+			t.Fatal(err)
+		}
+	}
+	exec("INSERT INTO media_items(id,kind,title,sort_title,added_at,updated_at) VALUES(1,'movie','M','m',0,0)")
+	exec("INSERT INTO downloads(id,media_item_id,protocol,release_title,state,added_at,updated_at,import_path,deadline_at) VALUES(1,1,'usenet','r','downloaded',1,1,'/completed/m',1)")
+	_, err := db.InsertPublication(ctx, PublicationWrite{DownloadID: 1, Kind: "completed", Path: "/completed/m", Generation: "g"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	exec("UPDATE publications SET last_stop='environment',deadline_at=1")
+	check := func(want int, archived bool) {
+		t.Helper()
+		now := time.Now()
+		if n, err := db.OverdueCount(ctx, now.UnixMilli()); err != nil || n != 2*want {
+			t.Fatalf("overdue %d, %v", n, err)
+		}
+		if rows, err := db.OverdueRows(ctx, now.UnixMilli(), 10); err != nil || len(rows) != 2*want {
+			t.Fatalf("overdue details %v, %v", rows, err)
+		}
+		if n, err := db.CountHeldPublications(ctx); err != nil || n != want {
+			t.Fatalf("held %d, %v", n, err)
+		}
+		if rows, err := db.OperatorIssues(ctx, now); err != nil || len(rows) != want {
+			t.Fatalf("issues %v, %v", rows, err)
+		}
+		if rows, err := db.CompletedReceipts(ctx); err != nil || len(rows) != 1 || rows[0].Archived != archived {
+			t.Fatalf("storage receipts %v, %v", rows, err)
+		}
+	}
+	exec("INSERT INTO download_dispositions(download_id,generation_key,state,requested_at) VALUES(1,'old-generation','archived',1)")
+	check(1, false)
+	exec("INSERT INTO download_dispositions(download_id,generation_key,state,requested_at) SELECT id,generation_key,'archived',1 FROM downloads")
+	check(0, true)
+	exec("UPDATE download_dispositions SET state='blocked'")
+	check(1, false)
+}

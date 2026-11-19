@@ -123,8 +123,15 @@ type OverdueRow struct {
 // passed, plus a publication still discovered/importing past its deadline.
 // A legacy-client row parked or superseded for an operator waits on a person
 // (like awaiting_import) and has no deadline until M4 retires the fence.
-const overdueDownloadsWhere = `state NOT IN ('imported','notified','failed') AND deadline_at>0 AND deadline_at<?1 AND superseded=0 AND parked_at=0`
-const overduePublicationsWhere = `state IN ('discovered','importing') AND download_id IS NOT NULL AND deadline_at>0 AND deadline_at<?1`
+// An archived cleanup keeps custody records, but its import is closed.
+const archivedDownloadIDs = `SELECT d.id FROM downloads d JOIN download_dispositions x
+ ON x.download_id=d.id AND x.generation_key=d.generation_key WHERE x.state='archived'`
+
+const reportPublication = `(download_id IS NULL OR download_id NOT IN (` + archivedDownloadIDs + `))`
+const heldPublicationsWhere = `state='discovered' AND last_stop='environment' AND ` + reportPublication
+
+const overdueDownloadsWhere = `state NOT IN ('imported','notified','failed') AND deadline_at>0 AND deadline_at<?1 AND superseded=0 AND parked_at=0 AND id NOT IN (` + archivedDownloadIDs + `)`
+const overduePublicationsWhere = `state IN ('discovered','importing') AND download_id IS NOT NULL AND deadline_at>0 AND deadline_at<?1 AND ` + reportPublication
 
 // OverdueCount counts overdue downloads and publications.
 func (d *DB) OverdueCount(ctx context.Context, nowMs int64) (n int, err error) {
@@ -166,7 +173,7 @@ func (d *DB) OperatorIssues(ctx context.Context, now time.Time) ([]OperatorIssue
 	rows, err := d.R.QueryContext(ctx, `WITH affected(id,reason) AS (
     SELECT id,'Download overdue' FROM downloads WHERE `+overdueDownloadsWhere+`
     UNION SELECT download_id,'Import overdue' FROM publications WHERE `+overduePublicationsWhere+`
-    UNION SELECT download_id,'Import held: ' || error FROM publications WHERE state='discovered' AND last_stop='environment'
+    UNION SELECT download_id,'Import held: ' || error FROM publications WHERE `+heldPublicationsWhere+`
  )
  SELECT d.id,'job',d.release_title,group_concat(a.reason,' · ') FROM affected a JOIN downloads d ON d.id=a.id GROUP BY d.id
  UNION ALL SELECT m.id,'metadata',m.title,'Metadata provider could not find this title' FROM metadata_match_issues i JOIN media_items m ON m.id=i.item_id

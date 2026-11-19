@@ -574,6 +574,13 @@ func classifyPublication(e *CompletedEntry, pub sqlite.Publication) {
 		e.Status, e.Reason = "retained", "Contains or lies inside publication "+pub.Path+"; its files leave only by their recorded outcome"
 		return
 	}
+	if (pub.State == "discovered" || pub.State == "importing") && !e.LegacyReview && len(e.Receipts) == 1 {
+		receipt := e.Receipts[0]
+		if receipt.Archived && receipt.DownloadID == pub.DownloadID && filepath.Clean(receipt.Path) == filepath.Clean(e.Path) {
+			e.Status, e.Reason = "retained", fmt.Sprintf("Files kept when job #%d moved to History. Open the job to retry cleanup.", pub.DownloadID)
+			return
+		}
+	}
 	switch {
 	case pub.Cohort == "historical" && pub.CleanupApprovedAt.IsZero():
 		e.Status, e.Reason = "retained", "Historical publication (frozen at the pipeline v2 cutover); nothing deletes it until its review batch is approved"

@@ -1951,7 +1951,7 @@ The server keeps processing accepted actions after you close the app.
 
 Choose **Move selected to History (keep files)** to clear stopped jobs from
 Needs attention. History keeps the job log. A blocked deletion keeps its
-cleanup record and can be retried from History. Moving a job to History
+cleanup record and can be retried from History. System drops its held and overdue import warnings. After the next completed-folder scan, System → Storage shows the retained download and links back to the job. Moving a job to History
 changes its visibility. Use **Delete selected** to request file removal.
 
 If an import stopped because its destination filled up, free space and use
