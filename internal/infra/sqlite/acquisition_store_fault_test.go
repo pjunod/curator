@@ -126,8 +126,11 @@ func TestAcquisitionStoreWriteFailuresAreReportedAndAtomic(t *testing.T) {
 			_, err := f.db.CommitManualImportAdmission(ctx, Download{MediaItemID: f.item, ReleaseTitle: "Store.Manual", Protocol: "usenet", State: "importing", ImportPath: "/completed/manual", Handoff: []HandoffEntry{{Step: "manual", At: 1}}})
 			return err
 		}},
-		"control": {run: func(f acquisitionStoreFixture) error {
+		"control": {setup: func(f acquisitionStoreFixture) error {
+			return f.db.UpdateDownloadState(ctx, f.stopped.ID, "downloading", 0, "")
+		}, run: func(f acquisitionStoreFixture) error {
 			d := f.stopped
+			d.State = "downloading"
 			d.RunnerControl = "paused"
 			return f.db.UpdateDownloadControl(ctx, d)
 		}},
