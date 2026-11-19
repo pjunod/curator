@@ -13,6 +13,8 @@ import (
 // ErrWantedSearchActive means an equivalent active run already exists.
 var ErrWantedSearchActive = errors.New("wanted search already active")
 
+var ErrWantedSearchRequestConflict = errors.New("wanted search request ID already used with different inputs")
+
 // WantedSearchRun is the durable progress row. Times use time.Time at the
 // boundary even though SQLite stores Unix milliseconds.
 type WantedSearchRun struct {
@@ -65,6 +67,49 @@ func (d *DB) CreateWantedSearch(ctx context.Context, r WantedSearchRun, targets 
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
+	if err := insertWantedSearch(ctx, tx, r, targets); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// AcceptWantedSearch records the replay key with the accepted run, even when
+// this request joins an equivalent run started by another caller.
+func (d *DB) AcceptWantedSearch(ctx context.Context, r WantedSearchRun, targets []WantedSearchTarget, requestID string) (string, bool, error) {
+	tx, err := d.W.BeginTx(ctx, nil)
+	if err != nil {
+		return "", false, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if requestID != "" {
+		saved, err := wantedSearchByRequest(ctx, tx, requestID, r)
+		if err == nil {
+			return saved.RunID, false, nil
+		}
+		if !errors.Is(err, ErrNotFound) {
+			return "", false, err
+		}
+	}
+	err = insertWantedSearch(ctx, tx, r, targets)
+	created := err == nil
+	if errors.Is(err, ErrWantedSearchActive) {
+		active, lookupErr := matchingWantedSearch(ctx, tx, r.Scope, r.Reason, r.MediaItemID, r.WantableID, r.TargetDelay)
+		if lookupErr != nil {
+			return "", false, lookupErr
+		}
+		r.RunID = active.RunID
+	} else if err != nil {
+		return "", false, err
+	}
+	if requestID != "" {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO wanted_search_requests(request_id, run_id) VALUES (?, ?)`, requestID, r.RunID); err != nil {
+			return "", false, err
+		}
+	}
+	return r.RunID, created, tx.Commit()
+}
+
+func insertWantedSearch(ctx context.Context, tx *sql.Tx, r WantedSearchRun, targets []WantedSearchTarget) error {
 	inserted, err := tx.ExecContext(ctx, `INSERT INTO wanted_search_runs (
         run_id, scope, reason, media_item_id, wantable_id, scope_label, status,
         created_at, target_delay_ms, selected, next_ready_at
@@ -92,7 +137,29 @@ func (d *DB) CreateWantedSearch(ctx context.Context, r WantedSearchRun, targets 
 			return err
 		}
 	}
-	return tx.Commit()
+	return nil
+}
+
+type wantedSearchQueryer interface {
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}
+
+func (d *DB) WantedSearchByRequest(ctx context.Context, requestID string, input WantedSearchRun) (WantedSearchRun, error) {
+	return wantedSearchByRequest(ctx, d.R, requestID, input)
+}
+
+func wantedSearchByRequest(ctx context.Context, q wantedSearchQueryer, requestID string, input WantedSearchRun) (WantedSearchRun, error) {
+	row := q.QueryRowContext(ctx, `SELECT `+wantedRunColumns+` FROM wanted_search_runs
+        WHERE run_id = (SELECT run_id FROM wanted_search_requests WHERE request_id = ?)`, requestID)
+	r, err := scanWantedRun(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return r, ErrNotFound
+	}
+	if err == nil && (r.Scope != input.Scope || r.Reason != input.Reason || r.MediaItemID != input.MediaItemID ||
+		r.WantableID != input.WantableID || r.TargetDelay != input.TargetDelay) {
+		return WantedSearchRun{}, ErrWantedSearchRequestConflict
+	}
+	return r, err
 }
 
 func (d *DB) GetWantedSearch(ctx context.Context, runID string) (WantedSearchRun, error) {
@@ -104,8 +171,8 @@ func (d *DB) GetWantedSearch(ctx context.Context, runID string) (WantedSearchRun
 	return r, err
 }
 
-func (d *DB) MatchingWantedSearch(ctx context.Context, scope, reason string, itemID int64, wantableID string, delay time.Duration) (WantedSearchRun, error) {
-	row := d.R.QueryRowContext(ctx, `SELECT `+wantedRunColumns+` FROM wanted_search_runs
+func matchingWantedSearch(ctx context.Context, q wantedSearchQueryer, scope, reason string, itemID int64, wantableID string, delay time.Duration) (WantedSearchRun, error) {
+	row := q.QueryRowContext(ctx, `SELECT `+wantedRunColumns+` FROM wanted_search_runs
         WHERE status IN ('queued', 'running') AND cancel_requested_at = 0
         AND scope = ? AND reason = ? AND media_item_id = ? AND wantable_id = ? AND target_delay_ms = ?`,
 		scope, reason, itemID, wantableID, delay.Milliseconds())

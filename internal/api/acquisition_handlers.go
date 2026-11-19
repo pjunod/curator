@@ -1270,6 +1270,9 @@ func (s *Server) CreateWantedSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	req := acquisition.WantedSearchRequest{Scope: string(body.Scope), TargetDelay: body.TargetDelayMs}
+	if body.RequestId != nil {
+		req.RequestID = *body.RequestId
+	}
 	if body.Reason != nil {
 		req.Reason = acquisition.WantedReason(*body.Reason)
 	}
@@ -1282,6 +1285,8 @@ func (s *Server) CreateWantedSearch(w http.ResponseWriter, r *http.Request) {
 	run, err := s.deps.Acquisition.StartWantedSearch(r.Context(), req)
 	if err != nil {
 		switch {
+		case errors.Is(err, sqlite.ErrWantedSearchRequestConflict):
+			writeError(w, http.StatusConflict, err.Error())
 		case errors.Is(err, acquisition.ErrInvalidWantedSearch):
 			writeError(w, http.StatusBadRequest, err.Error())
 		case errors.Is(err, acquisition.ErrNotFound):

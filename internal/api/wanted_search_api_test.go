@@ -26,7 +26,7 @@ func TestWantedSearchAPIValidatesScopeReusesIdenticalRunAndAcceptsIndependentRun
 		t.Fatal(err)
 	}
 
-	first := e.post(t, "/api/v1/wanted/searches", `{"scope":"all","targetDelayMs":0}`).expect(t, http.StatusAccepted)
+	first := e.post(t, "/api/v1/wanted/searches", `{"scope":"all","targetDelayMs":0,"requestId":"start-all"}`).expect(t, http.StatusAccepted)
 	var run apigen.WantedSearchRun
 	if err := json.Unmarshal(first.Body.Bytes(), &run); err != nil {
 		t.Fatal(err)
@@ -40,7 +40,9 @@ func TestWantedSearchAPIValidatesScopeReusesIdenticalRunAndAcceptsIndependentRun
 	if reused.RunId != run.RunId {
 		t.Fatalf("identical submission created %q, want reuse %q", reused.RunId, run.RunId)
 	}
+	e.post(t, "/api/v1/wanted/searches", `{"scope":"all","targetDelayMs":0,"requestId":"join-all"}`).expect(t, http.StatusAccepted)
 	e.post(t, "/api/v1/wanted/searches", `{"scope":"reason","reason":"missing","targetDelayMs":0}`).expect(t, http.StatusAccepted)
+	e.post(t, "/api/v1/wanted/searches", `{"scope":"reason","reason":"missing","requestId":"start-all"}`).expect(t, http.StatusConflict)
 	e.post(t, "/api/v1/wanted/searches", `{"scope":"all","reason":"missing"}`).expect(t, http.StatusBadRequest)
 	e.post(t, "/api/v1/wanted/searches", `{"scope":"target","wantableId":"season:1:2"}`).expect(t, http.StatusBadRequest)
 	e.post(t, "/api/v1/wanted/searches", `{"scope":"all","surprise":true}`).expect(t, http.StatusBadRequest)
@@ -54,4 +56,8 @@ func TestWantedSearchAPIValidatesScopeReusesIdenticalRunAndAcceptsIndependentRun
 	e.get(t, "/api/v1/wanted/searches/"+run.RunId).expect(t, http.StatusOK)
 	e.post(t, "/api/v1/wanted/searches/"+run.RunId+"/cancel", "").expect(t, http.StatusAccepted)
 	e.post(t, "/api/v1/wanted/searches/"+run.RunId+"/cancel", "").expect(t, http.StatusOK)
+	replayed := e.post(t, "/api/v1/wanted/searches", `{"scope":"all","targetDelayMs":0,"requestId":"join-all"}`).expect(t, http.StatusAccepted)
+	if err := json.Unmarshal(replayed.Body.Bytes(), &reused); err != nil || reused.RunId != run.RunId || reused.Status != "cancelled" {
+		t.Fatalf("request replay = %+v, %v; want cancelled run %s", reused, err, run.RunId)
+	}
 }

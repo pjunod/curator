@@ -11,6 +11,7 @@ import {
   getWantedSearchResults,
   type WantedSearchRun,
   type WantedSearchScope,
+  type WantedSearchRequest,
 } from '../api'
 import { PAGE_SIZES, PageSizePicker, Pager, clampPage, sliceForPage } from '../Pager'
 import { selectWantedGroups, type WantedFilter, type WantedGroup, type WantedSort } from '../wanted'
@@ -73,7 +74,7 @@ export function WantedPage() {
   }, [qc, runs.data])
 
   const submit = useMutation({
-    mutationFn: (scope: WantedSearchScope) => createWantedSearch({ ...scope, targetDelayMs }),
+    mutationFn: (request: WantedSearchRequest) => createWantedSearch(request),
     onSuccess: (run) => updateRun(qc, run),
     onError: (error) => setRunNotice(`Could not start search: ${error.message}`),
   })
@@ -112,7 +113,8 @@ export function WantedPage() {
   }
   const start = (scope: WantedSearchScope) => {
     setRunNotice('')
-    submit.mutate(scope)
+    const requestId = globalThis.crypto?.randomUUID?.() ?? `wanted-${Date.now()}-${Math.random().toString(36).slice(2)}`
+    submit.mutate({ ...scope, targetDelayMs, requestId })
   }
   const groupScope = (group: WantedGroup): WantedSearchScope => ({
     scope: 'group',

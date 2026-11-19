@@ -43,6 +43,7 @@ const (
 )
 
 type WantedSearchRequest struct {
+	RequestID   string       `json:"requestId,omitempty"`
 	Scope       string       `json:"scope"`
 	Reason      WantedReason `json:"reason,omitempty"`
 	MediaItemID int64        `json:"mediaItemId,omitempty"`
@@ -173,13 +174,17 @@ func (s *Service) StartWantedSearch(ctx context.Context, req WantedSearchRequest
 	if err != nil {
 		return WantedSearchRun{}, err
 	}
-	match := func() (sqlite.WantedSearchRun, error) {
-		return s.db.MatchingWantedSearch(ctx, req.Scope, string(req.Reason), req.MediaItemID, req.WantableID, delay)
+	if len(req.RequestID) > 128 {
+		return WantedSearchRun{}, fmt.Errorf("%w: requestId exceeds 128 bytes", ErrInvalidWantedSearch)
 	}
-	if active, err := match(); err == nil {
-		return runFromStore(active), nil
-	} else if !errors.Is(err, sqlite.ErrNotFound) {
-		return WantedSearchRun{}, err
+	stored := sqlite.WantedSearchRun{Scope: req.Scope, Reason: string(req.Reason),
+		MediaItemID: req.MediaItemID, WantableID: req.WantableID, TargetDelay: delay}
+	if req.RequestID != "" {
+		if saved, err := s.db.WantedSearchByRequest(ctx, req.RequestID, stored); err == nil {
+			return runFromStore(saved), nil
+		} else if !errors.Is(err, sqlite.ErrNotFound) {
+			return WantedSearchRun{}, err
+		}
 	}
 	if enabled, err := s.enabledIndexers(ctx); err != nil {
 		return WantedSearchRun{}, err
@@ -227,30 +232,20 @@ func (s *Service) StartWantedSearch(ctx context.Context, req WantedSearchRequest
 		return WantedSearchRun{}, err
 	}
 	now := time.Now().UTC()
-	stored := sqlite.WantedSearchRun{RunID: runID, Scope: req.Scope, Reason: string(req.Reason),
-		MediaItemID: req.MediaItemID, WantableID: req.WantableID, ScopeLabel: label,
-		CreatedAt: now, NextReadyAt: now, TargetDelay: delay}
+	stored.RunID, stored.ScopeLabel = runID, label
+	stored.CreatedAt, stored.NextReadyAt = now, now
 	targets := make([]sqlite.WantedSearchTarget, 0, len(selected))
 	for _, w := range selected {
 		targets = append(targets, sqlite.WantedSearchTarget{WantableID: string(w.ID()),
 			SelectedReason: string(wantedReasonOf(w)), Label: describeTarget(w)})
 	}
-	for {
-		err := s.db.CreateWantedSearch(ctx, stored, targets)
-		if err == nil {
-			break
-		}
-		if !errors.Is(err, sqlite.ErrWantedSearchActive) {
-			return WantedSearchRun{}, err
-		}
-		active, err := match()
-		if err == nil {
-			return runFromStore(active), nil
-		}
-		if !errors.Is(err, sqlite.ErrNotFound) {
-			return WantedSearchRun{}, err
-		}
-		// The winning run reached a terminal state between insert and lookup.
+	runID, created, err := s.db.AcceptWantedSearch(ctx, stored, targets, req.RequestID)
+	if err != nil {
+		return WantedSearchRun{}, err
+	}
+	if !created {
+		r, err := s.db.GetWantedSearch(ctx, runID)
+		return runFromStore(r), err
 	}
 	if len(targets) == 0 {
 		if err := s.db.FinishWantedSearch(ctx, runID, "completed", "", false); err != nil {
@@ -534,9 +529,19 @@ func (s *Service) enqueueWantedChunk(ctx context.Context, run sqlite.WantedSearc
 		return errors.New("wanted search queue is not configured")
 	}
 	payload, _ := json.Marshal(wantedChunkPayload{RunID: run.RunID, Ordinal: run.Cursor})
+	priority := domain.JobPriorityInteractive
+	if run.Scope == "all" || run.Scope == "reason" {
+		// Bulk chunks can use the general pool, leaving the reserved worker
+		// available for searches the operator is waiting on directly.
+		priority++
+	}
 	id, err := s.wantedQueue.Enqueue(ctx, domain.Job{Kind: WantedSearchJobKind,
-		Payload: string(payload), Priority: domain.JobPriorityInteractive, RunAfter: run.NextReadyAt,
+		Payload: string(payload), Priority: priority, RunAfter: run.NextReadyAt,
 		DedupeKey: "wanted.search:" + run.RunID})
+	if errors.Is(err, sqlite.ErrDuplicateJob) {
+		// The coordinator or request already scheduled this run.
+		return nil
+	}
 	if err != nil {
 		return err
 	}
