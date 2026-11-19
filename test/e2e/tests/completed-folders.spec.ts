@@ -12,7 +12,7 @@ test('Storage shows measured capacity, last cleanup run and download root config
   let fullInventoryReads = 0
   await page.route('**/api/v1/downloads/inventory', route => {
     fullInventoryReads++
-    return route.fulfill({ json: { roots: [] } })
+    return route.fulfill({ json: { roots: [{ path: '/completed', entries: [{ path: '/completed/episode', status: 'retained', bytes: 1024 ** 3, receipts: [{ downloadId: 1917, title: 'Bates Motel S05E02', archived: true }] }] }] } })
   })
   await page.route('**/api/v1/system/storage-observations', route => route.fulfill({ json: {
     cleanup: { logicalBytesRemoved: 2 * 1024 ** 3, filesRemoved: 3, lastRemovalAt: at },
@@ -38,6 +38,9 @@ test('Storage shows measured capacity, last cleanup run and download root config
   await expect(downloads.getByText('Runner · Living room · processing', { exact: false })).toBeVisible()
   await expect(downloads).toContainText('0 B free of 10.0 GB')
   expect(fullInventoryReads).toBe(0)
+  await page.getByRole('button', { name: 'Show kept downloads' }).click()
+  await expect(page.getByRole('link', { name: 'Bates Motel S05E02 · Job #1917' })).toHaveAttribute('href', '/activity?job=1917#history')
+  await expect(page.getByRole('region', { name: 'Files kept from archived jobs' })).toContainText('1.0 GB')
   await expect(page.getByRole('region', { name: 'Automatic cleanup' })).toContainText('Cleanup reported an error')
   await expect(page.locator('#storage')).toContainText('3 files · 2.0 GB in logical file sizes')
   await expect(page.locator('#storage')).not.toContainText('reclaimed')

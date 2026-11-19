@@ -23,7 +23,7 @@ type CompletedReceipt struct {
 	DeliveryManaged bool   `json:"deliveryManaged"`
 	// Internal custody can outlive the visible Activity row.
 	Dismissed bool `json:"-"`
-	Archived  bool `json:"-"`
+	Archived  bool `json:"archived,omitempty"`
 }
 
 func (d *DB) CompletedReceipts(ctx context.Context) ([]CompletedReceipt, error) {

@@ -2554,6 +2554,8 @@ type CompletedInventory struct {
 
 // CompletedReceipt defines model for CompletedReceipt.
 type CompletedReceipt struct {
+	// Archived The operator archived cleanup for this job generation and kept its files.
+	Archived *bool `json:"archived,omitempty"`
 	ClientId int64 `json:"clientId"`
 
 	// CopyId Exact associated copy; zero means primary copy.

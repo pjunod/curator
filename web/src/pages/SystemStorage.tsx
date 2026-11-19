@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
 import { ActionDialog, ActionNotice, focusActionTrigger } from '../ActionDialog'
 import {
-  acceptCompletedStorageChange, fmtBytes, getRootFolders, getTasks,
+  acceptCompletedStorageChange, fmtBytes, getCompletedInventory, getRootFolders, getTasks,
   previewCompletedStorageChange, type RootFolder, type TaskState,
 } from '../api'
 import { getStorageObservations, type StorageObservation } from '../activityActions'
@@ -38,6 +38,13 @@ export function SystemStorage() {
   const opener = useRef<HTMLElement | null>(null)
   const heading = useRef<HTMLHeadingElement | null>(null)
   const [review, setReview] = useState<StorageObservation | null>(null)
+  const [showKept, setShowKept] = useState(false)
+  const inventory = useQuery({ queryKey: ['completed-inventory'], queryFn: getCompletedInventory, enabled: showKept, refetchInterval: showKept ? 30_000 : false })
+  const kept = inventory.data?.roots.flatMap(root => root.entries.flatMap(entry => {
+    const receipt = entry.receipts[0]
+    return entry.status === 'retained' && entry.receipts.length === 1 && receipt.archived
+      ? [{ entry, receipt, error: root.error }] : []
+  }))
   const roots = useQuery({ queryKey: ['rootfolders'], queryFn: getRootFolders, staleTime: 30_000 })
   const downloads = useQuery({
     queryKey: ['storage-observations'],
@@ -112,6 +119,19 @@ export function SystemStorage() {
           }}>Review replacement storage</button>}
         </article>
       })}
+    </section>
+    <section aria-labelledby="kept-downloads-title">
+      <h3 id="kept-downloads-title">Files kept from archived jobs</h3>
+      <button aria-expanded={showKept} onClick={() => setShowKept(!showKept)}>{showKept ? 'Hide kept downloads' : 'Show kept downloads'}</button>
+      {showKept && <div aria-live="polite">
+        {inventory.isLoading && <p>Reading completed-folder scans…</p>}
+        {inventory.isError && <p role="alert">Could not load kept downloads. {inventory.error.message}</p>}
+        {kept?.length === 0 && <p>No kept downloads in the latest scans.</p>}
+        {kept?.map(({ entry, receipt, error }) => <p key={entry.path}>
+          <a href={`/activity?job=${receipt.downloadId}#history`}>{receipt.title} · Job #{receipt.downloadId}</a> · {measuredBytes(entry.bytes)}
+          {error && <span> · Last successful scan. {error}</span>}
+        </p>)}
+      </div>}
     </section>
     <section aria-labelledby="storage-cleanup-title">
       <h3 id="storage-cleanup-title">Automatic cleanup</h3>

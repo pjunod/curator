@@ -7707,6 +7707,7 @@ components:
         protocol: { type: string }
         payloadRemoved: { type: boolean }
         live: { type: boolean }
+        archived: { type: boolean, description: The operator archived cleanup for this job generation and kept its files. }
         legacyReview: { type: boolean }
         deliveryManaged: { type: boolean }
 

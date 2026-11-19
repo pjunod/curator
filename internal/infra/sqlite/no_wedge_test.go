@@ -211,9 +211,16 @@ func TestArchivedImportDiagnostics(t *testing.T) {
 		t.Fatal(err)
 	}
 	exec("UPDATE publications SET last_stop='environment',deadline_at=1")
+	exec("UPDATE downloads SET transfer='archived-import'")
+	if err := db.StartPipelineTiming(ctx, TimingRunnerDoneToImport, "archived-import", 1, 1000); err != nil {
+		t.Fatal(err)
+	}
 	check := func(want int, archived bool) {
 		t.Helper()
 		now := time.Now()
+		if n, _, err := db.PipelineWaiting(ctx, TimingRunnerDoneToImport, 0); err != nil || n != want {
+			t.Fatalf("waiting %d, %v", n, err)
+		}
 		if n, err := db.OverdueCount(ctx, now.UnixMilli()); err != nil || n != 2*want {
 			t.Fatalf("overdue %d, %v", n, err)
 		}

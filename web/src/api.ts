@@ -1811,6 +1811,7 @@ export interface RecoveryPreviewTask { id: string; state: string; preview?: Reco
 export const getRecoveryPreview = (id: string) => get<RecoveryPreviewTask>('/import/recovery/previews/' + encodeURIComponent(id))
 
 export interface CompletedReceipt {
+  archived?: boolean
   downloadId: number
   mediaItemId?: number
   copyId?: number

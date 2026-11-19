@@ -95,13 +95,13 @@ func (d *DB) PipelineWaiting(ctx context.Context, kind string, sinceMs int64) (n
  WHERE kind=? AND ended_at=0 AND started_at>=?
  AND NOT (kind='runner_done_to_import' AND EXISTS (
   SELECT 1 FROM downloads d WHERE d.id=t.download_id AND d.transfer=t.transfer
-   AND d.state='failed' AND d.payload_removed=1 AND d.runner_salvage IN ('','none')
+   AND (d.id IN (`+archivedDownloadIDs+`) OR (d.state='failed' AND d.payload_removed=1 AND d.runner_salvage IN ('','none')
    AND NOT EXISTS(SELECT 1 FROM publications p WHERE p.download_id=d.id AND p.state!='removed')
    AND NOT EXISTS(SELECT 1 FROM import_attempt_controls c WHERE c.download_id=d.id AND c.outcome='pending')
    AND NOT EXISTS(SELECT 1 FROM import_attempt_stages s WHERE s.download_id=d.id AND s.state='held')
    AND NOT EXISTS(SELECT 1 FROM import_publication_authorizations a WHERE a.download_id=d.id AND (a.outcome='pending' OR a.resolution IN ('retained_for_review','operator_adopted')))
    AND NOT EXISTS(SELECT 1 FROM import_placements p WHERE json_extract(p.data,'$.download_id')=d.id AND p.state IN ('prepared','retained'))
- ))`,
+ ))))`,
 		kind, sinceMs).Scan(&n, &oldestStart)
 	return n, oldestStart, err
 }
