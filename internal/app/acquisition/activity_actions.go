@@ -355,7 +355,7 @@ func (s *Service) deleteActivityJob(ctx context.Context, operation string, dl sq
 			}
 			admission, ok := client.(ports.RequestAdmissionProtocol)
 			if !ok {
-				return fmt.Errorf("Runner cannot confirm this transfer identity")
+				return fmt.Errorf("runner cannot confirm this transfer identity")
 			}
 			var request ports.RunnerDispositionRequest
 			var jobID string
@@ -373,10 +373,10 @@ func (s *Service) deleteActivityJob(ctx context.Context, operation string, dl sq
 					if dl.SubmissionPhase == "uncertain" || dl.SubmissionPhase == "submitting" {
 						return errors.Join(errActivityPending, fmt.Errorf("waiting for Runner to settle this exact submission"))
 					}
-					return fmt.Errorf("Runner has no admission receipt for this transfer; restore its records before retrying deletion")
+					return fmt.Errorf("runner has no admission receipt for this transfer; restore its records before retrying deletion")
 				}
 				if (dl.Handle != "" && dl.Handle != adm.JobID) || (dl.RunnerInstanceID != "" && dl.RunnerInstanceID != adm.RunnerInstanceID) || (dl.RunnerAdmissionGeneration != "" && dl.RunnerAdmissionGeneration != adm.Generation) {
-					return fmt.Errorf("Runner job identity changed; deletion stopped")
+					return fmt.Errorf("runner job identity changed; deletion stopped")
 				}
 				request = ports.RunnerDispositionRequest{RequestID: "curator-delete-" + dl.GenerationKey, Action: "delete", Transfer: dl.Transfer, RunnerInstanceID: adm.RunnerInstanceID, Generation: adm.Generation, SourceArtifactID: adm.SourceArtifactID, SourceGeneration: adm.SourceGeneration}
 				b, _ := json.Marshal(struct {
@@ -418,7 +418,7 @@ func (s *Service) deleteActivityJob(ctx context.Context, operation string, dl sq
 				return errActivityPending
 			}
 			if result.State != "verified" {
-				return fmt.Errorf("Runner could not finish deletion: %s", result.Reason)
+				return fmt.Errorf("runner could not finish deletion: %s", result.Reason)
 			}
 			// Feed the owner's actual terminal through the existing reducer. A
 			// completed/failed job remains completed/failed after artifact disposal.

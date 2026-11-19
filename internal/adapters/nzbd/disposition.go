@@ -52,10 +52,10 @@ func (c *Client) DisposeJob(ctx context.Context, jobID string, body ports.Runner
 		return out, err
 	}
 	if out.JobID != jobID || out.RequestID != body.RequestID || out.Transfer != body.Transfer || out.RunnerInstanceID != body.RunnerInstanceID || out.Generation != body.Generation {
-		return out, fmt.Errorf("Runner deletion response identity changed")
+		return out, fmt.Errorf("runner deletion response identity changed")
 	}
 	if out.State != "pending" && out.State != "blocked" && out.State != "verified" {
-		return out, fmt.Errorf("Runner deletion returned an unknown state")
+		return out, fmt.Errorf("runner deletion returned an unknown state")
 	}
 	return out, nil
 }

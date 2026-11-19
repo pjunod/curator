@@ -265,8 +265,13 @@ func TestCancelAndBlocklistIsNotGrabbedAgain(t *testing.T) {
 	if err := f.svc.CancelAndBlocklist(f.ctx, d.ID); err != nil {
 		t.Fatal(err)
 	}
-	if got := f.row(d.ID); got.RunnerOutcome != ports.OutcomeCancelled {
-		t.Fatalf("row = %s/%s, want the cancelled terminal Remove records", got.State, got.RunnerOutcome)
+	assertRunnerQueueCancellation(t, f.runner, ports.Handle(d.Handle))
+	if pending := f.row(d.ID); pending.RunnerOutcome != "" || pending.State != d.State {
+		t.Fatalf("row = %s/%s, want the current state before Runner reports a terminal", pending.State, pending.RunnerOutcome)
+	}
+	f.observe(d, terminalFact(d, ports.RunnerTerminal{Outcome: ports.OutcomeCancelled, Salvage: "none"}, "event 1"))
+	if got := f.row(d.ID); got.RunnerOutcome != ports.OutcomeCancelled || got.State != "failed" {
+		t.Fatalf("row = %s/%s, want the cancelled terminal from Runner", got.State, got.RunnerOutcome)
 	}
 	if bl := mustBlocklist(t, f); len(bl) != 1 || bl[0].ReleaseTitle != d.ReleaseTitle {
 		t.Fatalf("blocklist = %+v, want the cancelled release", bl)

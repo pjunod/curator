@@ -3,7 +3,7 @@
 **Final validation · Updated 2026-11-19 · Effort E-FDF467296C**
 
 Codex owns the implementation and coordinates the Runner and Curator changes.
-Runner changes are [PR #342](https://github.com/pjunod/runner/pull/342); Curator publication, merge, and cleanup remain pending.
+Runner changes are [PR #342](https://github.com/pjunod/runner/pull/342); [Curator changes are PR #165](https://github.com/pjunod/curator/pull/165); merge and cleanup remain pending.
 The owned external-drive workspaces remain active. Runner’s automatic failure
 cleanup dependency merged as [PR #341](https://github.com/pjunod/runner/pull/341)
 at `bcc7b69d`. Integration is complete.
@@ -17,8 +17,8 @@ at `bcc7b69d`. Integration is complete.
 | Storage and History | Storage uses root-only observations. Activity History opens a log of immutable recorded job events. |
 | Regression coverage | API, database, worker, and browser cases are written for frozen selection, replay, partial results, file preservation, and delayed Runner receipts. Execution is pending. |
 | Adversarial code review | Completed. Initial findings and focused recheck findings are addressed; Astra’s final source recheck found no remaining must-fix issues. |
-| Final validation | Required CI is the final candidate validation; tests were deferred until review fixes were complete. Results pending. |
-| Pull requests and merge | One batch per repository; Runner #342 open with ownership and validation status. Merge follows required green checks. |
+| Final validation | CI passed browser E2E, Docker, security, compatibility and five Go race shards. Correcting mobile typing, lint, and obsolete cancellation/test fixture assumptions; final required checks remain pending. |
+| Pull requests and merge | Runner #342 and Curator #165 are open with ownership and validation status. Merge follows required green checks. |
 | Workspace cleanup | Pending merge. The implementation workspaces remain available for review and verification. |
 
 The architecture review found that clearing a queue row can record cancellation before

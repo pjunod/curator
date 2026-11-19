@@ -27,7 +27,7 @@ func TestStorageObservationsReturnCachedRootMetadataAndRecordedCleanup(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := e.db.SetMeta(ctx, "runner_storage_observations", `{`+strconv.FormatInt(id, 10)+`:[
+	if err := e.db.SetMeta(ctx, "runner_storage_observations", `{"`+strconv.FormatInt(id, 10)+`":[
 		{"owner":"Runner","role":"processing","name":"Source Runner","path":"/runner/source","status":"available",
 		"observedAt":"2026-11-18T16:00:00Z","freeBytes":100,"totalBytes":250}
 	]}`); err != nil {

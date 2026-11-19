@@ -32,7 +32,7 @@ func (s *Service) restoreActivityPrior(ctx context.Context, p sqlite.Placement) 
 	defer func() { _ = root.Close() }()
 	bound, err := root.Stat(".")
 	if err != nil || deliveryDirectoryObjectIdentity(bound) != p.TargetParentIdentity {
-		return fmt.Errorf("Library parent changed during recovery")
+		return fmt.Errorf("library parent changed during recovery")
 	}
 	backup, err := root.Lstat(filepath.Base(p.Backup))
 	if err != nil || !backup.Mode().IsRegular() || backup.Mode()&os.ModeSymlink != 0 {

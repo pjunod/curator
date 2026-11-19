@@ -3,6 +3,7 @@ package acquisition
 import (
 	"context"
 	"errors"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -229,12 +230,14 @@ func TestCancelRunnerDownloadMatrix(t *testing.T) {
 	t.Run("Runner refuses the cancel", func(t *testing.T) {
 		f := setupV2(t, nil)
 		dl := f.grab(1, epOne)
-		f.runner.removeErr = errors.New("runner unreachable")
+		f.runner.queueCancelErr = errors.New("runner unreachable")
 		if err := f.svc.RemoveDownload(f.ctx, dl.ID, true); err == nil {
 			t.Fatal("a refused Runner cancel succeeded")
 		}
-		if got := f.row(dl.ID); got.RunnerOutcome != "" || got.State != "downloading" {
-			t.Fatalf("row = %s/%s, want untouched", got.State, got.RunnerOutcome)
+		assertRunnerQueueCancellation(t, f.runner, ports.Handle(dl.Handle))
+		if got := f.row(dl.ID); got.RunnerOutcome != "" || got.State != "downloading" ||
+			f.count(`SELECT activity_dismissed FROM downloads WHERE id=?`, dl.ID) != 0 {
+			t.Fatalf("row = %s/%s, want untouched after the rejected cancel", got.State, got.RunnerOutcome)
 		}
 	})
 	t.Run("a finished row is dismissed, not cancelled", func(t *testing.T) {
@@ -246,11 +249,9 @@ func TestCancelRunnerDownloadMatrix(t *testing.T) {
 			t.Fatal(err)
 		}
 		got := f.row(dl.ID)
-		f.runner.mu.Lock()
-		removes := len(f.runner.removed)
-		f.runner.mu.Unlock()
-		if got.RunnerOutcome != "failed" || removes != 0 {
-			t.Fatalf("outcome %q removes %d, want the failure kept and Runner not asked", got.RunnerOutcome, removes)
+		assertRunnerQueueCancellation(t, f.runner)
+		if got.RunnerOutcome != ports.OutcomeFailed {
+			t.Fatalf("outcome %q, want Runner's recorded failure kept", got.RunnerOutcome)
 		}
 		if f.count(`SELECT activity_dismissed FROM downloads WHERE id=?`, dl.ID) != 1 {
 			t.Fatal("the row was not dismissed")
@@ -262,13 +263,25 @@ func TestCancelRunnerDownloadMatrix(t *testing.T) {
 		if err := f.svc.RemoveDownload(f.ctx, dl.ID, false); err != nil {
 			t.Fatal(err)
 		}
-		f.runner.mu.Lock()
-		removes := len(f.runner.removed)
-		f.runner.mu.Unlock()
-		if got := f.row(dl.ID); got.RunnerOutcome != ports.OutcomeCancelled || removes != 0 {
-			t.Fatalf("outcome %q removes %d, want cancelled here with Runner left alone", got.RunnerOutcome, removes)
+		assertRunnerQueueCancellation(t, f.runner)
+		if got := f.row(dl.ID); got.RunnerOutcome != "" || got.State != dl.State ||
+			f.count(`SELECT activity_dismissed FROM downloads WHERE id=?`, dl.ID) != 1 {
+			t.Fatalf("row = %s/%s, want the running attempt preserved and dismissed from Activity", got.State, got.RunnerOutcome)
 		}
 	})
+}
+
+func assertRunnerQueueCancellation(t *testing.T, runner *fakeRunner, want ...ports.Handle) {
+	t.Helper()
+	runner.qmu.Lock()
+	cancels := slices.Clone(runner.queueCancels)
+	runner.qmu.Unlock()
+	runner.mu.Lock()
+	removes := len(runner.removed)
+	runner.mu.Unlock()
+	if !slices.Equal(cancels, want) || removes != 0 {
+		t.Fatalf("Runner queue cancels = %v, remove calls = %d, want queue cancels %v and no remove calls", cancels, removes, want)
+	}
 }
 
 // A legacy client's removed and failed observations become terminals with
