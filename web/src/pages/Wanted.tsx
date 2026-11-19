@@ -2,6 +2,7 @@ import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
 import {
+  ApiError,
   cancelWantedSearch,
   createWantedSearch,
   fmtRelative,
@@ -11,7 +12,6 @@ import {
   getWantedSearchResults,
   type WantedSearchRun,
   type WantedSearchScope,
-  type WantedSearchRequest,
 } from '../api'
 import { PAGE_SIZES, PageSizePicker, Pager, clampPage, sliceForPage } from '../Pager'
 import { selectWantedGroups, type WantedFilter, type WantedGroup, type WantedSort } from '../wanted'
@@ -19,6 +19,18 @@ import { selectWantedGroups, type WantedFilter, type WantedGroup, type WantedSor
 const RUNS_QUERY_KEY = ['wanted-searches'] as const
 const RESULTS_PAGE_SIZE = 100
 const SIZE_KEY = 'monarr-wanted-page-size'
+
+const wantedSubmissions = new Map<string, { requestId: string; pending: boolean }>()
+
+function submissionKey(scope: WantedSearchScope, delay: number): string {
+  return JSON.stringify([
+    scope.scope,
+    delay,
+    'reason' in scope ? scope.reason : null,
+    'mediaItemId' in scope ? scope.mediaItemId : null,
+    'wantableId' in scope ? scope.wantableId : null,
+  ])
+}
 
 function savedPageSize(): number {
   try {
@@ -74,7 +86,21 @@ export function WantedPage() {
   }, [qc, runs.data])
 
   const submit = useMutation({
-    mutationFn: (request: WantedSearchRequest) => createWantedSearch(request),
+    mutationFn: async ({ scope, key, requestId, delay }: { scope: WantedSearchScope; key: string; requestId: string; delay: number }) => {
+      try {
+        const run = await createWantedSearch({ ...scope, targetDelayMs: delay, requestId })
+        if (!run?.runId) throw new Error('The server did not confirm the search. Try again to recover its status.')
+        wantedSubmissions.delete(key)
+        return run
+      } catch (error) {
+        if (error instanceof ApiError && error.status >= 400 && error.status < 500 && error.status !== 408 && error.status !== 499) {
+          wantedSubmissions.delete(key)
+        } else {
+          wantedSubmissions.set(key, { requestId, pending: false })
+        }
+        throw error
+      }
+    },
     onSuccess: (run) => updateRun(qc, run),
     onError: (error) => setRunNotice(`Could not start search: ${error.message}`),
   })
@@ -112,9 +138,13 @@ export function WantedPage() {
     setPage(0)
   }
   const start = (scope: WantedSearchScope) => {
+    const key = submissionKey(scope, targetDelayMs)
+    const saved = wantedSubmissions.get(key)
+    if (saved?.pending) return
     setRunNotice('')
-    const requestId = globalThis.crypto?.randomUUID?.() ?? `wanted-${Date.now()}-${Math.random().toString(36).slice(2)}`
-    submit.mutate({ ...scope, targetDelayMs, requestId })
+    const requestId = saved?.requestId ?? (globalThis.crypto?.randomUUID?.() ?? `wanted-${Date.now()}-${Math.random().toString(36).slice(2)}`)
+    wantedSubmissions.set(key, { requestId, pending: true })
+    submit.mutate({ scope, key, requestId, delay: targetDelayMs })
   }
   const groupScope = (group: WantedGroup): WantedSearchScope => ({
     scope: 'group',
