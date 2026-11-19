@@ -42,14 +42,14 @@ import {
   updateLibraryItem,
   updateMediaCopy,
 } from '../api'
-import type { BookType, MediaFileInfo, MediaItemDetail, OffloadRequest, QualityProfile } from '../api'
+import type { BookType, MediaFileInfo, MediaItemDetail, OffloadOperation, OffloadRequest, QualityProfile } from '../api'
 import { describeAutoSearch } from '../autosearch'
 import { audioUndeterminedNote } from '../language'
 import { DOWNLOAD_PRIORITIES, downloadPriorityLabel } from '../downloadPriority'
 import { ActionDialog, ActionNotice, focusActionTrigger } from '../ActionDialog'
 import { ImportFileDialog } from '../ImportFileDialog'
 import { RematchDialog } from '../RematchDialog'
-import { OffloadDialog } from '../OffloadDialog'
+import { OffloadDialog, OffloadOperations } from '../OffloadDialog'
 import { ItemStatusPanel } from '../ItemStatusPanel'
 import { seasonOffload } from '../libraryPresence'
 import { ReleaseSearch } from './ReleaseSearch'
@@ -1230,7 +1230,7 @@ export function MediaDetailPage() {
   const [importing, setImporting] = useState(false)
   const [rematching, setRematching] = useState(false)
   // Offload… target: the title, one season or one episode.
-  const [offloading, setOffloading] = useState<{ request: OffloadRequest; label: string } | null>(null)
+  const [offloading, setOffloading] = useState<{ request: OffloadRequest; label: string; operation?: OffloadOperation } | null>(null)
   // Interactive search target: null = closed. copyId selects an additional
   // quality copy or book edition; zero/absent is the primary target.
   const [searching, setSearching] = useState<{
@@ -1699,7 +1699,12 @@ export function MediaDetailPage() {
 
       {importing && <ImportFileDialog item={m} onClose={() => setImporting(false)} />}
       {rematching && <RematchDialog item={m} onClose={() => setRematching(false)} />}
-      {offloading && <OffloadDialog itemId={m.id} title={offloading.label} request={offloading.request} onClose={() => setOffloading(null)} />}
+      <OffloadOperations itemId={m.id} onOpen={(op) => setOffloading({
+        request: { scope: op.scope, season: op.season, episodeId: op.episodeId },
+        label: op.label ?? m.title,
+        operation: op,
+      })} />
+      {offloading && <OffloadDialog itemId={m.id} title={offloading.label} request={offloading.request} initialOperation={offloading.operation} onClose={() => setOffloading(null)} />}
 
       {searching && (
         <ReleaseSearch

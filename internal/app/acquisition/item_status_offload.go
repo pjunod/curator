@@ -71,6 +71,12 @@ func (f statusFacts) offloadBlock() *StatusOffload {
 		o.FinishedAt = op.UpdatedAt
 	}
 	switch op.State {
+	case "queued":
+		o.Headline = "Offload of " + what + " is queued"
+	case "needs_review":
+		o.Headline = "Offload of " + what + " needs review"
+	case "stopping":
+		o.Headline = "Offload of " + what + " is stopping"
 	case "deleting":
 		o.Headline = fmt.Sprintf("Offloading %s: %d of %d files deleted", what, op.FilesDone, op.FilesTotal)
 	case "waiting":

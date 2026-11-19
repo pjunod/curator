@@ -38,7 +38,7 @@ type OffloadOperation struct {
 // OffloadOpen reports whether the operation still has work to do.
 func OffloadOpen(state string) bool {
 	switch state {
-	case "deleting", "waiting", "retrying", "stopping":
+	case "queued", "deleting", "waiting", "retrying", "stopping":
 		return true
 	}
 	return false
@@ -46,7 +46,9 @@ func OffloadOpen(state string) bool {
 
 // OffloadWorking reports whether the operation is still deleting (stopping
 // is open, but nothing more is deleted).
-func OffloadWorking(state string) bool { return state != "stopping" && OffloadOpen(state) }
+func OffloadWorking(state string) bool {
+	return state != "queued" && state != "stopping" && OffloadOpen(state)
+}
 
 const offloadSelect = `SELECT operation_id,request_id,fingerprint,state,media_item_id,scope,plan,result,files_total,bytes_total,bytes_freed,last_error,created_at,updated_at,dismissed_at FROM offload_operations`
 
@@ -91,20 +93,48 @@ type OffloadRecord struct {
 // stored operation (existing true); with another it is
 // ErrOffloadRequestConflict.
 func (d *DB) CreateOffloadOperation(ctx context.Context, rec OffloadRecord) (OffloadOperation, bool, error) {
+	return d.createOffloadOperation(ctx, rec, false)
+}
+
+// LinkEquivalentOffload recognizes a reviewed scope even after its writer has
+// applied the flags that make the original preview unavailable.
+func (d *DB) LinkEquivalentOffload(ctx context.Context, itemID int64, requestID, fingerprint string) (OffloadOperation, error) {
+	rec := OffloadRecord{Op: OffloadOperation{ItemID: itemID, RequestID: requestID, Fingerprint: fingerprint, State: "queued"}}
+	op, _, err := d.createOffloadOperation(ctx, rec, true)
+	return op, err
+}
+
+func (d *DB) createOffloadOperation(ctx context.Context, rec OffloadRecord, linkOnly bool) (OffloadOperation, bool, error) {
 	tx, err := d.W.BeginTx(ctx, nil)
 	if err != nil {
 		return rec.Op, false, err
 	}
 	defer func() { _ = tx.Rollback() }()
-	stored, err := scanOffload(tx.QueryRowContext(ctx, offloadSelect+` WHERE request_id=?`, rec.Op.RequestID))
+	stored, err := scanOffload(tx.QueryRowContext(ctx, offloadSelect+` WHERE request_id=? OR operation_id=(SELECT operation_id FROM offload_request_aliases WHERE request_id=?)`, rec.Op.RequestID, rec.Op.RequestID))
 	if err == nil {
-		if stored.Fingerprint != rec.Op.Fingerprint {
+		if stored.ItemID != rec.Op.ItemID || stored.Fingerprint != rec.Op.Fingerprint {
 			return rec.Op, false, ErrOffloadRequestConflict
 		}
 		return stored, true, tx.Commit()
 	}
 	if !errors.Is(err, sql.ErrNoRows) {
 		return rec.Op, false, err
+	}
+	if rec.Op.State == "queued" {
+		stored, err = scanOffload(tx.QueryRowContext(ctx, offloadSelect+` WHERE media_item_id=? AND fingerprint=? AND state IN ('queued','deleting','waiting','retrying') LIMIT 1`,
+			rec.Op.ItemID, rec.Op.Fingerprint))
+		if err == nil {
+			if _, err := tx.ExecContext(ctx, `INSERT INTO offload_request_aliases(request_id,operation_id) VALUES(?,?)`, rec.Op.RequestID, stored.ID); err != nil {
+				return rec.Op, false, err
+			}
+			return stored, true, tx.Commit()
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
+			return rec.Op, false, err
+		}
+	}
+	if linkOnly {
+		return rec.Op, false, ErrNotFound
 	}
 	now := time.Now().UnixMilli()
 	op := rec.Op
@@ -126,28 +156,72 @@ func (d *DB) CreateOffloadOperation(ctx context.Context, rec OffloadRecord) (Off
 			return op, false, err
 		}
 	}
-	if rec.Movie || rec.Whole {
-		if _, err = tx.ExecContext(ctx, `UPDATE media_items SET offloaded_at=? WHERE id=?`, now, op.ItemID); err != nil {
+	if op.State != "queued" {
+		if err := applyOffloadTx(ctx, tx, rec, now); err != nil {
 			return op, false, err
+		}
+	}
+	return op, false, tx.Commit()
+}
+
+// ActivateOffload commits all effects of a queued operation before its first delete.
+func (d *DB) ActivateOffload(ctx context.Context, rec OffloadRecord) (bool, error) {
+	tx, err := d.W.BeginTx(ctx, nil)
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	now := time.Now().UnixMilli()
+	res, err := tx.ExecContext(ctx, `UPDATE offload_operations SET state='deleting',last_error='',updated_at=?
+		WHERE operation_id=? AND state='queued'
+		AND NOT EXISTS (SELECT 1 FROM offload_operations prior
+			WHERE prior.media_item_id=offload_operations.media_item_id AND
+			(prior.state IN ('deleting','waiting','retrying','stopping') OR
+			 (prior.state='queued' AND prior.rowid<offload_operations.rowid)))`, now, rec.Op.ID)
+	if err != nil {
+		return false, err
+	}
+	if n, _ := res.RowsAffected(); n != 1 {
+		return false, nil
+	}
+	if err := applyOffloadTx(ctx, tx, rec, now); err != nil {
+		return false, err
+	}
+	return true, tx.Commit()
+}
+
+func applyOffloadTx(ctx context.Context, tx *sql.Tx, rec OffloadRecord, now int64) error {
+	if rec.Movie || rec.Whole {
+		if _, err := tx.ExecContext(ctx, `UPDATE media_items SET offloaded_at=? WHERE id=?`, now, rec.Op.ItemID); err != nil {
+			return err
 		}
 	}
 	for _, n := range rec.Seasons {
-		if _, err = tx.ExecContext(ctx, `UPDATE seasons SET offloaded_at=? WHERE media_item_id=? AND number=?`, now, op.ItemID, n); err != nil {
-			return op, false, err
-		}
-		if _, err = tx.ExecContext(ctx, `UPDATE episodes SET offloaded_at=? WHERE media_item_id=? AND season_number=?`, now, op.ItemID, n); err != nil {
-			return op, false, err
+		if _, err := tx.ExecContext(ctx, `UPDATE seasons SET offloaded_at=? WHERE media_item_id=? AND number=?`, now, rec.Op.ItemID, n); err != nil {
+			return err
 		}
 	}
 	for _, id := range rec.Episodes {
-		if _, err = tx.ExecContext(ctx, `UPDATE episodes SET offloaded_at=? WHERE id=? AND media_item_id=?`, now, id, op.ItemID); err != nil {
-			return op, false, err
+		if _, err := tx.ExecContext(ctx, `UPDATE episodes SET offloaded_at=? WHERE id=? AND media_item_id=?`, now, id, rec.Op.ItemID); err != nil {
+			return err
 		}
 	}
-	if err = insertOutboxTx(ctx, tx, rec.Outbox, now); err != nil {
-		return op, false, err
+	if err := insertOutboxTx(ctx, tx, rec.Outbox, now); err != nil {
+		return err
 	}
-	return op, false, tx.Commit()
+	return nil
+}
+
+// SetQueuedOffloadReason records a temporary blocker without committing effects.
+func (d *DB) SetQueuedOffloadReason(ctx context.Context, id, reason string) error {
+	_, err := d.W.ExecContext(ctx, `UPDATE offload_operations SET last_error=?,updated_at=? WHERE operation_id=? AND state='queued'`, reason, time.Now().UnixMilli(), id)
+	return err
+}
+
+// ReviewQueuedOffload ends a queued intent whose confirmed inputs changed.
+func (d *DB) ReviewQueuedOffload(ctx context.Context, id, reason string) error {
+	_, err := d.W.ExecContext(ctx, `UPDATE offload_operations SET state='needs_review',last_error=?,updated_at=? WHERE operation_id=? AND state='queued'`, reason, time.Now().UnixMilli(), id)
+	return err
 }
 
 // GetOffloadOperation returns one operation or ErrNotFound.
@@ -158,14 +232,14 @@ func (d *DB) GetOffloadOperation(ctx context.Context, id string) (OffloadOperati
 
 // OffloadOperationByRequest returns the operation a request id started.
 func (d *DB) OffloadOperationByRequest(ctx context.Context, requestID string) (OffloadOperation, error) {
-	op, err := scanOffload(d.R.QueryRowContext(ctx, offloadSelect+` WHERE request_id=?`, requestID))
+	op, err := scanOffload(d.R.QueryRowContext(ctx, offloadSelect+` WHERE request_id=? OR operation_id=(SELECT operation_id FROM offload_request_aliases WHERE request_id=?)`, requestID, requestID))
 	return op, wrapNotFound(err)
 }
 
 // OpenOffloadOperations lists every operation with deletes still to do,
 // oldest first: what a restart resumes.
 func (d *DB) OpenOffloadOperations(ctx context.Context) ([]OffloadOperation, error) {
-	rows, err := d.R.QueryContext(ctx, offloadSelect+` WHERE state IN ('deleting','waiting','retrying','stopping') ORDER BY created_at`)
+	rows, err := d.R.QueryContext(ctx, offloadSelect+` WHERE state IN ('queued','deleting','waiting','retrying','stopping') ORDER BY state='queued', rowid`)
 	if err != nil {
 		return nil, err
 	}
@@ -264,7 +338,7 @@ func (d *DB) CompleteOffload(ctx context.Context, id string, result json.RawMess
 // whether it did (false: already stopping or ended). Nothing else changes: the
 // worker finishes the stop (FinishStopOffload) once the runner is out.
 func (d *DB) RequestStopOffload(ctx context.Context, id string) (bool, error) {
-	res, err := d.W.ExecContext(ctx, `UPDATE offload_operations SET state='stopping',updated_at=? WHERE operation_id=? AND state IN ('deleting','waiting','retrying')`,
+	res, err := d.W.ExecContext(ctx, `UPDATE offload_operations SET state=CASE state WHEN 'queued' THEN 'cancelled' ELSE 'stopping' END,last_error='',updated_at=? WHERE operation_id=? AND state IN ('queued','deleting','waiting','retrying')`,
 		time.Now().UnixMilli(), id)
 	if err != nil {
 		return false, err
@@ -282,6 +356,8 @@ type OffloadStop struct {
 	// Fileless are in-scope episodes that had no file at plan time: nothing
 	// of them was deleted, so Stop un-offloads them.
 	Fileless []int64
+	Episodes []int64
+	Seasons  []int
 	// History is the `offloaded` event for what was deleted (nil: nothing).
 	History *HistoryWrite
 	// Keep is Cinema's narrowed outbox (what was deleted); every other
@@ -318,9 +394,9 @@ func (d *DB) FinishStopOffload(ctx context.Context, id string, st OffloadStop) (
 		sql  string
 		args []any
 	}{
-		{`UPDATE media_items SET offloaded_at=0 WHERE id=? AND offloaded_at!=0 AND (? OR EXISTS (SELECT 1 FROM media_files f WHERE f.media_item_id=media_items.id))`, []any{itemID, clearItem}},
-		{`UPDATE episodes SET offloaded_at=0 WHERE media_item_id=? AND offloaded_at!=0 AND (id IN (` + idList(st.Fileless) + `) OR EXISTS (SELECT 1 FROM media_file_episodes l WHERE l.episode_id=episodes.id))`, []any{itemID}},
-		{`UPDATE seasons SET offloaded_at=0 WHERE media_item_id=? AND offloaded_at!=0
+		{`UPDATE media_items SET offloaded_at=0 WHERE id=? AND offloaded_at!=0 AND ?`, []any{itemID, clearItem}},
+		{`UPDATE episodes SET offloaded_at=0 WHERE media_item_id=? AND offloaded_at!=0 AND id IN (` + idList(st.Episodes) + `) AND (id IN (` + idList(st.Fileless) + `) OR EXISTS (SELECT 1 FROM media_file_episodes l WHERE l.episode_id=episodes.id))`, []any{itemID}},
+		{`UPDATE seasons SET offloaded_at=0 WHERE media_item_id=? AND offloaded_at!=0 AND number IN (` + intList(st.Seasons) + `)
 			AND NOT EXISTS (SELECT 1 FROM episodes e WHERE e.media_item_id=seasons.media_item_id AND e.season_number=seasons.number AND e.offloaded_at!=0)`, []any{itemID}},
 	} {
 		if _, err := tx.ExecContext(ctx, q.sql, q.args...); err != nil {
@@ -364,7 +440,7 @@ func (d *DB) OpenOffloadForItem(ctx context.Context, itemID int64) (string, erro
 // LatestEndedOffloadForItem is the newest finished operation (complete,
 // cancelled or failed) on the item, not dismissed, ended since `since`.
 func (d *DB) LatestEndedOffloadForItem(ctx context.Context, itemID, since int64) (OffloadOperation, bool, error) {
-	op, err := scanOffload(d.R.QueryRowContext(ctx, offloadSelect+` WHERE media_item_id=? AND state IN ('complete','cancelled','failed') AND dismissed_at=0 AND updated_at>=? ORDER BY created_at DESC LIMIT 1`, itemID, since))
+	op, err := scanOffload(d.R.QueryRowContext(ctx, offloadSelect+` WHERE media_item_id=? AND state IN ('complete','cancelled','failed','needs_review') AND dismissed_at=0 AND updated_at>=? ORDER BY created_at DESC LIMIT 1`, itemID, since))
 	if errors.Is(err, sql.ErrNoRows) {
 		return OffloadOperation{}, false, nil
 	}
@@ -373,7 +449,7 @@ func (d *DB) LatestEndedOffloadForItem(ctx context.Context, itemID, since int64)
 
 // DismissOffload hides a finished operation from the status panel.
 func (d *DB) DismissOffload(ctx context.Context, id string) (bool, error) {
-	res, err := d.W.ExecContext(ctx, `UPDATE offload_operations SET dismissed_at=? WHERE operation_id=? AND state IN ('complete','cancelled','failed')`, time.Now().UnixMilli(), id)
+	res, err := d.W.ExecContext(ctx, `UPDATE offload_operations SET dismissed_at=? WHERE operation_id=? AND state IN ('complete','cancelled','failed','needs_review')`, time.Now().UnixMilli(), id)
 	if err != nil {
 		return false, err
 	}
@@ -622,4 +698,43 @@ func (d *DB) HouseholdOffloadExclusions(ctx context.Context, id string) (map[str
 		out[path] = true
 	}
 	return out, rows.Err()
+}
+
+// OffloadOperationsForItem lists open and recent undismissed operations.
+func (d *DB) OffloadOperationsForItem(ctx context.Context, itemID, since int64) ([]OffloadOperation, error) {
+	return d.listOffloadOperations(ctx, `WHERE media_item_id=? AND dismissed_at=0
+		AND (state IN ('queued','deleting','waiting','retrying','stopping') OR updated_at>=?) ORDER BY rowid`, itemID, since)
+}
+
+// ActiveOffloadsForItem lists confirmed intents and active writers.
+func (d *DB) ActiveOffloadsForItem(ctx context.Context, itemID int64) ([]OffloadOperation, error) {
+	return d.listOffloadOperations(ctx, `WHERE media_item_id=? AND state IN ('queued','deleting','waiting','retrying','stopping') ORDER BY rowid`, itemID)
+}
+
+func (d *DB) listOffloadOperations(ctx context.Context, filter string, args ...any) ([]OffloadOperation, error) {
+	rows, err := d.R.QueryContext(ctx, offloadSelect+" "+filter, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var ops []OffloadOperation
+	for rows.Next() {
+		op, err := scanOffload(rows)
+		if err != nil {
+			return nil, err
+		}
+		ops = append(ops, op)
+	}
+	return ops, rows.Err()
+}
+
+// HeadOffloadForItem returns the active writer or first confirmed intent.
+func (d *DB) HeadOffloadForItem(ctx context.Context, itemID int64) (string, error) {
+	var id string
+	err := d.R.QueryRowContext(ctx, `SELECT operation_id FROM offload_operations WHERE media_item_id=?
+		AND state IN ('queued','deleting','waiting','retrying','stopping') ORDER BY state='queued', rowid LIMIT 1`, itemID).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return id, err
 }

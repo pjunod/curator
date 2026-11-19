@@ -22,13 +22,15 @@ export function matchesPresence(item: MediaItemSummary, presence: LibraryPresenc
   return true
 }
 
-export const OFFLOAD_RUNNING = new Set(['deleting', 'waiting', 'retrying', 'stopping'])
+export const OFFLOAD_RUNNING = new Set(['queued', 'deleting', 'waiting', 'retrying', 'stopping'])
 
 export const freeText = (bytes: number): string => (bytes < 0 ? 'unknown' : formatBytes(bytes))
 
 /** What a running or finished operation reads as, in plain words. */
 export function offloadText(op: OffloadOperation): string {
   switch (op.state) {
+    case 'queued': return op.lastError || 'Queued. Files stay in place until the Offload starts.'
+    case 'needs_review': return op.lastError || 'The reviewed scope changed. Preview it again.'
     case 'complete': return `Offloaded ${op.label ?? ''}: ${op.filesDone} file${op.filesDone === 1 ? '' : 's'} deleted · ${formatBytes(op.bytesFreed)} freed.`.replace('  ', ' ')
     case 'cancelled': return `Stopped. ${op.filesDone} of ${op.filesTotal} files were deleted; the rest stay on disk.`
     case 'failed': return `The Offload failed: ${op.lastError ?? 'unknown error'}.`

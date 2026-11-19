@@ -82,7 +82,7 @@ func (d *DB) LookupAvailability(ctx context.Context, targets []domain.Availabili
  (SELECT COUNT(*) FROM media_files f JOIN json_each(COALESCE(p.present_file_ids,'[]')) x ON x.value=f.id WHERE f.media_item_id=m.id AND COALESCE(f.copy_id,0)=0),
  (SELECT COUNT(*) FROM media_files f JOIN json_each(COALESCE(p.present_file_ids,'[]')) x ON x.value=f.id WHERE f.media_item_id=m.id AND COALESCE(f.copy_id,0)=0 AND NOT EXISTS(SELECT 1 FROM media_file_episodes fe JOIN episodes e ON e.id=fe.episode_id WHERE fe.media_file_id=f.id AND e.media_item_id=m.id)),
  COALESCE(p.checked_at,0),COALESCE(p.valid=1 AND p.presence_fingerprint=`+presenceFingerprintSQL+` AND p.shared_revision=sr.revision AND p.scope_path=m.path AND p.root_id=m.root_folder_id AND p.root_path=rf.path AND pr.identity=p.root_identity AND p.root_generation=pr.generation,0),
- EXISTS(SELECT 1 FROM offload_operations o WHERE o.media_item_id=m.id AND o.state NOT IN ('complete','cancelled','failed')) OR
+ EXISTS(SELECT 1 FROM offload_operations o WHERE o.media_item_id=m.id AND o.state IN ('deleting','waiting','retrying','stopping')) OR
  EXISTS(SELECT 1 FROM rematch_operations o WHERE (o.source_item_id=m.id OR o.target_item_id=m.id) AND o.state NOT IN ('complete','cancelled','failed')) OR
  EXISTS(SELECT 1 FROM replacement_operations o WHERE o.media_item_id=m.id AND o.state NOT IN ('complete','cancelled','failed')),
  EXISTS(SELECT 1 FROM downloads d WHERE d.media_item_id=m.id AND COALESCE(d.copy_id,0)=0 AND d.superseded=0 AND d.state IN ('planned','submitting','grabbed','downloading','held','downloaded','awaiting_import','importing') AND NOT EXISTS(SELECT 1 FROM import_attempt_controls c WHERE c.download_id=d.id AND c.generation_key=d.generation_key AND c.outcome='cancelled'))

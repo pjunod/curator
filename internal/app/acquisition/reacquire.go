@@ -131,6 +131,32 @@ func (sc reacquireScope) offloadedIn() bool {
 	return false
 }
 
+// reacquireOffloadConflict uses confirmed coverage, including widened episodes.
+func (s *Service) reacquireOffloadConflict(ctx context.Context, sc reacquireScope) (bool, error) {
+	ops, err := s.db.ActiveOffloadsForItem(ctx, sc.item.ID)
+	if err != nil {
+		return false, err
+	}
+	for _, op := range ops {
+		if sc.clear == "movie" || sc.clear == "whole" || op.Scope == "item" {
+			return true, nil
+		}
+		var stored offloadStored
+		if err := json.Unmarshal(op.Plan, &stored); err != nil || stored.Request.Scope == "" {
+			return true, nil
+		}
+		if sc.clear == "season" && op.Scope == "season" && sc.season == stored.Request.Season {
+			return true, nil
+		}
+		for _, id := range stored.Episodes {
+			if sc.episodes[id] {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
+}
+
 // Reacquire clears Offload inside the scope, monitors it and searches. It
 // answers at once with state searching; the search runs in the background,
 // admitted as work. Asking again is harmless: a scope that is no longer
@@ -140,9 +166,9 @@ func (s *Service) Reacquire(ctx context.Context, req ReacquireRequest) (Reacquir
 	if err != nil {
 		return ReacquireResult{}, err
 	}
-	if open, err := s.db.OpenOffloadForItem(ctx, req.ItemID); err != nil {
+	if open, err := s.reacquireOffloadConflict(ctx, sc); err != nil {
 		return ReacquireResult{}, err
-	} else if open != "" && sc.offloadedIn() {
+	} else if open {
 		return ReacquireResult{MediaItemID: req.ItemID, State: ReacquireOffloading, Message: ErrOffloadBusy.Error()}, ErrOffloadBusy
 	}
 	// Serialised with Offload, and with an automatic grab, on the item's
@@ -167,10 +193,10 @@ func (s *Service) Reacquire(ctx context.Context, req ReacquireRequest) (Reacquir
 	}
 	// An Offload can start between the first check and the reservation: look
 	// again now that nothing else can start one.
-	if open, err := s.db.OpenOffloadForItem(ctx, req.ItemID); err != nil {
+	if open, err := s.reacquireOffloadConflict(ctx, sc); err != nil {
 		unlock()
 		return ReacquireResult{}, err
-	} else if open != "" && sc.offloadedIn() {
+	} else if open {
 		unlock()
 		return ReacquireResult{MediaItemID: req.ItemID, State: ReacquireOffloading, Message: ErrOffloadBusy.Error()}, ErrOffloadBusy
 	}
@@ -372,13 +398,14 @@ func (s *Service) ReacquireStatus(ctx context.Context, req ReacquireRequest) (Re
 
 func (s *Service) reacquireState(ctx context.Context, sc reacquireScope) (ReacquireResult, error) {
 	out := ReacquireResult{MediaItemID: sc.item.ID, State: ReacquireNotOffloaded}
+	if open, err := s.reacquireOffloadConflict(ctx, sc); err != nil {
+		return out, err
+	} else if open {
+		out.State, out.Message = ReacquireOffloading, "an offload of this scope is queued or running"
+		return out, nil
+	}
 	if sc.offloadedIn() {
 		out.State, out.Message = ReacquireOffloaded, "still offloaded"
-		if open, err := s.db.OpenOffloadForItem(ctx, sc.item.ID); err != nil {
-			return out, err
-		} else if open != "" {
-			out.State, out.Message = ReacquireOffloading, "an offload of this title is running"
-		}
 		return out, nil
 	}
 	downloads, err := s.db.ListDownloadReservations(ctx)

@@ -3,6 +3,7 @@
 package acquisition
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"syscall"
@@ -39,4 +40,22 @@ func offloadLinkCount(path string) uint64 {
 		return uint64(st.Nlink) //nolint:unconvert // types differ per-OS
 	}
 	return 1
+}
+
+// offloadPathIdentity describes an existing storage directory or regular file.
+// Directory timestamps are omitted because deleting a disjoint scope can change them.
+func offloadPathIdentity(path string, file bool) string {
+	info, err := os.Lstat(path)
+	if err != nil || file && !info.Mode().IsRegular() {
+		return ""
+	}
+	st, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		return ""
+	}
+	id := fmt.Sprintf("%d:%d", st.Dev, st.Ino)
+	if file {
+		id += fmt.Sprintf(":%d:%d", info.Size(), info.ModTime().UnixNano())
+	}
+	return id
 }

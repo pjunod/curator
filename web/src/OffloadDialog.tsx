@@ -6,7 +6,7 @@ import {
   OFFLOAD_RUNNING,
   cancelOffload,
   fmtBytes,
-  getLibraryOffload,
+  listLibraryOffloads,
   getOffload,
   previewOffload,
   startOffload,
@@ -26,14 +26,15 @@ export const freeText = (n: number) => (n < 0 ? 'unknown' : fmtBytes(n))
  * space before and after, what blocks it, and what Cinema will do (advisory).
  * Progress and Stop stay in the dialog until it is done.
  */
-export function OffloadDialog({ itemId, title, request, onClose }: {
+export function OffloadDialog({ itemId, title, request, initialOperation, onClose }: {
   itemId: number
   title: string
   request: OffloadRequest
+  initialOperation?: OffloadOperation
   onClose: () => void
 }) {
   const qc = useQueryClient()
-  const [operation, setOperation] = useState<OffloadOperation | null>(null)
+  const [operation, setOperation] = useState<OffloadOperation | null>(initialOperation ?? null)
   const preview = useQuery({
     queryKey: ['offload-preview', itemId, request],
     queryFn: () => previewOffload(itemId, request),
@@ -44,7 +45,10 @@ export function OffloadDialog({ itemId, title, request, onClose }: {
     // One request id per preview: a retry of the same click is the same
     // request, and the server answers with the operation it already started.
     mutationFn: ({ p, requestId }: { p: OffloadPreview; requestId: string }) => startOffload(itemId, { ...request, requestId, fingerprint: p.fingerprint }),
-    onSuccess: (op) => setOperation(op),
+    onSuccess: (op) => {
+      setOperation(op)
+      void qc.invalidateQueries({ queryKey: ['library-offloads', itemId] })
+    },
     onError: (e) => {
       // Blocked or stale: the preview says what changed.
       if (e instanceof ApiError && e.status === 409) void preview.refetch()
@@ -66,12 +70,12 @@ export function OffloadDialog({ itemId, title, request, onClose }: {
     }
   }, [over, qc])
   const stop = useMutation({ mutationFn: () => cancelOffload(op!.operationId), onSuccess: () => void status.refetch() })
-  // An Offload already running for this title (the dialog was closed while it
-  // deleted) is followed here: progress and Stop, not a second preview.
-  const open = useQuery({ queryKey: ['library-offload', itemId], queryFn: () => getLibraryOffload(itemId), enabled: !operation, retry: false })
+  const [reviewing, setReviewing] = useState(false)
+  const operations = useQuery({ queryKey: ['library-offloads', itemId], queryFn: () => listLibraryOffloads(itemId), enabled: !operation && !reviewing, retry: false })
   useEffect(() => {
-    if (open.data && OFFLOAD_RUNNING.has(open.data.state) && !operation) setOperation(open.data)
-  }, [open.data, operation])
+    const selected = operations.data?.find((entry) => OFFLOAD_RUNNING.has(entry.state) && matchesScope(entry, request))
+    if (selected && !operation && !reviewing) setOperation(selected)
+  }, [operations.data, operation, request, reviewing])
 
   const p = preview.data
   const fingerprint = p?.fingerprint ?? ''
@@ -81,7 +85,13 @@ export function OffloadDialog({ itemId, title, request, onClose }: {
   return (
     <ActionDialog title={`Offload ${title}`} className="rmd" onClose={onClose}>
       {op ? (
-        <OffloadProgress op={op} stopping={stop.isPending} onStop={() => stop.mutate()} stopError={stop.error as Error | null} onClose={onClose} />
+        <OffloadProgress op={op} stopping={stop.isPending} onStop={() => stop.mutate()} stopError={stop.error as Error | null} onClose={onClose}
+          onReview={() => {
+            setReviewing(true)
+            setSure(false)
+            setOperation(null)
+            void preview.refetch()
+          }} />
       ) : (
         <>
           {preview.isFetching && !p && <span className="muted">Working out what goes…</span>}
@@ -117,8 +127,9 @@ export function OffloadDialog({ itemId, title, request, onClose }: {
               {p.cinema && <span className={p.cinemaWarning ? 'warning-text' : 'muted'} data-testid="offload-cinema">{p.cinema}.</span>}
               {p.blocked && (
                 <div className="banner warning" role="alert">
-                  {p.blocked.message}.{' '}
-                  <button type="button" onClick={() => void preview.refetch()}>Wait for it</button>
+                  {p.blocked.message}
+                  {p.blocked.reason !== 'unmounted' && ' You can queue this Offload while it waits.'}
+                  {p.blocked.reason === 'unmounted' && <button type="button" onClick={() => void preview.refetch()}>Refresh preview</button>}
                 </div>
               )}
               {run.isError && <div className="banner warning" role="alert">{(run.error as Error).message}</div>}
@@ -130,9 +141,9 @@ export function OffloadDialog({ itemId, title, request, onClose }: {
                 <span className="muted">{p.summary}</span>
                 <div className="row-actions">
                   <button type="button" onClick={onClose}>Cancel</button>
-                  <button type="button" className="btn-danger" disabled={Boolean(p.blocked) || !sure || run.isPending || preview.isFetching}
+                  <button type="button" className="btn-danger" disabled={p.blocked?.reason === 'unmounted' || !sure || run.isPending || preview.isFetching}
                     onClick={() => run.mutate({ p, requestId })}>
-                    {run.isPending ? 'Starting…' : 'Offload'}
+                    {run.isPending ? 'Queuing…' : 'Queue Offload'}
                   </button>
                 </div>
               </div>
@@ -147,6 +158,8 @@ export function OffloadDialog({ itemId, title, request, onClose }: {
 /** The line a finished or running operation reads as. */
 export function offloadText(op: OffloadOperation): string {
   switch (op.state) {
+    case 'queued': return op.lastError || 'Queued. Files stay in place until the Offload starts.'
+    case 'needs_review': return op.lastError || 'The reviewed scope changed. Preview it again.'
     case 'complete': return `Offloaded ${op.label ?? ''}: ${op.filesDone} file${op.filesDone === 1 ? '' : 's'} deleted · ${fmtBytes(op.bytesFreed)} freed.`.replace('  ', ' ')
     case 'cancelled': return `Stopped. ${op.filesDone} of ${op.filesTotal} files were deleted; the rest stay on disk.`
     case 'failed': return `The Offload failed: ${op.lastError ?? 'unknown error'}.`
@@ -157,11 +170,15 @@ export function offloadText(op: OffloadOperation): string {
   }
 }
 
-function OffloadProgress({ op, stopping, onStop, stopError, onClose }: { op: OffloadOperation; stopping: boolean; onStop: () => void; stopError: Error | null; onClose: () => void }) {
+function matchesScope(op: OffloadOperation, request: OffloadRequest): boolean {
+  return op.scope === request.scope && (op.scope !== 'season' || op.season === request.season) && (op.scope !== 'episode' || op.episodeId === request.episodeId)
+}
+
+function OffloadProgress({ op, stopping, onStop, stopError, onClose, onReview }: { op: OffloadOperation; stopping: boolean; onStop: () => void; stopError: Error | null; onClose: () => void; onReview: () => void }) {
   const running = OFFLOAD_RUNNING.has(op.state)
   return (
     <div className="rmd-progress">
-      <ActionNotice warning={op.state === 'failed' || op.state === 'retrying' || op.state === 'waiting'}>{offloadText(op)}</ActionNotice>
+      <ActionNotice warning={op.state === 'failed' || op.state === 'needs_review' || op.state === 'retrying' || op.state === 'waiting'}>{offloadText(op)}</ActionNotice>
       {op.filesTotal > 0 && running && <progress max={op.filesTotal} value={op.filesDone} aria-label="Files deleted" />}
       {(op.failed ?? []).map((f) => <p key={f} className="warning-text small mono">{f}</p>)}
       {op.cinemaLine && <p className="muted">{op.cinemaLine}</p>}
@@ -169,10 +186,34 @@ function OffloadProgress({ op, stopping, onStop, stopError, onClose }: { op: Off
       <div className="rmd-foot">
         <span className="muted">Operation {op.operationId}</span>
         <div className="row-actions">
+          {op.state === 'needs_review' && <button type="button" onClick={onReview}>Refresh preview</button>}
           {op.stoppable && <button type="button" className="btn-danger" disabled={stopping} onClick={onStop}>{stopping ? 'Stopping…' : 'Stop'}</button>}
           <button type="button" className="btn-accent" onClick={onClose}>{running ? 'Close (keeps running)' : 'Done'}</button>
         </div>
       </div>
     </div>
+  )
+}
+
+export function OffloadOperations({ itemId, onOpen }: { itemId: number; onOpen: (op: OffloadOperation) => void }) {
+  const operations = useQuery({
+    queryKey: ['library-offloads', itemId],
+    queryFn: () => listLibraryOffloads(itemId),
+    retry: false,
+    refetchInterval: (q) => q.state.data?.some((op) => OFFLOAD_RUNNING.has(op.state)) ? 1000 : false,
+  })
+  if (!operations.data?.length) return null
+  return (
+    <section aria-label="Offload operations">
+      <ul className="rmd-plan">
+        {operations.data.map((op) => (
+          <li className="rmd-line" key={op.operationId}>
+            <b>{op.label ?? 'Offload'}</b>
+            <span>{offloadText(op)}</span>
+            <button type="button" onClick={() => onOpen(op)}>{op.state === 'needs_review' ? 'Review' : 'Details'}</button>
+          </li>
+        ))}
+      </ul>
+    </section>
   )
 }

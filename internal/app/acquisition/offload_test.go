@@ -86,7 +86,7 @@ func (f offloadFixture) wait(t *testing.T, id string) OffloadStatus {
 			t.Fatal(err)
 		}
 		switch st.State {
-		case "complete", "cancelled", "failed":
+		case "complete", "cancelled", "failed", "needs_review":
 			time.Sleep(20 * time.Millisecond) // the goroutine releases the lease just after
 			return st
 		}
@@ -111,6 +111,27 @@ func (f offloadFixture) waitState(t *testing.T, id, state string) OffloadStatus 
 	}
 	t.Fatalf("offload %s never reached %s", id, state)
 	return OffloadStatus{}
+}
+
+// stageActive saves a confirmed operation at the point just before its first unlink.
+func (f offloadFixture) stageActive(ctx context.Context, req OffloadRequest) (sqlite.OffloadOperation, error) {
+	record, plan, err := f.svc.reviewedOffload(ctx, req)
+	if err != nil {
+		return sqlite.OffloadOperation{}, err
+	}
+	op, _, err := f.db.CreateOffloadOperation(ctx, record)
+	if err != nil {
+		return op, err
+	}
+	activation, err := f.svc.offloadActivation(ctx, op, plan)
+	if err != nil {
+		return op, err
+	}
+	started, err := f.db.ActivateOffload(ctx, activation)
+	if err == nil && !started {
+		return op, errors.New("could not activate the offload fixture")
+	}
+	return op, err
 }
 
 func wantedIDs(t *testing.T, svc *Service) []string {
@@ -395,7 +416,7 @@ func TestOffloadResumesAfterCrashMidDelete(t *testing.T) {
 	// Record the operation exactly as Start does, but do not run it: the
 	// process "crashed" after deleting the video's bytes but before the rest.
 	req := OffloadRequest{ItemID: m.ID, Scope: "item", RequestID: "req-crash", PlanFingerprint: p.Fingerprint}
-	op, err := f.svc.startOffloadLocked(ctx, req)
+	op, err := f.stageActive(ctx, req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -423,7 +444,7 @@ func TestOffloadWaitsWhileTheShareIsNotMounted(t *testing.T) {
 	m, video, sub := f.movieWithFiles(t)
 	p := f.preview(t, OffloadRequest{ItemID: m.ID, Scope: "item"})
 	req := OffloadRequest{ItemID: m.ID, Scope: "item", RequestID: "req-mount", PlanFingerprint: p.Fingerprint}
-	op, err := f.svc.startOffloadLocked(ctx, req)
+	op, err := f.stageActive(ctx, req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -478,7 +499,7 @@ func TestOffloadUnlinkFailureIsAStateAndRetried(t *testing.T) {
 	m, video, _ := f.movieWithFiles(t)
 	p := f.preview(t, OffloadRequest{ItemID: m.ID, Scope: "item"})
 	req := OffloadRequest{ItemID: m.ID, Scope: "item", RequestID: "req-unlink", PlanFingerprint: p.Fingerprint}
-	op, err := f.svc.startOffloadLocked(ctx, req)
+	op, err := f.stageActive(ctx, req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -530,7 +551,7 @@ func TestOffloadStopKeepsWhatIsNotYetDeleted(t *testing.T) {
 	p := f.preview(t, req)
 	// Record without running; delete only e1, as an interrupted run would.
 	req.RequestID, req.PlanFingerprint = "req-stop", p.Fingerprint
-	op, err := f.svc.startOffloadLocked(ctx, req)
+	op, err := f.stageActive(ctx, req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -606,9 +627,12 @@ func TestOffloadSerialisesWithReacquireAndFencesDownloads(t *testing.T) {
 		t.Fatalf("download not fenced: %+v", p.Blocked)
 	}
 	req := OffloadRequest{ItemID: m.ID, Scope: "item", RequestID: "r", PlanFingerprint: p.Fingerprint}
-	var blocked *OffloadBlockedError
-	if _, err := f.svc.StartOffload(ctx, req); !errors.As(err, &blocked) {
-		t.Fatalf("start must be refused: %v", err)
+	op, err := f.svc.StartOffload(ctx, req)
+	if err != nil || op.State != "queued" {
+		t.Fatalf("confirmation should queue while the download is open: %+v, %v", op, err)
+	}
+	if mustItem(t, f.db, m.ID).Offloaded() {
+		t.Fatal("queueing changed the movie's offloaded state")
 	}
 }
 
@@ -676,7 +700,7 @@ func TestOffloadStopIsResumableAndUnoffloadsFilelessEpisodes(t *testing.T) {
 	req := OffloadRequest{ItemID: show.ID, Scope: "season", Season: 1}
 	p := f.preview(t, req)
 	req.RequestID, req.PlanFingerprint = "req-stop2", p.Fingerprint
-	op, err := f.svc.startOffloadLocked(ctx, req)
+	op, err := f.stageActive(ctx, req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -725,5 +749,76 @@ func TestOffloadStopIsResumableAndUnoffloadsFilelessEpisodes(t *testing.T) {
 	}
 	if pending != 1 {
 		t.Fatalf("deliveries: %+v", dels)
+	}
+}
+
+func TestQueuedOffloadKeepsSameTitleOrderAndRevalidatesFiles(t *testing.T) {
+	f := newOffloadFixture(t)
+	ctx := context.Background()
+	for _, season := range []int{2, 3} {
+		if _, err := f.db.W.ExecContext(ctx, `INSERT INTO seasons(media_item_id,number,monitored) VALUES(?,?,1)`, f.show, season); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := f.db.W.ExecContext(ctx, `INSERT INTO episodes(media_item_id,season_number,episode_number,title,air_date,monitored) VALUES(?,?,1,'Episode','2020-01-01',1)`, f.show, season); err != nil {
+			t.Fatal(err)
+		}
+	}
+	show := mustItem(t, f.db, f.show)
+	f.cinema(t, ports.FeatureOffload)
+	paths := make([]string, 3)
+	for i, season := range show.Seasons {
+		paths[i] = filepath.Join(show.Path, seasonLabel(season.Number), "episode.mkv")
+		f.file(t, show.ID, paths[i], "video", "", season.Episodes[0].ID)
+	}
+	_, release, err := f.svc.waitImportTarget(ctx, show.ID, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	queued := make([]sqlite.OffloadOperation, 3)
+	for i := range queued {
+		req := OffloadRequest{ItemID: show.ID, Scope: "season", Season: i + 1}
+		queued[i] = f.start(t, req, f.preview(t, req))
+		if queued[i].State != "queued" {
+			t.Fatalf("season %d did not queue: %+v", i+1, queued[i])
+		}
+		if del, err := f.db.OperationDeliveries(ctx, queued[i].ID); err != nil || len(del) != 0 {
+			t.Fatalf("queued season %d has deliveries: %+v, %v", i+1, del, err)
+		}
+	}
+	list, err := f.svc.ListOffloadsForItem(ctx, show.ID)
+	if err != nil || len(list) != len(queued) {
+		t.Fatalf("queued operations: %+v, %v", list, err)
+	}
+	for i, op := range list {
+		if op.ID != queued[i].ID || op.Season == nil || *op.Season != i+1 {
+			t.Fatalf("operation %d is in the wrong scope or order: %+v", i, op)
+		}
+	}
+	for _, season := range mustItem(t, f.db, show.ID).Seasons {
+		if season.Offloaded() {
+			t.Fatalf("queueing changed season %d", season.Number)
+		}
+	}
+	movie, _, _ := f.movieWithFiles(t)
+	movieReq := OffloadRequest{ItemID: movie.ID, Scope: "item"}
+	if done := f.wait(t, f.start(t, movieReq, f.preview(t, movieReq)).ID); done.State != "complete" {
+		t.Fatalf("an unrelated title did not complete while the show was busy: %+v", done)
+	}
+	// Replace Season 2's file with a different inode and the same byte count.
+	// The unchanged Season 3 must keep going after Season 2 needs review.
+	writeFile(t, paths[1]+".replacement", "other")
+	if err := os.Rename(paths[1]+".replacement", paths[1]); err != nil {
+		t.Fatal(err)
+	}
+	release()
+	f.svc.driveOffloads(ctx)
+	for i, want := range []string{"complete", "needs_review", "complete"} {
+		if done := f.wait(t, queued[i].ID); done.State != want {
+			t.Fatalf("season %d: got %+v, want %s", i+1, done, want)
+		}
+	}
+	if got, err := os.ReadFile(paths[1]); err != nil || string(got) != "other" {
+		t.Fatalf("unreviewed replacement did not survive: %q, %v", got, err)
 	}
 }

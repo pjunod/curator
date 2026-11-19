@@ -45,7 +45,7 @@ func (d *DB) ApplyLibraryScan(ctx context.Context, item domain.MediaItem, revisi
 		return result, ErrScanChanged
 	}
 	var busy bool
-	if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM rematch_operations WHERE (source_item_id=? OR target_item_id=?) AND state NOT IN ('complete','cancelled','failed')) OR EXISTS(SELECT 1 FROM offload_operations WHERE media_item_id=? AND state NOT IN ('complete','cancelled','failed')) OR EXISTS(SELECT 1 FROM replacement_operations WHERE media_item_id=? AND state NOT IN ('complete','cancelled','failed'))`, item.ID, item.ID, item.ID, item.ID).Scan(&busy); err != nil {
+	if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM rematch_operations WHERE (source_item_id=? OR target_item_id=?) AND state NOT IN ('complete','cancelled','failed')) OR EXISTS(SELECT 1 FROM offload_operations WHERE media_item_id=? AND state IN ('deleting','waiting','retrying','stopping')) OR EXISTS(SELECT 1 FROM replacement_operations WHERE media_item_id=? AND state NOT IN ('complete','cancelled','failed'))`, item.ID, item.ID, item.ID, item.ID).Scan(&busy); err != nil {
 		return result, err
 	}
 	if busy {

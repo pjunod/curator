@@ -27,10 +27,10 @@ import {
   SectionTitle,
 } from '../components/UI'
 import { useTheme } from '../theme'
-import type { BookType, MediaCopy, OffloadRequest, QualityProfile, ReleaseSearchScope, UpdateMediaItemRequest } from '../types'
+import type { BookType, MediaCopy, OffloadOperation, OffloadRequest, QualityProfile, ReleaseSearchScope, UpdateMediaItemRequest } from '../types'
 import { useResource } from '../useResource'
 import { ImportFileSheet } from './ImportFileSheet'
-import { OffloadSheet } from './OffloadSheet'
+import { OffloadOperations, OffloadSheet } from './OffloadSheet'
 import { seasonOffload } from '../offload'
 import { RematchSheet } from './RematchSheet'
 
@@ -46,7 +46,7 @@ export function MediaDetailScreen({ client, id, onBack, onInteractiveSearch, onO
   const [importing, setImporting] = useState(false)
   const [rematching, setRematching] = useState(false)
   // Offload… target (the title, a season or an episode) and which season shows its episodes.
-  const [offloading, setOffloading] = useState<{ request: OffloadRequest; label: string } | null>(null)
+  const [offloading, setOffloading] = useState<{ request: OffloadRequest; label: string; operation?: OffloadOperation } | null>(null)
   const [reacquiring, setReacquiring] = useState(false)
   const [openSeason, setOpenSeason] = useState<number | null>(null)
   const [seasonSaving, setSeasonSaving] = useState<number | null>(null)
@@ -282,13 +282,18 @@ export function MediaDetailScreen({ client, id, onBack, onInteractiveSearch, onO
           {(item.kind === 'movie' && item.offloaded) || (item.kind === 'series' && offloadedEpisodes > 0) ? (
             <Button label={reacquiring ? 'Re-acquiring…' : 'Re-acquire'} disabled={reacquiring} onPress={() => void reacquire({ scope: 'item' }, item.title)} />
           ) : null}
-          {offloading ? <OffloadSheet client={client} itemId={id} label={offloading.label} request={offloading.request} onClose={() => { setOffloading(null); void resource.refresh() }} /> : null}
+          {offloading ? <OffloadSheet client={client} itemId={id} label={offloading.label} request={offloading.request} initialOperation={offloading.operation} onClose={() => { setOffloading(null); void resource.refresh() }} /> : null}
           <Text style={[styles.actionHint, { color: theme.muted }]}>
             Search now grabs the best accepted release in the background. Interactive search lists every release the indexers return so you pick.
             {item.kind === 'series' && item.seasons.length === 0 ? ' Interactive search appears once this series has seasons.' : ''}
           </Text>
         </Panel>
 
+        <OffloadOperations client={client} itemId={id} sheetOpen={offloading != null} onOpen={(op) => setOffloading({
+          request: { scope: op.scope, season: op.season, episodeId: op.episodeId },
+          label: op.label ?? item.title,
+          operation: op,
+        })} />
         <ItemStatusPanel client={client} id={id} kind={item.kind} onInteractiveSearch={onInteractiveSearch} onOpenActivity={onOpenActivity} />
 
         {item.kind !== 'book' ? (
