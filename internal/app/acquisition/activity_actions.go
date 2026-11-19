@@ -570,7 +570,13 @@ func (s *Service) reconcileActivityScratch(ctx context.Context, dl sqlite.Downlo
 			p = fresh
 		}
 
-		if p.State == "cleaned" || p.State == "rolled_back" {
+		if p.State == "detached" && deleting {
+			if !s.removeCancelledSupersededScratch(targetCtx, p) {
+				release()
+				return fmt.Errorf("cleanup cannot verify the original temporary file in %s. Move the job to History to keep the record", filepath.Dir(p.Target))
+			}
+			_, e = s.db.W.ExecContext(targetCtx, `UPDATE import_placements SET state='rolled_back',data=json_set(data,'$.state','rolled_back'),updated_at=? WHERE id=? AND state='detached'`, time.Now().UnixMilli(), p.ID)
+		} else if p.State == "cleaned" || p.State == "rolled_back" || p.State == "detached" {
 			e = nil
 		} else if p.State == "committed" {
 			e = s.cleanupPlacement(targetCtx, p)
@@ -596,7 +602,11 @@ func (s *Service) reconcileActivityScratch(ctx context.Context, dl sqlite.Downlo
 			}
 		} else if p.PublishedFileGeneration != "" {
 			e = fmt.Errorf("an installed file is waiting for its original placement metadata; retry reconciliation")
-		} else if s.removeCancelledSupersededScratch(targetCtx, p) || (!deleting && absentUnpublishedDestination(p)) {
+		} else if !deleting && absentUnpublishedDestination(p) {
+			// Keep the old object and parent identity as a cleanup obligation.
+			// A later delete must still verify it, even after a successful retry.
+			_, e = s.db.W.ExecContext(targetCtx, `UPDATE import_placements SET state='detached',data=json_set(data,'$.state','detached'),updated_at=? WHERE id=? AND state IN ('prepared','retained')`, time.Now().UnixMilli(), p.ID)
+		} else if s.removeCancelledSupersededScratch(targetCtx, p) {
 			_, e = s.db.W.ExecContext(targetCtx, `UPDATE import_placements SET state='rolled_back',data=json_set(data,'$.state','rolled_back'),updated_at=? WHERE id=? AND state IN ('prepared','retained')`, time.Now().UnixMilli(), p.ID)
 		} else if _, statErr := os.Lstat(filepath.Dir(p.Target)); errors.Is(statErr, os.ErrNotExist) {
 			e = fmt.Errorf("the recorded import directory %s is missing. Move the job to History to keep the cleanup record and any remaining files", filepath.Dir(p.Target))
@@ -606,7 +616,7 @@ func (s *Service) reconcileActivityScratch(ctx context.Context, dl sqlite.Downlo
 		if e == nil {
 			// Only a proven terminal placement can settle the revoked authorization.
 			// A retry never reactivates the old grant.
-			_, e = s.db.W.ExecContext(targetCtx, `UPDATE import_publication_authorizations SET outcome='reconciled',resolution=CASE WHEN (SELECT state FROM import_placements WHERE id=placement_id) IN ('committed','cleaned') THEN 'operator_adopted' ELSE 'operator_disposed' END,resolved_at=? WHERE download_id=? AND generation_key=? AND placement_id=? AND (outcome='pending' OR resolution='retained_for_review') AND EXISTS(SELECT 1 FROM import_placements p WHERE p.id=placement_id AND p.state IN ('committed','cleaned','rolled_back'))`, time.Now().UnixMilli(), dl.ID, dl.GenerationKey, p.ID)
+			_, e = s.db.W.ExecContext(targetCtx, `UPDATE import_publication_authorizations SET outcome='reconciled',resolution=CASE WHEN (SELECT state FROM import_placements WHERE id=placement_id) IN ('committed','cleaned') THEN 'operator_adopted' ELSE 'operator_disposed' END,resolved_at=? WHERE download_id=? AND generation_key=? AND placement_id=? AND (outcome='pending' OR resolution='retained_for_review') AND EXISTS(SELECT 1 FROM import_placements p WHERE p.id=placement_id AND p.state IN ('committed','cleaned','rolled_back','detached'))`, time.Now().UnixMilli(), dl.ID, dl.GenerationKey, p.ID)
 		}
 		release()
 		if e != nil {

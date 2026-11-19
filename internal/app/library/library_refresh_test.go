@@ -330,6 +330,19 @@ func TestCorrectFilelessMovieAfterRefresh404(t *testing.T) {
 	if err != nil || len(issues) != 1 || issues[0].ID != item.ID || issues[0].Kind != "metadata" {
 		t.Fatalf("issues %+v %v", issues, err)
 	}
+	downloadID, err := db.InsertDownload(ctx, sqlite.Download{MediaItemID: item.ID, State: "failed", ReleaseTitle: "Old movie"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.W.ExecContext(ctx, "UPDATE downloads SET import_path='/completed/old-match' WHERE id=?", downloadID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = svc.CorrectMovieMatch(ctx, item.ID, 901, 902); !errors.Is(err, sqlite.ErrIdentityConflict) {
+		t.Fatalf("recoverable job lost original identity: %v", err)
+	}
+	if err = db.DeleteDownload(ctx, downloadID); err != nil {
+		t.Fatal(err)
+	}
 	fresh, err := svc.CorrectMovieMatch(ctx, item.ID, 901, 902)
 	if err != nil || fresh.ID != item.ID || fresh.IDs.TMDB != 902 || !fresh.Monitored {
 		t.Fatalf("corrected item %+v %v", fresh, err)

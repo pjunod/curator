@@ -372,12 +372,31 @@ func (d *DB) refreshMatchedMetadata(ctx context.Context, itemID int64, fresh dom
 		if stored.Kind != "movie" || stored.Source != "tmdb" || stored.TmdbID != oldID {
 			return ErrIdentityConflict
 		}
+		blockers, err := rematchBlockers(ctx, tx, itemID)
+		if err != nil {
+			return err
+		}
+		if len(blockers) > 0 {
+			b := blockers[0]
+			return fmt.Errorf("%w: resolve %s %s (%s) before changing the match", ErrIdentityConflict, b.Reason, b.Ref, b.State)
+		}
+		var requestID int64
+		if err = tx.QueryRowContext(ctx, `SELECT COALESCE(MIN(r.id), 0) FROM household_requests r
+            WHERE r.state IN ('pending','approved','acquiring','needs_review') AND
+            (r.library_item_id=? OR EXISTS (SELECT 1 FROM household_request_targets t WHERE t.request_id=r.id AND t.media_item_id=?))`, itemID, itemID).Scan(&requestID); err != nil {
+			return err
+		}
+		if requestID != 0 {
+			return fmt.Errorf("%w: resolve household request #%d before changing the match", ErrIdentityConflict, requestID)
+		}
 		var busy bool
-		if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM media_files WHERE media_item_id=?) OR EXISTS(SELECT 1 FROM downloads WHERE media_item_id=? AND state NOT IN ('failed','imported','notified'))`, itemID, itemID).Scan(&busy); err != nil {
+		if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM media_files WHERE media_item_id=?) OR EXISTS(SELECT 1 FROM downloads d WHERE media_item_id=? AND
+            (state='failed' AND (import_path<>'' OR save_path<>'') AND NOT EXISTS
+            (SELECT 1 FROM download_dispositions x WHERE x.download_id=d.id AND x.generation_key=d.generation_key)))`, itemID, itemID).Scan(&busy); err != nil {
 			return err
 		}
 		if busy {
-			return fmt.Errorf("%w: use Re-match for installed files and finish active downloads first", ErrIdentityConflict)
+			return fmt.Errorf("%w: use Re-match for installed files and finish or delete recoverable downloads first", ErrIdentityConflict)
 		}
 		merged = domain.ExternalIDs{}
 		if _, err = tx.ExecContext(ctx, `DELETE FROM media_aliases WHERE media_item_id=? AND role!='manual'`, itemID); err != nil {

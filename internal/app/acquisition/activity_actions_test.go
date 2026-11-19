@@ -188,7 +188,11 @@ func TestActivityActionsReconcileInterruptedScratch(t *testing.T) {
 				t.Fatalf("owned scratch was not removed: %v", err)
 			}
 			stored, err := db.GetPlacement(ctx, placementID)
-			if err != nil || stored.State != "rolled_back" {
+			wantState := "rolled_back"
+			if tc.missingParent {
+				wantState = "detached"
+			}
+			if err != nil || stored.State != wantState {
 				t.Fatalf("the placement still owns scratch: %+v err=%v", stored, err)
 			}
 			if tc.action == "retry" {

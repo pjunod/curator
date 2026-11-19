@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"github.com/pjunod/monarr/internal/domain"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -705,5 +706,23 @@ func TestHouseholdTransactionsRecheckActingIdentityAndKeepOtherMembersHistory(t 
 	}
 	if _, err = db.AccountSession(ctx, digest); err != nil {
 		t.Fatal("rejected mutation revoked unrelated owner", err)
+	}
+}
+
+func TestReplaceMovieMatchRejectsApprovedHouseholdTarget(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+	owner, digest := householdOwner(t, db)
+	plan, _ := householdMoviePlan(t, db, owner, digest, "correct-match")
+	if err := db.ApproveHouseholdRequest(ctx, owner, digest, plan); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.W.ExecContext(ctx, "UPDATE media_items SET source='tmdb' WHERE id=?", plan.Item.ID); err != nil {
+		t.Fatal(err)
+	}
+	fresh := plan.Item
+	fresh.IDs.TMDB = 551
+	if err := db.ReplaceMovieMatch(ctx, plan.Item.ID, 550, fresh); !errors.Is(err, ErrIdentityConflict) || !strings.Contains(err.Error(), "household request #") {
+		t.Fatalf("approved request lost its original match: %v", err)
 	}
 }
