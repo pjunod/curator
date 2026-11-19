@@ -770,7 +770,7 @@ func (s *Service) reserveItem(ctx context.Context, itemID int64) (func(), error)
 }
 
 // launchOffload drives one operation within the process and volume limits.
-func (s *Service) launchOffload(ctx context.Context, op sqlite.OffloadOperation, release func()) bool {
+func (s *Service) launchOffload(ctx context.Context, op sqlite.OffloadOperation, retryNow bool, release func()) bool {
 	var stored offloadStored
 	_ = json.Unmarshal(op.Plan, &stored)
 	var volumes []string
@@ -784,6 +784,7 @@ func (s *Service) launchOffload(ctx context.Context, op sqlite.OffloadOperation,
 		s.offloadVolumes = map[string][]string{}
 	}
 	_, running := s.offloadVolumes[op.ID]
+	_, deferred := s.offloadDeferred[op.ID]
 	full := len(s.offloadVolumes) >= offloadParallelism
 	for _, volume := range volumes {
 		count := 0
@@ -797,7 +798,7 @@ func (s *Service) launchOffload(ctx context.Context, op sqlite.OffloadOperation,
 		}
 		full = full || count >= offloadVolumeParallelism
 	}
-	if running || full {
+	if running || full || deferred && !retryNow {
 		s.rematchMu.Unlock()
 		release()
 		return false
@@ -808,14 +809,19 @@ func (s *Service) launchOffload(ctx context.Context, op sqlite.OffloadOperation,
 	go func() {
 		defer s.importWG.Done()
 		defer func() {
-			release()
+			current, err := s.db.GetOffloadOperation(ctx, op.ID)
 			s.rematchMu.Lock()
+			if err != nil || sqlite.OffloadOpen(current.State) {
+				if s.offloadDeferred == nil {
+					s.offloadDeferred = make(map[string]struct{})
+				}
+				s.offloadDeferred[op.ID] = struct{}{}
+			}
 			delete(s.offloadVolumes, op.ID)
 			s.rematchMu.Unlock()
+			release()
 			if ctx.Err() == nil {
-				if current, err := s.db.GetOffloadOperation(ctx, op.ID); err == nil && !sqlite.OffloadOpen(current.State) {
-					s.driveOffloads(s.rematchBase())
-				}
+				s.dispatchOffloads(s.rematchBase())
 			}
 		}()
 		if err := s.runOffload(ctx, op.ID); err != nil {
@@ -832,10 +838,17 @@ func (s *Service) offloadRunning(id string) bool {
 	return ok
 }
 
-// driveOffloads starts every open operation this process is not already
-// driving: what a restart interrupted, a share that came back, a delete that
-// failed. It runs on the Re-match worker's tick.
+// driveOffloads retries unfinished attempts once per Re-match worker tick.
 func (s *Service) driveOffloads(ctx context.Context) {
+	s.rematchMu.Lock()
+	clear(s.offloadDeferred)
+	s.rematchMu.Unlock()
+	s.dispatchOffloads(ctx)
+}
+
+// dispatchOffloads fills free slots without immediately retrying the work that
+// released them. The title head check still orders work within each title.
+func (s *Service) dispatchOffloads(ctx context.Context) {
 	ops, err := s.db.OpenOffloadOperations(ctx)
 	if err != nil {
 		s.log.Warn("offload operations unreadable; retried on the next pass", "err", err)
@@ -845,7 +858,10 @@ func (s *Service) driveOffloads(ctx context.Context) {
 		if ctx.Err() != nil {
 			return
 		}
-		if !s.driveOffload(ctx, op) {
+		s.rematchMu.Lock()
+		_, deferred := s.offloadDeferred[op.ID]
+		s.rematchMu.Unlock()
+		if !deferred && !s.tryDriveOffload(ctx, op, false) {
 			return // paused for a drain: resumed after it
 		}
 	}
@@ -854,6 +870,11 @@ func (s *Service) driveOffloads(ctx context.Context) {
 // driveOffload starts one open operation this process is not driving. It
 // reports false when work is paused for a drain.
 func (s *Service) driveOffload(ctx context.Context, op sqlite.OffloadOperation) bool {
+	// An explicit Stop can settle immediately after a failed delete attempt.
+	return s.tryDriveOffload(ctx, op, op.State == "stopping")
+}
+
+func (s *Service) tryDriveOffload(ctx context.Context, op sqlite.OffloadOperation, retryNow bool) bool {
 	if !sqlite.OffloadOpen(op.State) || s.offloadRunning(op.ID) {
 		return true
 	}
@@ -872,7 +893,7 @@ func (s *Service) driveOffload(ctx context.Context, op sqlite.OffloadOperation) 
 		}
 		return true
 	}
-	s.launchOffload(leaseCtx, op, func() { release(); releaseWork() })
+	s.launchOffload(leaseCtx, op, retryNow, func() { release(); releaseWork() })
 	return true
 }
 

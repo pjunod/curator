@@ -155,6 +155,7 @@ type Service struct {
 	rematchCancels    map[string]context.CancelFunc // operations this process is driving
 	rematchCtx        context.Context               // the importers' lifetime, once started
 	offloadVolumes    map[string][]string           // active Offloads and their volumes (guarded by rematchMu)
+	offloadDeferred   map[string]struct{}           // unfinished attempts until the next worker tick (guarded by rematchMu)
 	db                *sqlite.DB
 	bus               *bus.Bus
 	log               *slog.Logger
