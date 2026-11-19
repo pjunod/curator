@@ -308,7 +308,7 @@ func (s *Service) checkActivityReceipt(ctx context.Context, dl sqlite.Download, 
 		return fmt.Errorf("the transfer changed; refresh Activity")
 	}
 	if fresh.RunnerOutcome != terminal.Outcome || fresh.Provisional {
-		return fmt.Errorf("Curator could not confirm this receipt. Inspect the job log and the publication path in Runner")
+		return fmt.Errorf("could not confirm this receipt. Inspect the job log and the publication path in Runner")
 	}
 	return nil
 }
