@@ -86,9 +86,10 @@ func TestDispositionCapabilityAndTransportFailureCannotBecomeSuccess(t *testing.
 					return
 				}
 				posts++
-				if mode == "busy" {
+				switch mode {
+				case "busy":
 					w.WriteHeader(429)
-				} else if mode == "refused" {
+				case "refused":
 					w.WriteHeader(409)
 				}
 				_, _ = w.Write([]byte(`not a disposition`))
