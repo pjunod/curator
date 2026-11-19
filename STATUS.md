@@ -1,5 +1,10 @@
 # Monarr — Project Status
 
+## Completed Runner holds · 0.53.2
+
+Completed transfers retire their live controls and preserve the original hold in job history.
+Activity offers a receipt check on held transfers so an operator can reconcile a missed terminal event.
+
 ## Activity recovery and fileless titles · 0.53.1
 
 Activity can keep stopped jobs in History and retry an unpublished import

@@ -84,6 +84,9 @@ func (s *Service) ActivityActions(ctx context.Context, dl sqlite.Download) (Acti
 	}
 	var control ports.DownloadControl
 	if dl.RunnerControl != "" && json.Unmarshal([]byte(dl.RunnerControl), &control) == nil && control.Held() {
+		if dl.Transfer != "" && dl.ClientID != 0 {
+			out.Actions = append(out.Actions, ActivityAction{Kind: "recheck", Label: "Check Runner receipt", Enabled: true})
+		}
 		out.Reason = "Runner is waiting for an operator action."
 		out.Prerequisite = "Open the Runner job to resolve its recorded hold."
 		switch control.Cause {
@@ -195,6 +198,12 @@ func (s *Service) handleActivityAction(ctx context.Context, job domain.Job) erro
 		if err == nil {
 			if deleting, _, readErr := s.db.DownloadDeletionStatus(ctx, dl.ID, dl.GenerationKey); readErr != nil {
 				err = readErr
+			} else if o.Action == "recheck" {
+				if deleting {
+					err = fmt.Errorf("deletion is already in progress")
+				} else {
+					err = s.checkActivityReceipt(ctx, dl, t.Epoch)
+				}
 			} else if o.Action == "archive" {
 				if deleting {
 					err = s.db.ArchiveBlockedCleanup(ctx, t.ActivityIdentity)
@@ -214,6 +223,8 @@ func (s *Service) handleActivityAction(ctx context.Context, job domain.Job) erro
 		case err == nil:
 			t.State = "succeeded"
 			switch o.Action {
+			case "recheck":
+				t.Message = "Runner’s terminal receipt was reconciled. Follow the job in Activity."
 			case "archive":
 				t.Message = "Moved to History. Files and cleanup records kept."
 			case "delete":
@@ -221,7 +232,7 @@ func (s *Service) handleActivityAction(ctx context.Context, job domain.Job) erro
 			default:
 				t.Message = "Retry accepted. Follow its progress in Activity."
 			}
-		case activityPending(err):
+		case o.Action != "recheck" && activityPending(err):
 			t.State = "pending"
 			t.Message = err.Error()
 			pending = true
@@ -245,6 +256,62 @@ func (s *Service) handleActivityAction(ctx context.Context, job domain.Job) erro
 }
 
 var errActivityPending = errors.New("waiting for the file owner to finish deletion")
+
+// checkActivityReceipt uses the same transfer-correlated terminal evidence as
+// the background reconciler. An absent receipt cannot prove completion.
+func (s *Service) checkActivityReceipt(ctx context.Context, dl sqlite.Download, epoch string) error {
+	if dl.RunnerOutcome != "" && !dl.Provisional {
+		return nil
+	}
+	info, err := s.ActivityActions(ctx, dl)
+	if err != nil {
+		return err
+	}
+	if info.Identity.Epoch != epoch || !info.allows("recheck") {
+		return fmt.Errorf("the job changed; refresh Activity")
+	}
+	cfg, err := s.db.GetDownloadClient(ctx, dl.ClientID)
+	if err != nil {
+		return err
+	}
+	feeds, ok := s.newClient(cfg).(ports.RequestAdmissionProtocol)
+	if !ok {
+		return fmt.Errorf("the download client does not support Runner receipts")
+	}
+	lookup, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	adm, found, err := feeds.GetRequestAdmission(lookup, dl.Transfer)
+	if err != nil {
+		return fmt.Errorf("checking Runner receipt: %w", err)
+	}
+	if !found {
+		return fmt.Errorf("Runner has no receipt for this transfer. Inspect the original job in Runner")
+	}
+	if adm.RequestToken != dl.Transfer || dl.Handle != "" && adm.JobID != dl.Handle ||
+		dl.RunnerInstanceID != "" && adm.RunnerInstanceID != dl.RunnerInstanceID ||
+		dl.RunnerAdmissionGeneration != "" && adm.Generation != dl.RunnerAdmissionGeneration {
+		return fmt.Errorf("Runner returned a receipt for a different job; inspect the original transfer")
+	}
+	terminal, ok := admissionTerminal(adm)
+	if !ok {
+		return fmt.Errorf("Runner has no terminal receipt yet. Use the hold instructions in Activity")
+	}
+	fact := ports.RunnerFact{Kind: ports.FactTerminal, Transfer: dl.Transfer, Handle: ports.Handle(adm.JobID), Terminal: &terminal, Source: "operator receipt check"}
+	if err := s.observe(ctx, dl, cfg, fact); err != nil {
+		return err
+	}
+	fresh, err := s.db.GetDownload(ctx, dl.ID)
+	if err != nil {
+		return err
+	}
+	if fresh.GenerationKey != dl.GenerationKey || fresh.Transfer != dl.Transfer {
+		return fmt.Errorf("the transfer changed; refresh Activity")
+	}
+	if fresh.RunnerOutcome != terminal.Outcome || fresh.Provisional {
+		return fmt.Errorf("Curator could not confirm this receipt. Inspect the job log and the publication path in Runner")
+	}
+	return nil
+}
 
 func (s *Service) acknowledgeActivity(ctx context.Context, dl sqlite.Download, target sqlite.ActivityIdentity) error {
 	info, err := s.ActivityActions(ctx, dl)

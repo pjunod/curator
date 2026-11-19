@@ -226,9 +226,11 @@ func translate(name, data, id string) []ports.ClientEvent {
 			Message: "post-processing: " + strings.ReplaceAll(f.Stage, "_", " "),
 			Stage:   f.Stage,
 		}
+		fact := statusFact(st, seq)
+		fact.ProgressOnly = true
 		return []ports.ClientEvent{{
 			Handle: handleOf(f.Job), Kind: ports.EventStage, Seq: seq,
-			Stage: f.Stage, Status: st, Fact: statusFact(st, seq),
+			Stage: f.Stage, Status: st, Fact: fact,
 		}}
 
 	case "job_pp_finished":
@@ -317,9 +319,14 @@ func translate(name, data, id string) []ports.ClientEvent {
 			if state == ports.StateFailed {
 				continue // the terminal arrives on job_pp_finished
 			}
+			if j.StatusProjected == "held" {
+				st.OperationalState = "held"
+			}
+			fact := statusFact(st, seq)
+			fact.ProgressOnly = j.Control == nil && j.StatusProjected == ""
 			evs = append(evs, ports.ClientEvent{
 				Handle: handleOf(j.ID), Kind: ports.EventProgress, Seq: seq,
-				Status: st, Fact: statusFact(st, seq),
+				Status: st, Fact: fact,
 			})
 		}
 		return evs

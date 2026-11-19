@@ -114,7 +114,7 @@ type Dialog =
 
 const emptySelection = (): Selection => ({ items: {}, excludeIds: [] })
 const readyToRetry = (item: ActivityItem) => item.actions?.some(action => action.kind === 'retry' && action.enabled) ?? false
-const ACTION_TITLES = { delete: 'Delete jobs', retry: 'Retry jobs', approve: 'Approve import', archive: 'Clear from attention' }
+const ACTION_TITLES = { delete: 'Delete jobs', retry: 'Retry jobs', approve: 'Approve import', archive: 'Clear from attention', recheck: 'Check Runner receipt' }
 const operationQueryKey = (id: string) => ['activity-operation', id]
 function operationOptions(id: string) {
   return {
@@ -451,7 +451,7 @@ function activityStatus(item: ActivityItem, view: ActivityView) {
 }
 
 function operationStatus(operation: ActivityOperation) {
-  const action = { delete: 'Deletion', retry: 'Retry', approve: 'Import approval', archive: 'Clear from attention' }[operation.action]
+  const action = { delete: 'Deletion', retry: 'Retry', approve: 'Import approval', archive: 'Clear from attention', recheck: 'Runner receipt check' }[operation.action]
   if (operation.state === 'running') return `${action} in progress · ${operation.completed} of ${operation.total} jobs processed`
   return `${action} finished · ${operation.succeeded} succeeded · ${operation.blocked} blocked`
 }

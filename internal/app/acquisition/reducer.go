@@ -85,6 +85,11 @@ func (s *Service) observe(ctx context.Context, dl sqlite.Download, cfg ports.Cli
 		return nil
 	}
 	dl = fresh
+	// Stage changes and buffered percentages can arrive after a newer hold.
+	// Only a lifecycle observation can release it.
+	if f.Kind == ports.FactStatus && f.ProgressOnly && dl.State == "held" {
+		return nil
+	}
 	if dl.SubmissionPhase == "pending" || dl.State == "planned" {
 		return nil
 	}
@@ -1023,7 +1028,7 @@ func (s *Service) handleRunnerEvent(ctx context.Context, cfg ports.ClientConfig,
 				continue
 			}
 			st := ports.DownloadStatus{Handle: ports.Handle(row.Handle), Transfer: row.Transfer, State: ports.StateDownloading, Progress: progress}
-			_ = s.observe(ctx, row, cfg, ports.RunnerFact{Kind: ports.FactStatus, Transfer: row.Transfer, Status: &st, Source: "push progress flush"})
+			_ = s.observe(ctx, row, cfg, ports.RunnerFact{Kind: ports.FactStatus, Transfer: row.Transfer, Status: &st, ProgressOnly: true, Source: "push progress flush"})
 		}
 		return
 	}

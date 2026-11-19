@@ -233,9 +233,9 @@ SELECT
   (SELECT COUNT(*) FROM media_copies mc WHERE mc.quality_profile_id = ?1) +
   (SELECT COUNT(*) FROM import_lists il WHERE il.quality_profile_id = ?1) AS refs;
 
--- name: UpdateDownloadControl :exec
+-- name: UpdateDownloadControl :execrows
 UPDATE downloads SET runner_control = ?, state = ?, progress = ?, error = ?,
-    updated_at = ? WHERE id = ?;
+    updated_at = ? WHERE id = ? AND runner_outcome = '' AND state IN ('planned','grabbed','submitting','downloading','held');
 
 -- name: ListPlanDownloads :many
 SELECT * FROM downloads WHERE plan_id=? ORDER BY id;

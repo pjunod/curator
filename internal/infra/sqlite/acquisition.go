@@ -837,10 +837,14 @@ func (d *DB) ListFolderlessFailedDownloadIDsForItem(ctx context.Context, itemID 
 
 // UpdateDownloadControl commits suppression and control facts atomically.
 func (d *DB) UpdateDownloadControl(ctx context.Context, dl Download) error {
-	return d.Write.UpdateDownloadControl(ctx, sqlitegen.UpdateDownloadControlParams{
+	n, err := d.Write.UpdateDownloadControl(ctx, sqlitegen.UpdateDownloadControlParams{
 		RunnerControl: dl.RunnerControl, State: dl.State, Progress: dl.Progress,
 		Error: dl.Error, UpdatedAt: time.Now().UnixMilli(), ID: dl.ID,
 	})
+	if err == nil && n == 0 {
+		return fmt.Errorf("transfer is no longer accepting Runner controls")
+	}
+	return err
 }
 
 // UpdateDownloadState transitions a queue row.
