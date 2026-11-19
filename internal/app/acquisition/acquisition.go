@@ -159,7 +159,7 @@ type Service struct {
 	bus               *bus.Bus
 	log               *slog.Logger
 	rssSweepMu        sync.Mutex
-	planDispatchMu    sync.Mutex
+	planDispatchLocks keyedLocks
 	seasonRetryCursor atomic.Int64
 	newIndexer        IndexerFactory
 	newClient         ClientFactory
