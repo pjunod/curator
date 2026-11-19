@@ -319,7 +319,10 @@ func (s *Service) deleteActivityJob(ctx context.Context, operation string, dl sq
 	// acquired below only after the real worker has returned and closed files.
 	if a, e := s.db.GetImportAttempt(ctx, dl.ID, dl.GenerationKey); e == nil && a.Outcome != "completed" {
 		_, e = s.CancelImportAttempt(ctx, dl.ID, &a.ImportAttemptKey)
-		if e != nil && !errors.Is(e, sqlite.ErrImportPublicationPending) {
+		// A crash can leave a committed placement plan awaiting its publication
+		// aggregate. Cancellation finalizes that plan; deletion still needs to
+		// join its writer and reconcile the publication below.
+		if e != nil && !errors.Is(e, sqlite.ErrImportPublicationPending) && !errors.Is(e, sqlite.ErrImportCompleted) {
 			return e
 		}
 	}
@@ -467,7 +470,7 @@ func (s *Service) deleteActivityJob(ctx context.Context, operation string, dl sq
 		if readErr != nil {
 			return readErr
 		}
-		if len(files) == 0 || !allFilesRemoved(files) {
+		if publicationNeedsResolution(pub, files) {
 			if e = s.reconcileDispositionPublication(ctx, dl, pub); e != nil {
 				return e
 			}

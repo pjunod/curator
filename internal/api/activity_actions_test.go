@@ -934,3 +934,57 @@ func TestActivityHistoryCanHideOldVerifiedDeletionWithoutDiscardingItsProof(t *t
 	}
 	checkVisible()
 }
+
+func TestActivityReplayRecoversAfterPersistedMemberAndAuditReadsFail(t *testing.T) {
+	e := newAPIEnv(t)
+	ctx := t.Context()
+	job := insertActivityApprovalJob(t, e.db, e.addMovie(t), "Recover original deletion response")
+	const id = "recover-activity-response"
+	const endpoint = "/api/v1/activity/actions"
+	body := fmt.Sprintf(`{"requestId":%q,"action":"delete","targets":[{"id":%d,"generationKey":%q,"epoch":"0"}]}`, id, job.ID, job.GenerationKey)
+	e.post(t, endpoint, body).expect(t, http.StatusAccepted)
+	op, err := e.db.ActivityOperation(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	op.Targets[0].State = "running"
+	op.Targets[0].Message = "Waiting for the exact download owner."
+	if err := e.db.SaveActivityTarget(ctx, &op, 0); err != nil {
+		t.Fatal(err)
+	}
+	exec := func(sql string) {
+		t.Helper()
+		if _, err := e.db.W.ExecContext(ctx, sql); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	logPath := fmt.Sprintf("/api/v1/activity/jobs/%d/log", job.ID)
+	operationPath := "/api/v1/activity/operations/" + id
+	exec(`ALTER TABLE activity_action_events RENAME TO temporarily_unavailable_audit`)
+	e.get(t, logPath).expect(t, http.StatusInternalServerError)
+	e.get(t, operationPath).expect(t, http.StatusOK)
+	exec(`ALTER TABLE temporarily_unavailable_audit RENAME TO activity_action_events`)
+	log := e.get(t, logPath).expect(t, http.StatusOK)
+	if !strings.Contains(log.Body.String(), "Waiting for the exact download owner.") {
+		t.Fatalf("recovered audit lost its prior event: %s", log.Body.String())
+	}
+
+	exec(`ALTER TABLE activity_operation_targets RENAME TO temporarily_unavailable_members`)
+	e.get(t, operationPath).expect(t, http.StatusInternalServerError)
+	e.post(t, endpoint, body).expect(t, http.StatusConflict)
+	exec(`ALTER TABLE temporarily_unavailable_members RENAME TO activity_operation_targets`)
+	var recovered sqlite.ActivityOperation
+	e.post(t, endpoint, body).expect(t, http.StatusAccepted).into(t, &recovered)
+	if recovered.ID != id || recovered.Total != 1 || len(recovered.Targets) != 1 ||
+		recovered.Targets[0].ID != job.ID || recovered.Targets[0].State != "running" {
+		t.Fatalf("replaying the lost response opened a new or incomplete operation: %+v", recovered)
+	}
+	var workers int
+	if err := e.db.R.QueryRowContext(ctx, `SELECT COUNT(*) FROM jobs WHERE kind=? AND dedupe_key=?`, sqlite.ActivityActionJobKind, "activity:"+id).Scan(&workers); err != nil || workers != 1 {
+		t.Fatalf("recovery scheduled duplicate work: workers=%d err=%v", workers, err)
+	}
+	if requested, verified, err := e.db.DownloadDeletionStatus(ctx, job.ID, job.GenerationKey); err != nil || !requested || verified {
+		t.Fatalf("recovery changed disposition proof: requested=%v verified=%v err=%v", requested, verified, err)
+	}
+}

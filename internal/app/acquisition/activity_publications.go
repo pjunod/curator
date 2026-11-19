@@ -25,6 +25,22 @@ func (s *Service) reconcileDispositionPublication(ctx context.Context, dl sqlite
 	if !ok {
 		return fmt.Errorf("the publication manifest is unavailable; reconnect its original storage and retry")
 	}
+	// An old digestless row must not acquire new deletion authority from a
+	// live marker observed after the user requested deletion.
+	previous, err := s.db.ListPublicationFiles(ctx, pub.ID)
+	if err != nil {
+		return err
+	}
+	for _, before := range previous {
+		if before.SHA256 != "" || !before.RemovedAt.IsZero() {
+			continue
+		}
+		for _, live := range m.Files {
+			if live.Path == before.Path && live.SHA256 != "" && !recordedPublicationFileMatches(pub, live) {
+				return fmt.Errorf("this legacy file has no recorded digest or object identity; its ownership cannot be verified for deletion")
+			}
+		}
+	}
 	if err = s.recordFileManifest(ctx, pub, m); err != nil {
 		return err
 	}
@@ -103,6 +119,16 @@ func (s *Service) reconcileDispositionManifest(ctx context.Context, dl sqlite.Do
 	if err := s.db.SeedPublicationFiles(ctx, pub.ID, files); err != nil {
 		return err
 	}
+	previous, err := s.db.ListPublicationFiles(ctx, pub.ID)
+	if err != nil {
+		return err
+	}
+	resolved := make(map[string]sqlite.PublicationFile, len(previous))
+	for _, f := range previous {
+		if f.Outcome == "placed" || f.Outcome == "discarded" {
+			resolved[f.Path] = f
+		}
+	}
 	item, err := s.db.GetMediaItemFull(ctx, dl.MediaItemID)
 	if err != nil {
 		return err
@@ -110,7 +136,24 @@ func (s *Service) reconcileDispositionManifest(ctx context.Context, dl sqlite.Do
 	var result ImportResult
 	var selected []string
 	for _, f := range m.Files {
+		// The aggregate already recorded these outcomes and their outbox.
+		// A later Offload or replacement does not make them uncommitted.
 		source := filepath.Clean(filepath.Join(pub.Path, filepath.FromSlash(f.Path)))
+		if before, settled := resolved[f.Path]; settled {
+			if before.Outcome == "placed" && deliveryImportablePath(item.Kind, f.Path) && !isReleaseSample(f.Path) {
+				superseded, _, _, err := s.placedLibraryState(ctx, before, nil)
+				if err != nil {
+					return err
+				}
+				if !superseded {
+					// Include still-current prior placements in the notification,
+					// while leaving their already committed file outcomes alone.
+					result.Files = append(result.Files, FileOutcome{Name: filepath.Base(source), SourcePath: source, Imported: true, Path: before.LibraryPath})
+					result.Imported++
+				}
+			}
+			continue
+		}
 		if !deliveryImportablePath(item.Kind, f.Path) || isReleaseSample(f.Path) {
 			continue
 		}
@@ -141,4 +184,19 @@ func (s *Service) reconcileDispositionManifest(ctx context.Context, dl sqlite.Do
 	// The normal coordinator preserves already recorded sidecars. It never
 	// starts a new sidecar writer in this explicit disposition context.
 	return s.completePublication(context.WithValue(ctx, activityDispositionContext{}, true), dl, ports.ClientConfig{}, item, pub, m, selected, result, &precedence{dl: dl, decided: map[string]precedenceVerdict{}}, nil, "deleted by operator")
+}
+
+// Final file outcomes and the Cinema outbox are committed together. Only
+// unfinished outcomes need reconstruction; the cleaner separately checks the
+// current Library state and every owned source before unlinking it.
+func publicationNeedsResolution(pub sqlite.Publication, files []sqlite.PublicationFile) bool {
+	if len(files) == 0 || (pub.State != "imported" && pub.State != "notified" && pub.State != "import_failed") {
+		return true
+	}
+	for _, f := range files {
+		if f.RemovedAt.IsZero() && f.Outcome != "placed" && f.Outcome != "discarded" {
+			return true
+		}
+	}
+	return false
 }
