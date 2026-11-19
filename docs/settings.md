@@ -321,7 +321,7 @@ push works and assuming it does.
 
 **Approve imports** (per client, default off) holds every completed
 download at *awaiting approval* instead of importing it — nothing touches
-the library until you press **Import now** on the Activity page. Turn it on
+the library until you press **Approve import** on the Activity page. Turn it on
 with the checkbox on the client's row (or when adding it) for a client
 whose completed files you want to eyeball first. The toggle round-trips
 without re-entering the password.
@@ -343,14 +343,12 @@ authority; declare the owned root here to resolve files through Curator. Overlap
 collapsed to avoid counting a file twice. Roots overlapping a library root
 produce a configuration error rather than a scan of library media.
 
-Changes take effect on the next five-minute `downloads.inventory` run, or
-immediately after queuing **Scan download storage** in Activity. Inventory
-also runs at startup. Inventory scans no longer stop after 30 seconds on slow
-network storage; they respect server shutdown and retain the 100,000-entry
-limit per root. Activity shows queued, running, and completed or failed scan
-status. A failed scan preserves the last complete inventory and disables file
-actions for that root until a complete scan succeeds. Deletion checks scan only
-the selected payload, rather than walking every sibling again.
+Inventory runs at startup and every five minutes through
+`downloads.inventory`. Scans respect server shutdown and keep the
+100,000-entry limit per root. A failed scan preserves the last complete
+inventory. System → Storage shows the last drive observation and cleanup
+status. See [completed folders](usage.md#completed-folders--accounting-survives-an-empty-queue).
+
 Storage verification accepts ordinary remounts automatically, including device
 number changes and configured bind aliases. The currently observed mount source
 and filesystem type are persisted independently of other settings. A missing
@@ -361,13 +359,13 @@ must succeed again when the expected mount returns. Path containment and
 per-operation file identity checks still apply.
 `GET /api/v1/downloads/inventory` reads the cached result;
 it does not walk the disk. See [usage](usage.md#completed-folders--accounting-survives-an-empty-queue)
-for the classifications, size semantics, and recovery actions. Activity
+for capacity and cleanup status. Activity
 retention never deletes these file associations or cached inventory.
 
 When a download storage mount is replaced, the inventory keeps its last complete
-counts and reports the changed identity. Restore the original mount or save the
-storage folders again to accept the replacement, then run a scan. Saving does
-not erase the prior counts before a complete scan succeeds.
+counts and reports the changed identity. Restore the original mount to recover automatically. For an intentional
+replacement, use **Review replacement storage** in System → Storage. Existing
+jobs keep their prior storage requirements.
 
 ### Completed downloads: where files land, and how Monarr finds them
 
@@ -390,7 +388,7 @@ That reported path must be **openable by Monarr as-is**:
   container at `/pool/downloads/...` → map `/data/completed` →
   `/pool/downloads`.
 
-System → Storage → **Import files…** starts at the completed folder Monarr sees. A
+Activity → **Import files…** starts at the completed folder Monarr sees. A
 remote-path mapping's local prefix is authoritative; without one, Monarr uses
 the parent of a recent completed payload, then `/pool/downloads` as the
 standard-deployment fallback. This is a convenience default, not a second
@@ -427,31 +425,21 @@ payload (nothing importable, every file declined by policy), the retry waits
 about as long as the delivery has already been blocked — up to once an hour —
 and a repeat of the same failure adds no new history entry or notification.
 While Runner's acknowledgement is still pending the 5-minute pace holds.
-**Retry import** in Activity retries one immediately. The
-lifecycle trace shows the cause and next attempt; a rejected or conflicting
-manifest requires review. A missing path in a legacy client row
+When Activity offers **Retry**, correct the reason shown on the job and then
+resubmit. The service checks the same job and its recorded files. A missing path in a legacy client row
 still uses the explicit Retry action described above.
 
-Every failed row offers **Retry** (re-run the import once the underlying
-problem is fixed, using the same path), **Manual import** (browse to the
-real files and pick the target title/copy yourself), **Blocklist** (declare
-the release bad — blocklists it and searches a replacement), and **Remove**.
-Nothing is auto-blocklisted on an import failure, so a config problem never
-churns through replacements behind your back.
+Activity shows the cause, prerequisites and server-approved actions. An active
+import reports measured progress, and an interrupted import can recover
+automatically. Use **Approve import** when a client requires approval or
+**Import files…** to select input files and a destination yourself.
+See [the Activity guide](usage.md#activity--transfers-imports-and-history-in-one-place).
 
-An **importing** row with a live worker shows its bytes, total, rate, elapsed
-time, and current detail. If Monarr stopped after persisting `importing`, the
-worker disappeared but the row survived; Activity shows **Waiting for automatic
-import retry** instead of pretending it is busy.
-and **Cancel import** stops queued/live work while keeping the source payload
-for a later restart. The normal client reconciliation also restarts an
-interrupted row automatically after Monarr comes back up.
-
-The consolidated web page offers per-attempt **Remove** for eligible records;
-it does not expose global failed-history deletion. Removal leaves library files
-in place. Protected custody and retained publication obligations still fence
-record deletion. The native app retains its existing Failed filter and bulk
-clear workflow. Automatic history retention remains configured below.
+**Delete** fences new work for the selected attempt and verifies cleanup with
+the file owner. For Runner, update to a version that supports verified
+disposition if Activity reports that the command is unavailable. Older or
+external clients unable to verify disposal can leave deletion blocked.
+Library media and manual-import originals stay in place.
 
 ### Activity retention
 
@@ -1079,8 +1067,8 @@ preview invalidation and writer-quiescence rules still apply; removing a UI does
 not permit deleting a held source. See
 [ADR 0021](adr/0021-file-lifecycle-recovery.md) for the receipt contract.
 
-System → **Storage** contains disk inventory, scoped manual import, identity-checked
-deletion and conditional historical delivery tools. System → **Diagnostics**
+System → **Storage** shows observed drive capacity, storage accessibility and
+automatic cleanup. Open **Import files…** in Activity to choose input files. System → **Diagnostics**
 contains health, connection checks, scheduled tasks and backup controls. Cinema
 capability advice lives beside the corresponding saved notifier's **Test** button
 under Connections; unknown or absent capabilities remain explicit.
@@ -1160,10 +1148,12 @@ Changing retained Delivery manifests cannot change this negotiated contract.
 
 The legacy review cohort keeps its cleanup fence after upgrade. Historical trace
 evidence may permit an acquisition that was still in flight at cutover to finish
-importing, but it grants no automatic deletion authority over old payloads.
+importing. An explicit Activity Delete can authorize cleanup for that exact
+job generation after Curator verifies its manifest and storage. Saving settings
+or accepting a replacement mount grants no cleanup authority over old files.
 
-Intentional download-storage replacement is reviewed from System → Storage → Download
-storage. The action compares the exact expected and observed identities and
+Intentional download-storage replacement is reviewed from System → Storage
+under **Download folders**. The action compares the exact expected and observed identities and
 previews affected custody. It applies only to the selected root and cannot grant
 old acquisitions cleanup authority on the replacement volume. Ordinary return of
 the expected storage still recovers automatically without changing settings.
@@ -1181,10 +1171,9 @@ its stop wait requires measured qualification for the deployment shape.
 
 ## Import Queue history
 
-The Import Queue page follows the existing **Activity retention** setting in
-Settings → Library. Set the window to `0` to disable automatic expiry of future
-eligible records. This does not restore already expired records. Clearing
-Activity does not hide an import receipt while it remains in storage.
+Activity → **History** follows **Activity retention** in Settings → Library.
+Set the window to `0` to disable future expiry of eligible records. Job logs
+follow the retained job record. Outstanding cleanup remains durable.
 
 
 ## Library volume review

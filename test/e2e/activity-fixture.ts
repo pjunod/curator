@@ -1,14 +1,42 @@
-import type { Page } from '@playwright/test'
+import type { Locator, Page } from '@playwright/test'
 
-// The browser fixtures model the public unified projection, not two independent
-// pages merged in the browser. API tests cover real SQL identities and counts.
-export function activityPage(rows: any[], url: string) {
- const p=new URL(url).searchParams, view=p.get('view')??'progress', search=(p.get('q')??'').toLowerCase(), offset=Number(p.get('offset')??0),limit=Number(p.get('limit')??50)
- const items=rows.map(row=>row.download?{...row,category:row.category==='active'||row.category==='queued'?'progress':row.category==='imported'?'history':row.category}:{download:row,title:row.libraryTitle??row.title,kind:'movie',destination:'',updatedAt:row.addedAt,category:row.category??(row.importState?'progress':row.importControl?.pendingPublications||row.importControl?.retainedPublications||row.importControl?.heldStages||row.state==='awaiting_import'||row.submissionPhase==='uncertain'?'attention':['imported','failed','notified'].includes(row.state)?'history':'progress')})
- .filter(item=>`${item.title} ${item.download.title}`.toLowerCase().includes(search))
- const counts:Record<string,number>={all:items.length,progress:0,attention:0,history:0};items.forEach(item=>counts[item.category]++)
- const selected=items.filter(item=>item.category===view)
- return {items:selected.slice(offset,offset+limit),counts,total:selected.length,hasMore:offset+limit<selected.length,retentionDays:30}
+export function activityIdentity(id: number, generationKey = `generation-${id}`, epoch = '0') {
+  return { id, generationKey, epoch }
 }
-export async function mockActivity(page:Page, rows: ()=>any[]) { await page.route('**/api/v1/activity?*', route=>route.fulfill({json:activityPage(rows(),route.request().url())})) }
-export async function openAttempt(page:Page, title: string) { const row=page.locator('.activity-attempt').filter({hasText:title}).first();await row.getByRole('button',{name:'Details',exact:true}).click();return page.getByRole('dialog').last() }
+
+export function activityPage(rows: any[], url: string) {
+  const params = new URL(url).searchParams
+  const view = params.get('view') ?? 'progress'
+  const search = (params.get('q') ?? '').toLowerCase()
+  const offset = Number(params.get('offset') ?? 0)
+  const limit = Number(params.get('limit') ?? 50)
+  const items = rows.map(row => {
+    const download = row.download ?? row
+    const category = row.category ?? (
+      download.importState ? 'progress'
+        : download.importControl?.heldStages || download.state === 'awaiting_import' || download.submissionPhase === 'uncertain' ? 'attention'
+        : ['imported', 'failed', 'notified'].includes(download.state) ? 'history'
+        : 'progress'
+    )
+    const identity = download.id > 0 ? activityIdentity(download.id, download.importControl?.generationKey, download.importControl?.epoch) : undefined
+    return {
+      download, title: download.libraryTitle ?? download.title, kind: 'movie', destination: '', updatedAt: download.addedAt ?? new Date().toISOString(),
+      ...(row.download ? row : {}),
+      category,
+      identity,
+      prerequisite: row.prerequisite, operation: row.operation,
+      reason: row.reason ?? download.control?.message ?? download.heldReason ?? download.error,
+      actions: row.actions ?? (identity && category !== 'history' ? [{ kind: 'delete', label: 'Delete', enabled: true }] : []),
+    }
+  }).filter(item => `${item.title} ${item.download.title}`.toLowerCase().includes(search))
+  const counts: Record<string, number> = { all: items.length, progress: 0, attention: 0, history: 0 }
+  for (const item of items) counts[item.category]++
+  const selected = items.filter(item => item.category === view)
+  return { items: selected.slice(offset, offset + limit), counts, total: selected.length, hasMore: offset + limit < selected.length, retentionDays: 30 }
+}
+
+export async function mockActivity(page: Page, rows: () => any[]) {
+  await page.route('**/api/v1/activity?*', route => route.fulfill({ json: activityPage(rows(), route.request().url()) }))
+}
+
+export const attempt = (page: Page, id: number): Locator => page.locator(`[data-activity-id="${id}"]`)

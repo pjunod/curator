@@ -1,64 +1,74 @@
-import { mockActivity } from '../activity-fixture'
 import { expect, test } from '@playwright/test'
+import { activityIdentity, attempt, mockActivity } from '../activity-fixture'
 
-test('open lifecycle archive refreshes asynchronous retry results and stops polling when closed', async ({ page }) => {
-  let listRequests = 0
-  let sourceCleanupStatus = 'retry'
-  const observedStatuses: string[] = []
+test.use({ serviceWorkers: 'block' })
 
-  await page.route('**/api/v1/downloads/deliveries?*', async route => {
-    listRequests++
-    observedStatuses.push(sourceCleanupStatus)
-    await route.fulfill({ json: { items: [{
-      receiptId: 811, clientId: 2, downloadId: 81, generationKey: 'generation-81', mediaItemId: 8, copyId: 0,
-      deliveryId: 'delivery-811', publicationGeneration: 'publication-811', manifestDigest: 'a'.repeat(64),
-      runnerInstanceId: 'runner-2', jobId: '81', requestToken: 'transfer-81', publicationPath: '/processing/81',
-      mappedPath: '/completed/Lifecycle.Polling', readyAt: new Date().toISOString(), terminalOutcome: 'SUCCESS',
-      keepSourceOnFailure: false, state: 'imported', acceptance: 'accepted', consumerReceiptId: 'consumer-811',
-      attempts: 1, attemptHistory: [], manifestFiles: [], sourceFileOutcomes: [],
-      sourceCleanup: { status: sourceCleanupStatus, attempts: 2 }, sourceCleanupAttempts: 0,
-      directoryCleanupState: sourceCleanupStatus, directoryCleanupAttempts: 0, curatorFiles: [],
-    }], nextBeforeId: 0 } })
+test('a frozen cross-page delete survives route changes and reload with truthful partial results', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 })
+  let complete = false
+  let newMatch = false
+  let submissions = 0
+  let action: Record<string, unknown> | undefined
+  const targets = Array.from({ length: 51 }, (_, index) => activityIdentity(index + 1))
+  const rows = (includeNewMatch: boolean) => [...targets, ...(includeNewMatch ? [activityIdentity(52)] : [])].map(target => ({
+    id: target.id, title: `Interrupted job ${target.id}`, state: 'failed', category: 'attention',
+    reason: 'Copy stopped before completion.',
+  }))
+  await mockActivity(page, () => rows(newMatch))
+  await page.route('**/api/v1/activity/selections', async route => {
+    expect(route.request().postDataJSON()).toEqual({ view: 'attention', scope: 'all', q: '' })
+    newMatch = true
+    await route.fulfill({ json: { id: 'attention-51', total: 51, retryable: 0, targets } })
   })
-  await page.route('**/api/v1/downloads/deliveries/811/retry-curator-cleanup', async route => {
-    await route.fulfill({ status: 202, body: '' })
-    // The accepted retry is asynchronous. Its first invalidation can still
-    // observe the old state; the open archive must pick up the later result.
-    setTimeout(() => { sourceCleanupStatus = 'succeeded' }, 2_000)
+  const operation = () => ({
+    id: action?.requestId, action: 'delete', state: complete ? 'completed' : 'running',
+    total: 50, completed: complete ? 50 : 0, succeeded: complete ? 49 : 0, blocked: complete ? 1 : 0,
+    targets: targets.filter(target => target.id !== 51).map(target => ({
+      ...target, title: `Interrupted job ${target.id}`,
+      state: !complete ? 'pending' : target.id === 2 ? 'blocked' : 'succeeded',
+      message: target.id === 2 ? 'Reconnect the Media drive to finish deletion.' : '',
+    })),
   })
+  await page.route('**/api/v1/activity/actions', async route => {
+    submissions++
+    action = route.request().postDataJSON()
+    await route.fulfill({ status: 202, json: operation() })
+  })
+  await page.route('**/api/v1/activity/operations/*', route => {
+    return action && route.request().url().endsWith(String(action.requestId))
+      ? route.fulfill({ json: operation() })
+      : route.fulfill({ status: 404 })
+  })
+
+  await page.goto('/activity')
+  await page.getByRole('button', { name: /^Needs attention / }).click()
+  await page.getByRole('button', { name: 'Select all matching jobs' }).click()
+  await expect(page.getByText('51 selected · 0 can retry')).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Retry selected' })).toBeDisabled()
+  await page.getByRole('button', { name: 'Next', exact: true }).click()
+  await expect(attempt(page, 51).getByRole('checkbox')).toBeChecked()
+  await expect(attempt(page, 52).getByRole('checkbox')).not.toBeChecked()
+  await attempt(page, 51).getByRole('checkbox').uncheck()
+
+  await page.getByRole('button', { name: 'Delete selected' }).click()
+  const confirmation = page.getByRole('dialog', { name: 'Delete 50 jobs and files?' })
+  await expect(confirmation.getByRole('heading')).toBeInViewport({ ratio: 1 })
+  expect(submissions).toBe(0)
+  await confirmation.getByRole('button', { name: 'Delete jobs and files', exact: true }).click()
+  const result = page.getByRole('dialog', { name: 'Delete jobs' })
+  await expect(result).toContainText('0 of 50 jobs processed')
+  expect(action).toMatchObject({ action: 'delete', selection: { id: 'attention-51', excludeIds: [51] } })
+  expect(action).not.toHaveProperty('targets')
 
   await page.goto('/system#storage')
-  const archive = page.locator('.delivery-lifecycle-archive')
-  await archive.locator(':scope > summary').click()
-  const trace = archive.locator('.delivery-lifecycle')
-  await expect(trace).toBeVisible()
-  await trace.locator(':scope > summary').click()
-  await expect(trace.getByText(/Curator publication cleanup: Retry pending/)).toBeVisible()
-  const retryButton = trace.getByRole('button', { name: 'Retry Curator cleanup' })
-  await retryButton.click()
-  await expect(trace.getByRole('status')).toContainText('Retry queued')
-  // The actual retry trigger keeps focus through pending and settled state.
-  // No test-side refocus may conceal focus theft by a background refresh.
-  await expect(retryButton).toBeFocused()
-  const beforeRefresh = await page.evaluate(() => ({ scrollY: window.scrollY, activeText: document.activeElement?.textContent?.trim() }))
-  await expect(trace.getByText(/Curator publication cleanup: Complete/)).toBeVisible({ timeout: 9_000 })
-  await expect(retryButton).toBeFocused()
-  expect(await page.evaluate(() => window.scrollY)).toBe(beforeRefresh.scrollY)
-  expect(await page.evaluate(() => document.activeElement?.textContent?.trim())).toBe(beforeRefresh.activeText)
-  expect(listRequests).toBeGreaterThanOrEqual(3)
-  expect(observedStatuses).toContain('retry')
-  expect(observedStatuses).toContain('succeeded')
-
-  await archive.locator(':scope > summary').click()
-  const requestsAtClose = listRequests
-  await page.waitForTimeout(5_500)
-  expect(listRequests).toBe(requestsAtClose)
-})
-
-test('daily Activity never starts the historical receipt console or polling', async ({page})=>{
- let requests=0
- await mockActivity(page,()=>[{id:812,mediaItemId:8,title:'Nested.Polling',state:'downloading',progress:.5,protocol:'torrent',quality:'1080p',addedAt:new Date().toISOString()}])
- await page.route('**/api/v1/downloads/deliveries?*',async route=>{requests++;await route.fulfill({json:{items:[],nextBeforeId:0}})})
- await page.goto('/activity');await page.locator('[data-activity-id="812"]').getByRole('button',{name:'Details',exact:true}).click();await expect(page.locator('.delivery-lifecycle-archive')).toHaveCount(0);await expect(page.locator('.delivery-lifecycle-lookup')).toHaveCount(0);await page.waitForTimeout(5500);expect(requests).toBe(0)
- await page.keyboard.press('Escape');await page.goto('/system#storage');await expect.poll(()=>requests).toBe(1);await expect(page.locator('.delivery-lifecycle-archive')).toHaveCount(0);await page.waitForTimeout(5500);expect(requests).toBe(1)
+  await page.goto('/activity')
+  await page.reload()
+  const resume = page.getByRole('button', { name: 'Action results' })
+  await resume.click()
+  await expect(result).toContainText('0 of 50 jobs processed')
+  complete = true
+  await expect(result).toContainText('49 succeeded · 1 blocked')
+  await expect(result).toContainText('Reconnect the Media drive to finish deletion.')
+  await expect(result.getByRole('button', { name: 'Retry deletion' })).toBeVisible()
+  expect(submissions).toBe(1)
 })

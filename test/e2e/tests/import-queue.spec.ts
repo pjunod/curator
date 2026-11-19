@@ -1,69 +1,99 @@
-import { expect,test } from '@playwright/test'
-import { mockActivity,openAttempt } from '../activity-fixture'
-const item=(id:number,category='attention')=>({category,title:`Import title ${id}`,kind:'movie',destination:'/library/title',updatedAt:'2026-11-09T12:00:00Z',download:{id,mediaItemId:88,title:`release.${id}.1080p`,state:category==='history'?'imported':category==='progress'?'importing':'awaiting_import',progress:1,quality:'1080p',protocol:'manual',addedAt:'2026-11-09T12:00:00Z',importPath:`/completed/${id}`,importControl:{generationKey:`g-${id}`,epoch:'1',outcome:'',pendingPublications:0,retainedPublications:0,heldStages:0},...(category==='progress'?{importState:'running',stage:'importing',stageDetail:'Verifying source identity'}:{})}})
-for(const width of [1280,390]) {
- test(`one Activity view retains history, serial retry results and old import links at ${width}px`,async({page})=>{
-  await page.setViewportSize({width,height:850})
-  const rows=[item(1,'progress'),item(3),item(4),...Array.from({length:53},(_,i)=>item(i+10,'history'))];await mockActivity(page,()=>rows)
-  const retried:number[]=[];await page.route('**/api/v1/queue/*/import',async route=>{const id=Number(route.request().url().split('/').at(-2));retried.push(id);await route.fulfill(id===4?{status:409,json:{message:'Publication requires custody review'}}:{status:204})})
-  await page.goto('/imports');await expect(page).toHaveURL(/activity\?scope=imports/);await expect(page.getByRole('heading',{name:'Activity',exact:true})).toBeVisible();await expect(page.getByRole('combobox',{name:'Activity scope'})).toHaveValue('imports')
-  await expect(page.locator('[data-activity-id="1"] .progress-track')).toHaveCount(0)
-  await page.getByRole('button',{name:/^History 53/}).click();await expect(page.getByText('1–50 of 53')).toBeVisible();await page.getByRole('button',{name:'Next',exact:true}).click();await expect(page.getByText('51–53 of 53')).toBeVisible()
-  await page.getByRole('button',{name:/^Needs attention 2/}).click();await page.getByRole('checkbox',{name:'Select retryable imports on this page'}).check()
-  const trigger=page.getByRole('button',{name:/^Retry selected/});await trigger.click();const result=page.getByRole('dialog',{name:'Activity action results'});await expect(result).toContainText('Import accepted');await expect(result).toContainText('Publication requires custody review');expect(retried).toEqual([3,4]);await expect(result.getByRole('heading')).toBeInViewport({ratio:1});await page.keyboard.press('Escape');await expect(page.getByRole('heading',{name:'Activity',exact:true})).toBeFocused()
-  await page.getByRole('searchbox',{name:'Find a title or release'}).fill('no-such-title');await expect(page.getByRole('heading',{name:'No activity matches this search'})).toBeVisible()
-  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(width)
- })
- test(`selected-attempt cancellation and retained-file protection remain visible at ${width}px`,async({page})=>{
-  await page.setViewportSize({width,height:850});const rows=Array.from({length:18},(_,i)=>item(100+i,'progress'));rows[17].download.importControl.heldStages=1;await mockActivity(page,()=>rows)
-  let identity:unknown;await page.route('**/api/v1/queue/117/cancel-import',async route=>{identity=route.request().postDataJSON();await route.fulfill({status:409,json:{message:'Import attempt changed; refresh before cancelling.'}})})
-  await page.route('**/api/v1/queue/117/import-review',route=>route.fulfill({json:{attempt:rows[17].download.importControl,writerActive:true,publications:[],stages:[{id:'one',source:'/source',stage:'/stage',target:'/library/file',state:'held'}]}}))
-  await page.goto('/activity');const details=await openAttempt(page,'Import title 117');await details.getByRole('button',{name:'Cancel import',exact:true}).click();const result=page.getByRole('dialog',{name:'Activity action results'});await expect(result).toContainText('Import attempt changed');await expect(result.getByRole('heading')).toBeInViewport({ratio:1});expect(identity).toEqual({generationKey:'g-117',epoch:'1'});await page.keyboard.press('Escape');await expect(page.locator('[data-activity-id="117"]').getByRole('button',{name:'Details',exact:true})).toBeFocused()
-  await page.locator('[data-activity-id="117"]').getByRole('button',{name:'Review retained files'}).click();const review=page.getByRole('dialog',{name:'Review retained files',exact:true});await expect(review).toContainText('An importer still owns this work');await expect(review.getByRole('button',{name:'Attest all listed bytes independently handled'})).toBeDisabled();await expect(review.getByRole('heading')).toBeInViewport({ratio:1})
- })
- test(`unavailable activity is not an empty queue and storage is absent from the daily view at ${width}px`,async({page})=>{
-  await page.setViewportSize({width,height:850});await page.route('**/api/v1/activity?*',route=>route.fulfill({status:503,json:{message:'Local status unavailable'}}));await page.goto('/activity');await expect(page.getByRole('alert')).toContainText('Activity and counts are unavailable');await expect(page.getByText('Nothing in progress',{exact:true})).toHaveCount(0);await expect(page.getByRole('heading',{name:'Download storage',exact:true})).toHaveCount(0);await expect(page.getByRole('button',{name:'Resolve',exact:true})).toHaveCount(0)
- })
-}
+import { expect, test } from '@playwright/test'
+import { activityIdentity, attempt, mockActivity } from '../activity-fixture'
+
+test.use({ serviceWorkers: 'block' })
+
+const item = (id: number, category = 'attention') => ({
+  id, category, title: `Import title ${id}`, mediaItemId: 88, state: category === 'history' ? 'imported' : 'failed',
+  progress: 1, quality: '1080p', protocol: 'manual',
+})
 
 for (const width of [1280, 390]) {
- test(`cleaned import failures show their cause as history at ${width}px`, async ({page}) => {
-  await page.setViewportSize({width,height:850})
-  const row = item(501,'history')
-  Object.assign(row.download,{state:'failed',error:'publication import_failed: nothing importable: runner-swc-s02e08.avi: episode 8 outside planned import allowlist',publications:[{id:882,kind:'completed',state:'removed',path:'/completed/rejected',files:[]}]})
-  await mockActivity(page,()=>[row])
-  await page.goto('/activity')
-  await page.getByRole('button',{name:/^History 1/}).click()
-  const card=page.locator('[data-activity-id="501"]')
-  await expect(card.locator('.activity-attempt-heading .pill')).toHaveText('failed')
-  await expect(card.getByText('nothing importable: runner-swc-s02e08.avi: episode 8 outside planned import allowlist',{exact:true})).toBeInViewport({ratio:1})
-  await expect(card.getByText('Publication files have been removed. This record is retained history.',{exact:true})).toBeInViewport({ratio:1})
-  await expect(card.getByRole('checkbox')).toHaveCount(0)
-  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(width)
- })
+  test(`one Activity view retains history, bulk retry results and old import links at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 850 })
+    const rows = [
+      { ...item(1, 'progress'), state: 'importing', importState: 'running', stage: 'importing', stageDetail: 'Verifying source identity' },
+      { ...item(3), actions: [{ kind: 'retry', label: 'Retry', enabled: true }, { kind: 'delete', label: 'Delete', enabled: true }] },
+      { ...item(4), actions: [{ kind: 'approve', label: 'Approve import', enabled: true }, { kind: 'delete', label: 'Delete', enabled: true }] },
+      ...Array.from({ length: 53 }, (_, i) => item(i + 10, 'history')),
+    ]
+    await mockActivity(page, () => rows)
+    let selectionRequest: unknown
+    let actionRequest: Record<string, unknown> | undefined
+    await page.route('**/api/v1/activity/selections', async route => {
+      selectionRequest = route.request().postDataJSON()
+      await route.fulfill({ json: { id: 'matching-imports', total: 2, retryable: 1, targets: [activityIdentity(3), activityIdentity(4)] } })
+    })
+    const operation = () => ({
+      id: actionRequest?.requestId, action: 'retry', state: 'completed', total: 2, completed: 2, succeeded: 1, blocked: 1,
+      targets: [
+        { ...activityIdentity(3), title: 'Import title 3', state: 'succeeded' },
+        { ...activityIdentity(4), title: 'Import title 4', state: 'blocked', message: 'Approve this import to continue.' },
+      ],
+    })
+    await page.route('**/api/v1/activity/actions', async route => {
+      actionRequest = route.request().postDataJSON()
+      await route.fulfill({ status: 202, json: operation() })
+    })
+    await page.route('**/api/v1/activity/operations/*', route => route.fulfill({ json: operation() }))
+
+    await page.goto('/imports')
+    await expect(page).toHaveURL(/activity\?scope=imports/)
+    await expect(page.getByRole('combobox', { name: 'Activity scope' })).toHaveValue('imports')
+    await expect(attempt(page, 1).getByText('Verifying source identity')).toBeVisible()
+    await expect(attempt(page, 1).locator('.progress-track')).toHaveCount(0)
+    await page.getByRole('button', { name: /^History 53/ }).click()
+    await expect(page.getByText('1–50 of 53')).toBeVisible()
+    await page.getByRole('button', { name: 'Next', exact: true }).click()
+    await expect(page.getByText('51–53 of 53')).toBeVisible()
+    await page.getByRole('button', { name: /^Needs attention 2/ }).click()
+    await page.getByRole('button', { name: 'Select all matching jobs' }).click()
+    await expect(page.getByText('2 selected · 1 can retry')).toBeVisible()
+    await expect(attempt(page, 4).getByRole('checkbox')).toBeChecked()
+    await page.getByRole('button', { name: 'Retry selected' }).click()
+    const result = page.getByRole('dialog', { name: 'Retry jobs' })
+    await expect(result).toContainText('1 succeeded · 1 blocked')
+    await expect(result).toContainText('Approve this import to continue.')
+    await expect(result.getByRole('heading')).toBeInViewport({ ratio: 1 })
+    expect(selectionRequest).toEqual({ scope: 'imports', view: 'attention', q: '' })
+    expect(actionRequest).toMatchObject({ action: 'retry', selection: { id: 'matching-imports', excludeIds: [] } })
+    await page.keyboard.press('Escape')
+    await expect(page.getByRole('heading', { name: 'Activity', exact: true })).toBeFocused()
+    await page.getByRole('searchbox', { name: 'Find a title or release' }).fill('no-such-title')
+    await expect(page.getByRole('heading', { name: 'No activity matches this search' })).toBeVisible()
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width)
+  })
+
+  test(`unavailable activity leaves the counts and empty state unknown at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 850 })
+    await page.route('**/api/v1/activity?*', route => route.fulfill({ status: 503, json: { message: 'Local status unavailable' } }))
+    await page.goto('/activity')
+    await expect(page.getByRole('alert')).toContainText('Activity and counts are unavailable')
+    await expect(page.getByText('Nothing in progress', { exact: true })).toHaveCount(0)
+    await expect(page.getByRole('heading', { name: 'Download folders', exact: true })).toHaveCount(0)
+  })
 }
 
-for (const width of [1280, 390]) {
- test(`resolved cancellation keeps its cause in history and custody in attention at ${width}px`, async ({page}) => {
-  await page.setViewportSize({width,height:850})
-  const resolved=item(502,'history')
-  Object.assign(resolved.download,{state:'failed',error:'publication import_failed: existing stage retained; explicit retry or custody review required',publications:[{id:883,kind:'completed',state:'removed',path:'/completed/502',files:[]}]})
-  resolved.download.importControl.outcome='cancelled'
-  const held=item(503,'attention');held.download.state='failed';held.download.importControl.outcome='cancelled';held.download.importControl.heldStages=1
-  const running=item(504,'progress');running.download.importControl.heldStages=1
-  await mockActivity(page,()=>[resolved,held,running])
-  await page.goto('/activity')
-  await expect(page.locator('[data-activity-id="504"] .activity-attempt-heading .pill')).toHaveText('Copying to library')
-  await page.getByRole('button',{name:/^History 1/}).click()
-  const history=page.locator('[data-activity-id="502"]')
-  await expect(history.locator('.activity-attempt-heading .pill')).toHaveText('Cancelled')
-  await expect(history.getByText('existing stage retained; explicit retry or custody review required',{exact:true})).toBeInViewport({ratio:1})
-  await expect(history.getByText('Publication files have been removed. This record is retained history.',{exact:true})).toBeInViewport({ratio:1})
-  await expect(history.getByRole('checkbox')).toHaveCount(0)
-  await page.getByRole('button',{name:/^Needs attention 1/}).click()
-  const attention=page.locator('[data-activity-id="503"]')
-  await expect(attention.locator('.activity-attempt-heading .pill')).toHaveText('Review required')
-  await expect(attention.getByRole('button',{name:'Review retained files'})).toBeInViewport({ratio:1})
-  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(width)
- })
-}
+test('history shows the outcome and a log correlated to that job', async ({ page }) => {
+  await mockActivity(page, () => [
+    { ...item(501, 'history'), state: 'failed', reason: 'Verification failed. Job files removed.' },
+    { ...item(502, 'history'), reason: 'Added to your library.' },
+  ])
+  await page.route('**/api/v1/activity/jobs/501/log', route => route.fulfill({ json: {
+    title: 'Import title 501', summary: 'Verification failed. Job files removed.',
+    events: [{ at: '2026-11-09T12:00:00Z', step: 'Verification failed', message: 'Two download blocks were missing.' }],
+  } }))
+  await page.route('**/api/v1/activity/jobs/502/log', route => route.fulfill({ json: {
+    title: 'Import title 502', summary: 'Added to your library.', events: [],
+  } }))
+  await page.goto('/activity#history')
+  await expect(attempt(page, 501)).toContainText('Verification failed. Job files removed.')
+  await expect(attempt(page, 501).getByRole('checkbox')).toHaveCount(0)
+  await attempt(page, 501).getByRole('button', { name: 'Job log' }).click()
+  const dialog = page.getByRole('dialog')
+  await expect(dialog).toContainText('Two download blocks were missing.')
+  await page.keyboard.press('Escape')
+  await attempt(page, 502).getByRole('button', { name: 'Job log' }).click()
+  await expect(dialog).toContainText('No detailed events remain for this job.')
+  await expect(dialog).not.toContainText('Two download blocks')
+})

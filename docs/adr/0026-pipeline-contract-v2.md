@@ -350,3 +350,26 @@ restart, and publications left in Resolve for their subtitles and `.nfo`s.
     stage object's identity (or verified absence); a prior-file backup blocks
     this path. It never changes Library targets or source payloads. Cancellation
     without this supersession evidence retains its existing custody rules.
+
+## Addendum — Activity actions and owner disposition (v0.53.0, 2026-11-18)
+
+37. **Delete is durable intent for an exact attempt.** Curator binds the
+    request to the download generation and import epoch. Accepting it fences
+    new work on that attempt. Runner disposition binds the transfer token,
+    instance, admission generation and applicable artifact identity. Curator
+    preserves the actual terminal fact and records verified deletion after
+    the owner and Curator cleanup obligations settle. A pending or blocked
+    action retains its reason and supports reconciliation.
+38. **Historical cleanup requires recorded authority.** This extends the M4
+    approval path in this ADR. An explicit Activity Delete can authorize the
+    publication files associated with that exact generation after Curator
+    verifies the manifest and storage. The per-file cleanup checks still apply.
+    A stale path, missing manifest, replacement mount, uncertain stage, or
+    backup awaiting recovery limits what can be removed. Existing approvals
+    and receipts remain readable. Imported Library files, manual-import
+    originals, and unrelated files remain outside the action's authority.
+39. **Selections and actions live on the server.** Bulk Activity selections
+    freeze the attempts and their identities. Durable workers report each
+    accepted, pending or blocked action. Historical transfer and import facts
+    stay available for History and job logs. Committed placement and Cinema
+    notification continue through the existing outbox.

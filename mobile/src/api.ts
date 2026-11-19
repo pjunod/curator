@@ -1,3 +1,4 @@
+import type { ActivityJobLog, ActivityOperation, ActivityPage, ActivityRequest, ActivitySelection, ActivityView } from './activityActions'
 import type {AccountIdentity,LocalAccount,HouseholdTitle,HouseholdRequest,HouseholdReview} from './types'
 import type {
   Availability,
@@ -179,6 +180,14 @@ export class MonarrClient {
   getDiscoverLists = (): Promise<DiscoverList[]> => this.get('/discover/lists')
   getDiscoverItems = (list: string, page = 1): Promise<SearchResult[]> =>
     this.get(`/discover/items?list=${encodeURIComponent(list)}&page=${page}`)
+  getActivity = (view: ActivityView, limit: number, offset: number): Promise<ActivityPage> =>
+    this.get(`/activity?view=${view}&limit=${limit}&offset=${offset}`)
+  createActivitySelection = (): Promise<ActivitySelection> =>
+    this.send('POST', '/activity/selections', { view: 'attention', scope: 'all', q: '' })
+  submitActivityAction = (request: ActivityRequest): Promise<ActivityOperation> => this.send('POST', '/activity/actions', request)
+  getActivityOperation = (id: string): Promise<ActivityOperation> => this.get(`/activity/operations/${encodeURIComponent(id)}`)
+  getActivityJobLog = (id: number): Promise<ActivityJobLog> => this.get(`/activity/jobs/${id}/log`)
+
   getRootFolders = (): Promise<RootFolder[]> => this.get('/rootfolders')
   getProfiles = (): Promise<QualityProfile[]> => this.get('/profiles')
   addLibraryItem = (input: AddMediaRequest): Promise<MediaItemDetail> =>
