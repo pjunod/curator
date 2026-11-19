@@ -265,3 +265,72 @@ func TestActivityBulkProgressCannotOverwriteNewDispositionRevision(t *testing.T)
 	}
 	assertState("verified")
 }
+
+func TestActivityLateReplacementPublicationReopensParentDeletion(t *testing.T) {
+	db, parent, attempt := importControlFixture(t)
+	ctx := context.Background()
+	child, err := db.InsertReplacementDownload(ctx, Download{
+		MediaItemID: parent.MediaItemID, Protocol: "torrent", State: "submitting",
+		ReleaseTitle: "Replacement awaiting admission", SubmissionPhase: "submitting",
+		Transfer: "pending-replacement-transfer", ExecutionPayload: "{}",
+	}, parent.ID, parent.GenerationKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity := ActivityIdentity{ID: parent.ID, GenerationKey: parent.GenerationKey, Epoch: strconv.FormatInt(attempt.Epoch, 10)}
+	operation, err := db.CreateActivityOperation(ctx, "delete-with-replacement", "delete", identity, []ActivityTarget{{ActivityIdentity: identity}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	original, err := db.ClaimJob(ctx, "activity-worker", nil, time.Minute)
+	if err != nil || original.Kind != ActivityActionJobKind || original.DedupeKey != "activity:"+operation.ID {
+		t.Fatalf("claim initial delete: %+v err=%v", original, err)
+	}
+	for _, dl := range []Download{child, parent} {
+		revision, err := db.DispositionRevision(ctx, dl.ID, dl.GenerationKey)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := db.VerifyDownloadDeletion(ctx, dl.ID, dl.GenerationKey, revision); err != nil {
+			t.Fatal(err)
+		}
+	}
+	operation.Targets[0].State = "succeeded"
+	if err := db.SaveActivityTarget(ctx, &operation, 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.CompleteJob(ctx, original.ID); err != nil {
+		t.Fatal(err)
+	}
+	completed, err := db.ActivityOperation(ctx, operation.ID)
+	if err != nil || completed.State != "completed" || completed.Succeeded != 1 {
+		t.Fatalf("fixture did not complete parent deletion: %+v err=%v", completed, err)
+	}
+
+	if _, err := db.InsertPublication(ctx, PublicationWrite{
+		DownloadID: child.ID, Generation: "late-replacement-artifact", Kind: "salvage",
+		Path: "/completed/late-replacement", Source: "none", Cohort: "live",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for _, dl := range []Download{child, parent} {
+		requested, verified, err := db.DownloadDeletionStatus(ctx, dl.ID, dl.GenerationKey)
+		if err != nil || !requested || verified {
+			t.Fatalf("late child publication did not reopen disposition %d: requested=%v verified=%v err=%v", dl.ID, requested, verified, err)
+		}
+	}
+	reopened, err := db.ActivityOperation(ctx, operation.ID)
+	if err != nil || reopened.State != "running" || len(reopened.Targets) != 1 ||
+		reopened.Targets[0].ActivityIdentity != identity || reopened.Targets[0].State != "pending" {
+		t.Fatalf("late child publication did not reopen the original parent member: %+v err=%v", reopened, err)
+	}
+
+	replay, err := db.ClaimJob(ctx, "activity-worker", nil, time.Minute)
+	if err != nil || replay.ID == original.ID || replay.Kind != ActivityActionJobKind || replay.DedupeKey != "activity:"+operation.ID {
+		t.Fatalf("late child publication did not queue the original operation for replay: %+v err=%v", replay, err)
+	}
+	if _, err := db.ClaimJob(ctx, "another-worker", nil, time.Minute); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("late child publication queued an extra operation: %v", err)
+	}
+}
