@@ -1441,6 +1441,7 @@ export interface BlocklistEntry {
 export const getCalendar = (start: string, end: string) =>
   get<CalendarEntry[]>(`/calendar?start=${start}&end=${end}`)
 export const getWanted = () => get<WantedItem[]>('/wanted')
+export const getWantedSearches = () => get<{ items: WantedSearchRun[] }>('/wanted/searches')
 export const createWantedSearch = (request: WantedSearchRequest) =>
   send<WantedSearchRun>('POST', '/wanted/searches', request)
 export const getWantedSearch = (runId: string) =>
