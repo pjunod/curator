@@ -304,6 +304,24 @@ export interface WantedItem {
   copy: string
 }
 
+export type WantedSearchScope =
+  | { scope: 'all' }
+  | { scope: 'reason'; reason: 'missing' | 'upgrade' }
+  | { scope: 'group'; mediaItemId: number; reason?: 'missing' | 'upgrade' }
+  | { scope: 'target'; wantableId: string }
+
+export interface WantedSearchRun {
+  runId: string
+  scope: WantedSearchScope
+  scopeLabel: string
+  status: 'queued' | 'running' | 'completed' | 'failed' | 'interrupted' | 'cancelled'
+  cancelRequestedAt?: string
+  selected: number
+  processed: number
+  grabbed: number
+  error?: string
+}
+
 export interface MatchEvidence {
   version: number
   matched: boolean

@@ -41,6 +41,8 @@ import type {
   UpdateMediaCopyRequest,
   UpdateMediaItemRequest,
   WantedItem,
+  WantedSearchRun,
+  WantedSearchScope,
   ItemStatus,
 } from './types'
 
@@ -210,8 +212,13 @@ export class MonarrClient {
     this.get(`/library/${id}/status${season === undefined ? '' : `?season=${season}`}`)
   confirmItemInCinema = (id: number, episodeId?: number): Promise<{ queued: number }> =>
     this.send('POST', `/library/${id}/status/confirm${episodeId ? `?episode=${episodeId}` : ''}`)
-  searchWantable = (wantableId: string): Promise<{ scopeLabel: string }> =>
-    this.send('POST', '/wanted/searches', { scope: 'target', wantableId })
+  getWantedSearches = (): Promise<{ items: WantedSearchRun[] }> => this.get('/wanted/searches')
+  createWantedSearch = (scope: WantedSearchScope): Promise<WantedSearchRun> =>
+    this.send('POST', '/wanted/searches', scope)
+  cancelWantedSearch = (runId: string): Promise<WantedSearchRun> =>
+    this.send('POST', `/wanted/searches/${encodeURIComponent(runId)}/cancel`)
+  searchWantable = (wantableId: string): Promise<WantedSearchRun> =>
+    this.createWantedSearch({ scope: 'target', wantableId })
   cancelDownload = (id: number): Promise<void> => this.send('DELETE', `/queue/${id}?fromClient=true&blocklist=true`)
   retryImport = (id: number): Promise<void> => this.send('POST', `/queue/${id}/import`)
   retryDelivery = (notifierId: number, deliveryId: number): Promise<void> =>

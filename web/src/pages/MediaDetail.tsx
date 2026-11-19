@@ -1708,6 +1708,8 @@ export function MediaDetailPage() {
           episode={searching.episode}
           copyId={searching.copyId}
           label={searching.label}
+          seasons={m.kind === 'series' ? m.seasons : undefined}
+          onScopeChange={(scope) => setSearching({ ...scope, copyId: searching.copyId })}
           onClose={() => setSearching(null)}
         />
       )}

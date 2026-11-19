@@ -1,7 +1,7 @@
 import { useLayoutEffect, useMemo, useRef, useState, type SyntheticEvent } from 'react'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
-import type { LanguageOption, ReleaseCandidate } from '../api'
+import type { LanguageOption, ReleaseCandidate, SeasonInfo } from '../api'
 import { fmtBytes, grabRelease, listLanguages, searchReleases } from '../api'
 import { releaseLanguagesLabel } from '../language'
 import { ActionDialog, ActionNotice, focusActionTrigger } from '../ActionDialog'
@@ -30,10 +30,16 @@ export function ReleaseSearch(props: {
   episode?: number
   copyId?: number
   label?: string
+  seasons?: SeasonInfo[]
+  onScopeChange: (scope: { season: number; episode?: number }) => void
   onClose: () => void
 }) {
   const { mediaItemId, season, episode, copyId } = props
-  const [grabbed, setGrabbed] = useState<string | null>(null)
+  const scopeKey = `${mediaItemId}:${copyId ?? 0}:${season ?? -1}:${episode ?? -1}`
+  const [grabNotices, setGrabNotices] = useState<Record<string, { grabbed?: string; error?: string }>>({})
+  const notice = grabNotices[scopeKey]
+  const [pending, setPending] = useState<Set<string>>(new Set())
+  const activeGrabs = useRef(new Set<string>())
   const [filter, setFilter] = useState<Filter>('all')
   const [query, setQuery] = useState('')
   const [page, setPage] = useState(0)
@@ -42,9 +48,8 @@ export function ReleaseSearch(props: {
   const requestIds = useRef(new Map<string, string>())
   const confirmationTrigger = useRef<HTMLButtonElement | null>(null)
 
-  const requestKey = (c: ReleaseCandidate) => `${c.indexer}\u0000${c.title}\u0000${c.downloadUrl}`
-  const requestIdFor = (c: ReleaseCandidate) => {
-    const key = requestKey(c)
+  const rowKey = (c: ReleaseCandidate) => `${scopeKey}\u0000${c.indexer}\u0000${c.title}\u0000${c.downloadUrl}`
+  const requestIdFor = (key: string) => {
     let id = requestIds.current.get(key)
     if (!id) {
       id = globalThis.crypto?.randomUUID?.() ?? `manual-${Date.now()}-${Math.random().toString(16).slice(2)}`
@@ -56,6 +61,7 @@ export function ReleaseSearch(props: {
   const search = useQuery({
     queryKey: ['releases', mediaItemId, copyId ?? 0, season ?? -1, episode ?? -1],
     queryFn: () => searchReleases(mediaItemId, season, episode, copyId),
+    enabled: !props.seasons || season !== undefined,
     retry: false,
     staleTime: 60_000,
   })
@@ -65,22 +71,37 @@ export function ReleaseSearch(props: {
   const languages = useQuery({ queryKey: ['languages'], queryFn: listLanguages, staleTime: Infinity })
 
   const grab = useMutation({
-    mutationFn: ({ c, downloadAnyway }: { c: ReleaseCandidate; downloadAnyway: boolean }) =>
-      grabRelease({
+    mutationFn: grabRelease,
+  })
+
+  const submitGrab = async (c: ReleaseCandidate, downloadAnyway: boolean) => {
+    const row = rowKey(c)
+    if (activeGrabs.current.has(row)) return
+    activeGrabs.current.add(row)
+    setPending(new Set(activeGrabs.current))
+    setGrabNotices((current) => ({ ...current, [scopeKey]: {} }))
+    const action = `${row}:${downloadAnyway}`
+    try {
+      await grab.mutateAsync({
         mediaItemId, copyId, season, episode,
         title: c.title, downloadUrl: c.downloadUrl, indexer: c.indexer,
         protocol: c.protocol, size: c.size, candidateToken: c.candidateToken,
-        intent: 'additional_copy', requestId: requestIdFor(c),
+        intent: 'additional_copy', requestId: requestIdFor(action),
         ...(downloadAnyway ? { downloadAnyway: true } : {}),
-      }),
-    onMutate: () => setGrabbed(null),
-    onSuccess: (_res, { c }) => {
-      setGrabbed(c.title)
-      requestIds.current.delete(requestKey(c))
-      setConfirmingBlacklist(null)
-      requestAnimationFrame(() => confirmationTrigger.current?.focus({ preventScroll: true }))
-    },
-  })
+      })
+      requestIds.current.delete(action)
+      setGrabNotices((current) => ({ ...current, [scopeKey]: { grabbed: c.title } }))
+      if (downloadAnyway) {
+        setConfirmingBlacklist(null)
+        requestAnimationFrame(() => confirmationTrigger.current?.focus({ preventScroll: true }))
+      }
+    } catch (error) {
+      setGrabNotices((current) => ({ ...current, [scopeKey]: { error: (error as Error).message } }))
+    } finally {
+      activeGrabs.current.delete(row)
+      setPending(new Set(activeGrabs.current))
+    }
+  }
 
   const all = useMemo(() => search.data?.candidates ?? [], [search.data])
   const acceptedCount = useMemo(() => all.filter((c) => c.accepted).length, [all])
@@ -111,29 +132,68 @@ export function ReleaseSearch(props: {
         : 'item'
   )
 
+  const selectedSeason = props.seasons?.find((candidate) => candidate.number === season)
+  const confirmationPending = confirmingBlacklist !== null && pending.has(rowKey(confirmingBlacklist))
+
   return (
     <ActionDialog title={confirmingBlacklist ? 'Download blacklisted release anyway?' : `Interactive search — ${label}`} className="release-search" onClose={props.onClose}>
       {confirmingBlacklist ? (
         <div className="blacklist-confirmation">
-          {grab.isError && <ActionNotice warning>{String((grab.error as Error).message)}</ActionNotice>}
+          {notice?.error && <ActionNotice warning>{notice.error}</ActionNotice>}
           <ActionNotice warning>
             This release remains blacklisted for automatic searches. This confirmation applies only to this manual additional copy.
           </ActionNotice>
           <p><span className="mono">{confirmingBlacklist.title}</span></p>
           <p>Blacklist reason: {confirmingBlacklist.blacklistReason}</p>
           <div className="dialog-actions">
-            <button onClick={() => {
+            <button disabled={confirmationPending} onClick={() => {
               setConfirmingBlacklist(null)
               requestAnimationFrame(() => confirmationTrigger.current?.focus({ preventScroll: true }))
             }}>Cancel</button>
-            <button className="btn-accent" disabled={grab.isPending}
-              onClick={() => grab.mutate({ c: confirmingBlacklist, downloadAnyway: true })}>
-              {grab.isPending ? 'Submitting…' : 'Download anyway'}
+            <button className="btn-accent" disabled={confirmationPending}
+              onClick={() => void submitGrab(confirmingBlacklist, true)}>
+              {confirmationPending ? 'Submitting…' : 'Download anyway'}
             </button>
           </div>
         </div>
       ) : (
       <>
+      {props.seasons && props.seasons.length > 0 && (
+        <div className="section-toolbar release-toolbar">
+          <label>Season{' '}
+            <select value={season ?? ''} onChange={(event) => {
+              setPage(0)
+              props.onScopeChange({ season: Number(event.target.value) })
+            }}>
+              <option value="" disabled>Select season</option>
+              {props.seasons.map((candidate) => (
+                <option key={candidate.number} value={candidate.number}>
+                  {candidate.number === 0 ? 'Specials' : `Season ${candidate.number}`}
+                </option>
+              ))}
+            </select>
+          </label>
+          {selectedSeason && (
+            <label>Episode{' '}
+              <select value={episode ?? ''} onChange={(event) => {
+                setPage(0)
+                props.onScopeChange({
+                  season: selectedSeason.number,
+                  episode: event.target.value === '' ? undefined : Number(event.target.value),
+                })
+              }}>
+                <option value="">Whole pack</option>
+                {selectedSeason.episodes.map((candidate) => (
+                  <option key={candidate.id} value={candidate.episodeNumber}>
+                    {candidate.episodeNumber} · {candidate.title}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+        </div>
+      )}
+      {props.seasons?.length === 0 && <p className="muted">No seasons are available to search.</p>}
       {search.isFetching && <p className="muted">Searching indexers…</p>}
       {search.data?.partial && (
         <ActionNotice warning>
@@ -141,10 +201,10 @@ export function ReleaseSearch(props: {
         </ActionNotice>
       )}
       {search.isError && <ActionNotice warning>{String((search.error as Error).message)}</ActionNotice>}
-      {grab.isError && <ActionNotice warning>{String((grab.error as Error).message)}</ActionNotice>}
-      {grabbed && (
+      {notice?.error && <ActionNotice warning>{notice.error}</ActionNotice>}
+      {notice?.grabbed && (
         <ActionNotice>
-          Grabbed <span className="mono">{grabbed}</span> — follow it on the{' '}
+          Grabbed <span className="mono">{notice.grabbed}</span> — follow it on the{' '}
           <Link to="/activity">Activity page</Link>.
         </ActionNotice>
       )}
@@ -204,17 +264,17 @@ export function ReleaseSearch(props: {
                 <tbody>
                   {visible.map((c) => (
                     <ReleaseRow
-                      key={`${c.indexer}-${c.title}`}
+                      key={rowKey(c)}
                       c={c}
                       languages={languages.data}
-                      busy={grab.isPending}
+                      busy={pending.has(rowKey(c))}
                       onGrab={(event) => {
                         if (c.blacklistReason) {
                           focusActionTrigger(event)
                           confirmationTrigger.current = event.currentTarget
                           setConfirmingBlacklist(c)
                         } else {
-                          grab.mutate({ c, downloadAnyway: false })
+                          void submitGrab(c, false)
                         }
                       }}
                     />
@@ -325,7 +385,7 @@ function ReleaseRow({
           onClick={onGrab}
           title={c.accepted ? 'Send to download client' : 'Grab anyway (override rejections)'}
         >
-          Grab
+          {busy ? 'Grabbing…' : 'Grab'}
         </button>
       </td>
     </tr>
