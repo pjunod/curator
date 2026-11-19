@@ -11,6 +11,8 @@ CREATE TABLE wanted_search_requests (
 CREATE INDEX wanted_search_requests_run ON wanted_search_requests(run_id);
 
 -- +goose Down
+-- Drain Wanted or cancel all but one active run before downgrading.
+-- The original singleton index will refuse rollback while multiple are active.
 DROP TABLE wanted_search_requests;
 DROP INDEX wanted_search_active_scope;
 CREATE UNIQUE INDEX wanted_search_one_active

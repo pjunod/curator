@@ -32,7 +32,10 @@ CREATE TABLE offload_request_aliases (
     operation_id TEXT NOT NULL
 ) STRICT;
 
+ALTER TABLE offload_operation_files ADD COLUMN unlink_started INTEGER NOT NULL DEFAULT 0 CHECK (unlink_started IN (0,1));
+
 -- +goose Down
+ALTER TABLE offload_operation_files DROP COLUMN unlink_started;
 DROP TABLE offload_request_aliases;
 DROP INDEX offload_operations_open;
 DROP INDEX offload_operations_item;

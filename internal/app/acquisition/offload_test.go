@@ -2,6 +2,7 @@ package acquisition
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -555,10 +556,16 @@ func TestOffloadStopKeepsWhatIsNotYetDeleted(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.svc.offloadDeleteFile(ctx, offloadStored{}, sqlite.OffloadFile{Path: e1, Kind: "media", FileID: fileIDOf(t, f, e1)}); err != nil {
+	var stored offloadStored
+	if err := json.Unmarshal(op.Plan, &stored); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.db.MarkOffloadFile(ctx, op.ID, e1, "deleted", "", 3); err != nil {
+	file := sqlite.OffloadFile{Path: e1, Kind: "media", FileID: fileIDOf(t, f, e1)}
+	freed, err := f.svc.offloadDeleteFile(ctx, op, stored, file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.db.RecordOffloadFileRemoved(ctx, op.ItemID, op.ID, file, stored.FileGenerations[e1], freed); err != nil {
 		t.Fatal(err)
 	}
 	if err := f.svc.StopOffload(ctx, op.ID); err != nil {
@@ -704,10 +711,10 @@ func TestOffloadStopIsResumableAndUnoffloadsFilelessEpisodes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.svc.offloadDeleteFile(ctx, offloadStored{}, sqlite.OffloadFile{Path: e1, Kind: "media", FileID: fileIDOf(t, f, e1)}); err != nil {
-		t.Fatal(err)
+	if started, err := f.db.BeginOffloadUnlink(ctx, op.ID, e1); err != nil || !started {
+		t.Fatalf("begin interrupted unlink: %v, %v", started, err)
 	}
-	if err := f.db.MarkOffloadFile(ctx, op.ID, e1, "deleted", "", 3); err != nil {
+	if err := os.Remove(e1); err != nil {
 		t.Fatal(err)
 	}
 	// The process dies right after the flip.

@@ -64,12 +64,13 @@ func scanOffload(row rowScanner) (OffloadOperation, error) {
 // OffloadFile is one journaled file: a library media file, a sidecar or an
 // untracked subtitle beside it.
 type OffloadFile struct {
-	Path   string `json:"path"`
-	Kind   string `json:"kind"` // media | sidecar
-	FileID int64  `json:"fileId,omitempty"`
-	Size   int64  `json:"size"`
-	State  string `json:"state"` // pending | deleted | failed
-	Error  string `json:"error,omitempty"`
+	UnlinkStarted bool   `json:"-"`
+	Path          string `json:"path"`
+	Kind          string `json:"kind"` // media | sidecar
+	FileID        int64  `json:"fileId,omitempty"`
+	Size          int64  `json:"size"`
+	State         string `json:"state"` // pending | deleted | failed
+	Error         string `json:"error,omitempty"`
 }
 
 // OffloadRecord is everything the one transaction that starts an Offload
@@ -86,6 +87,27 @@ type OffloadRecord struct {
 	Seasons  []int
 	Episodes []int64
 	Outbox   []OutboxWrite
+	Revision OffloadRevision
+}
+
+type OffloadRevision struct {
+	Item, Shared int64
+	Recipients   string
+}
+
+const offloadRevisionSQL = `SELECT COALESCE((SELECT revision FROM lifecycle_item_revision WHERE media_item_id=?),0),
+	revision, (SELECT json_group_array(json_array(id,name,settings,features)) FROM
+	 (SELECT id,name,settings,features FROM notifiers WHERE type='plurx' AND enabled=1 AND on_import=1 ORDER BY id))
+	FROM lifecycle_shared_revision WHERE id=1`
+
+func scanOffloadRevision(row rowScanner) (OffloadRevision, error) {
+	var revision OffloadRevision
+	err := row.Scan(&revision.Item, &revision.Shared, &revision.Recipients)
+	return revision, err
+}
+
+func (d *DB) OffloadRevision(ctx context.Context, itemID int64) (OffloadRevision, error) {
+	return scanOffloadRevision(d.R.QueryRowContext(ctx, offloadRevisionSQL, itemID))
 }
 
 // CreateOffloadOperation records an operation and sets what it offloads, in
@@ -171,6 +193,10 @@ func (d *DB) ActivateOffload(ctx context.Context, rec OffloadRecord) (bool, erro
 		return false, err
 	}
 	defer func() { _ = tx.Rollback() }()
+	revision, err := scanOffloadRevision(tx.QueryRowContext(ctx, offloadRevisionSQL, rec.Op.ItemID))
+	if err != nil || revision != rec.Revision {
+		return false, err
+	}
 	now := time.Now().UnixMilli()
 	res, err := tx.ExecContext(ctx, `UPDATE offload_operations SET state='deleting',last_error='',updated_at=?
 		WHERE operation_id=? AND state='queued'
@@ -257,7 +283,7 @@ func (d *DB) OpenOffloadOperations(ctx context.Context) ([]OffloadOperation, err
 
 // ListOffloadFiles is an operation's journal in path order.
 func (d *DB) ListOffloadFiles(ctx context.Context, id string) ([]OffloadFile, error) {
-	rows, err := d.R.QueryContext(ctx, `SELECT path,kind,file_id,size,state,error FROM offload_operation_files WHERE operation_id=? ORDER BY kind, path`, id)
+	rows, err := d.R.QueryContext(ctx, `SELECT path,kind,file_id,size,state,error,unlink_started FROM offload_operation_files WHERE operation_id=? ORDER BY kind, path`, id)
 	if err != nil {
 		return nil, err
 	}
@@ -265,7 +291,7 @@ func (d *DB) ListOffloadFiles(ctx context.Context, id string) ([]OffloadFile, er
 	var out []OffloadFile
 	for rows.Next() {
 		var f OffloadFile
-		if err := rows.Scan(&f.Path, &f.Kind, &f.FileID, &f.Size, &f.State, &f.Error); err != nil {
+		if err := rows.Scan(&f.Path, &f.Kind, &f.FileID, &f.Size, &f.State, &f.Error, &f.UnlinkStarted); err != nil {
 			return nil, err
 		}
 		out = append(out, f)
@@ -303,6 +329,49 @@ func (d *DB) MarkOffloadFile(ctx context.Context, id, path, state, errMsg string
 		if _, err := tx.ExecContext(ctx, `UPDATE offload_operations SET bytes_freed=bytes_freed+?,updated_at=? WHERE operation_id=?`, freed, time.Now().UnixMilli(), id); err != nil {
 			return err
 		}
+	}
+	return tx.Commit()
+}
+
+// BeginOffloadUnlink persists the crash-recovery boundary before a delete.
+func (d *DB) BeginOffloadUnlink(ctx context.Context, id, path string) (bool, error) {
+	res, err := d.W.ExecContext(ctx, `UPDATE offload_operation_files SET unlink_started=1
+		WHERE operation_id=? AND path=? AND state!='deleted' AND EXISTS (
+		 SELECT 1 FROM offload_operations WHERE operation_id=? AND state IN ('deleting','waiting','retrying')
+		)`, id, path, id)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n == 1, err
+}
+
+// RecordOffloadFileRemoved retires the exact library generation and its
+// operation journal together. An already retired row is an idempotent replay.
+func (d *DB) RecordOffloadFileRemoved(ctx context.Context, itemID int64, id string, file OffloadFile, generation string, freed int64) error {
+	tx, err := d.W.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	res, err := tx.ExecContext(ctx, `UPDATE offload_operation_files SET state='deleted',error=''
+		WHERE operation_id=? AND path=? AND file_id=? AND state!='deleted'`, id, file.Path, file.FileID)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil || n == 0 {
+		return err
+	}
+	if file.Kind == "media" && file.FileID != 0 {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM media_files WHERE id=? AND media_item_id=? AND path=? AND file_generation=?`,
+			file.FileID, itemID, file.Path, generation); err != nil {
+			return err
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE offload_operations SET bytes_freed=bytes_freed+?,updated_at=? WHERE operation_id=?`,
+		freed, time.Now().UnixMilli(), id); err != nil {
+		return err
 	}
 	return tx.Commit()
 }

@@ -111,20 +111,22 @@ type OffloadPreview struct {
 
 // offloadPlan is a preview plus what execution needs that the page does not.
 type offloadPlan struct {
-	preview         OffloadPreview
-	item            domain.MediaItem
-	movie           bool
-	whole           bool // item scope of a series: the stored whole-show intent
-	seasons         []int
-	episodes        []int64 // every episode that becomes offloaded
-	fileless        []int64 // those of them with no file at plan time
-	fileEps         map[string][]int64
-	fileCopies      map[string]int64
-	fileGenerations map[string]string
-	files           []sqlite.OffloadFile
-	identities      map[string]string
-	rootIdentities  map[string]string
-	roots           []string
+	revision         sqlite.OffloadRevision
+	preview          OffloadPreview
+	item             domain.MediaItem
+	movie            bool
+	whole            bool // item scope of a series: the stored whole-show intent
+	seasons          []int
+	episodes         []int64 // every episode that becomes offloaded
+	fileless         []int64 // those of them with no file at plan time
+	fileEps          map[string][]int64
+	fileCopies       map[string]int64
+	fileGenerations  map[string]string
+	files            []sqlite.OffloadFile
+	identities       map[string]string
+	rootIdentities   map[string]string
+	parentIdentities map[string]string
+	roots            []string
 }
 
 // offloadStored is the plan an operation executes (offload_operations.plan).
@@ -141,14 +143,15 @@ type offloadStored struct {
 	Fileless []int64 `json:"fileless,omitempty"`
 	// FileEpisodes maps a media file to the episodes it covered, so a partial
 	// Re-acquire can narrow the operation's Cinema requests to what is still gone.
-	FileCopies      map[string]int64   `json:"fileCopies,omitempty"`
-	FileEpisodes    map[string][]int64 `json:"fileEpisodes,omitempty"`
-	Labels          []string           `json:"episodeLabels,omitempty"`
-	Identities      map[string]string  `json:"fileIdentities,omitempty"`
-	FileGenerations map[string]string  `json:"fileGenerations,omitempty"`
-	RootIdentities  map[string]string  `json:"rootIdentities,omitempty"`
-	Roots           []string           `json:"roots,omitempty"`
-	Folder          string             `json:"folder,omitempty"`
+	FileCopies       map[string]int64   `json:"fileCopies,omitempty"`
+	FileEpisodes     map[string][]int64 `json:"fileEpisodes,omitempty"`
+	Labels           []string           `json:"episodeLabels,omitempty"`
+	Identities       map[string]string  `json:"fileIdentities,omitempty"`
+	FileGenerations  map[string]string  `json:"fileGenerations,omitempty"`
+	RootIdentities   map[string]string  `json:"rootIdentities,omitempty"`
+	ParentIdentities map[string]string  `json:"parentIdentities,omitempty"`
+	Roots            []string           `json:"roots,omitempty"`
+	Folder           string             `json:"folder,omitempty"`
 }
 
 const (
@@ -170,6 +173,10 @@ func (s *Service) PreviewOffload(ctx context.Context, req OffloadRequest) (Offlo
 }
 
 func (s *Service) planOffload(ctx context.Context, req OffloadRequest) (*offloadPlan, error) {
+	revision, err := s.db.OffloadRevision(ctx, req.ItemID)
+	if err != nil {
+		return nil, err
+	}
 	item, err := s.db.GetMediaItemFull(ctx, req.ItemID)
 	if err != nil {
 		return nil, err
@@ -177,7 +184,7 @@ func (s *Service) planOffload(ctx context.Context, req OffloadRequest) (*offload
 	if item.Kind != domain.KindMovie && item.Kind != domain.KindSeries {
 		return nil, fmt.Errorf("%w: only a movie or a show can be offloaded", ErrInvalidOffload)
 	}
-	plan := &offloadPlan{item: item}
+	plan := &offloadPlan{item: item, revision: revision}
 	p := &plan.preview
 	p.Item = RematchItemRef{ID: item.ID, Kind: string(item.Kind), Title: item.Title, Year: item.Year, InLibrary: true, Folder: item.Path}
 	p.Scope, p.Files, p.Episodes, p.Widened = req.Scope, []OffloadFilePlan{}, []string{}, []string{}
@@ -364,7 +371,7 @@ func (s *Service) planOffload(ctx context.Context, req OffloadRequest) (*offload
 				continue
 			}
 			listed[sc.path] = true
-			p.Files = append(p.Files, OffloadFilePlan{Path: sc.path, Kind: "sidecar", Bytes: sc.size})
+			p.Files = append(p.Files, OffloadFilePlan{Path: sc.path, Kind: "sidecar", Bytes: sc.size, Shared: offloadLinkCount(sc.path) > 1})
 			plan.files = append(plan.files, sqlite.OffloadFile{Path: sc.path, Kind: "sidecar", Size: sc.size})
 		}
 	}
@@ -419,8 +426,13 @@ func (s *Service) planOffload(ctx context.Context, req OffloadRequest) (*offload
 	}
 	p.Cinema, p.CinemaWarning = s.offloadCinemaLine(ctx)
 	plan.identities = make(map[string]string, len(plan.files))
+	plan.parentIdentities = make(map[string]string)
 	for _, f := range plan.files {
 		plan.identities[f.Path] = offloadPathIdentity(f.Path, true)
+		parent := filepath.Dir(f.Path)
+		if _, pinned := plan.parentIdentities[parent]; !pinned {
+			plan.parentIdentities[parent] = offloadPathIdentity(parent, false)
+		}
 	}
 	plan.rootIdentities = make(map[string]string, len(plan.roots))
 	for _, root := range plan.roots {
@@ -494,6 +506,7 @@ func offloadRootOf(roots []domain.RootFolder, path string) string {
 func offloadFingerprint(req OffloadRequest, plan *offloadPlan) string {
 	h := sha256.New()
 	fmt.Fprintf(h, "%d|%s|%d|%d|%v|%v|%q|%q\n", req.ItemID, plan.preview.Scope, req.Season, req.EpisodeID, plan.movie, plan.seasons, plan.item.Path, plan.preview.Cinema)
+	fmt.Fprintf(h, "recipients|%s\n", plan.revision.Recipients)
 	for _, root := range plan.roots {
 		fmt.Fprintf(h, "root|%q|%s\n", root, plan.rootIdentities[root])
 	}
@@ -506,8 +519,8 @@ func offloadFingerprint(req OffloadRequest, plan *offloadPlan) string {
 	for i, f := range plan.files {
 		episodes := append([]int64(nil), plan.fileEps[f.Path]...)
 		sort.Slice(episodes, func(i, j int) bool { return episodes[i] < episodes[j] })
-		fmt.Fprintf(h, "%s|%q|%d|%d|%d|%v|%s|%s|%t\n", f.Kind, f.Path, f.Size, f.FileID, plan.fileCopies[f.Path], episodes,
-			plan.fileGenerations[f.Path], plan.identities[f.Path], plan.preview.Files[i].Shared)
+		fmt.Fprintf(h, "%s|%q|%d|%d|%d|%v|%s|%s|%s|%t\n", f.Kind, f.Path, f.Size, f.FileID, plan.fileCopies[f.Path], episodes,
+			plan.fileGenerations[f.Path], plan.identities[f.Path], plan.parentIdentities[filepath.Dir(f.Path)], plan.preview.Files[i].Shared)
 	}
 	return hex.EncodeToString(h.Sum(nil))[:24]
 }
@@ -662,7 +675,7 @@ func (s *Service) reviewedOffload(ctx context.Context, req OffloadRequest) (sqli
 	}
 	stored := offloadStored{Request: req, Label: p.Label, Title: plan.item.Title, Year: plan.item.Year, Kind: string(plan.item.Kind),
 		Movie: plan.movie, Seasons: plan.seasons, Episodes: plan.episodes, Fileless: plan.fileless, FileEpisodes: plan.fileEps,
-		FileCopies: plan.fileCopies, FileGenerations: plan.fileGenerations, Identities: plan.identities, RootIdentities: plan.rootIdentities, Labels: p.Episodes, Roots: plan.roots, Folder: plan.item.Path}
+		FileCopies: plan.fileCopies, FileGenerations: plan.fileGenerations, Identities: plan.identities, RootIdentities: plan.rootIdentities, ParentIdentities: plan.parentIdentities, Labels: p.Episodes, Roots: plan.roots, Folder: plan.item.Path}
 	stored.Request.RequestID, stored.Request.PlanFingerprint = "", ""
 	raw, err := json.Marshal(stored)
 	if err != nil {
@@ -683,7 +696,7 @@ func (s *Service) offloadActivation(ctx context.Context, op sqlite.OffloadOperat
 		}
 	}
 	outbox, err := s.offloadOutbox(ctx, op.ID, plan.item, media, true)
-	return sqlite.OffloadRecord{Op: op, Movie: plan.movie, Whole: plan.whole, Seasons: plan.seasons, Episodes: plan.episodes, Outbox: outbox}, err
+	return sqlite.OffloadRecord{Op: op, Movie: plan.movie, Whole: plan.whole, Seasons: plan.seasons, Episodes: plan.episodes, Outbox: outbox, Revision: plan.revision}, err
 }
 
 // activateQueuedOffload runs with the title and volume authorities held.
@@ -963,7 +976,10 @@ func (s *Service) runOffload(ctx context.Context, id string) error {
 			}
 			return err
 		}
-		freed, err := s.offloadDeleteFile(bg, stored, f)
+		freed, err := s.offloadDeleteFile(bg, op, stored, f)
+		if errors.Is(err, errOffloadStopped) {
+			return nil
+		}
 		if err != nil {
 			_ = s.db.MarkOffloadFile(bg, id, f.Path, "failed", err.Error(), 0)
 			failed = append(failed, f.Path)
@@ -972,7 +988,7 @@ func (s *Service) runOffload(ctx context.Context, id string) error {
 			}
 			continue
 		}
-		if err := s.db.MarkOffloadFile(bg, id, f.Path, "deleted", "", freed); err != nil {
+		if err := s.db.RecordOffloadFileRemoved(bg, op.ItemID, id, f, stored.FileGenerations[f.Path], freed); err != nil {
 			return fmt.Errorf("journal %s: %w", f.Path, err)
 		}
 	}
@@ -986,83 +1002,105 @@ func (s *Service) runOffload(ctx context.Context, id string) error {
 	return s.finishOffload(bg, id, stored)
 }
 
-// offloadDeleteFile removes one journaled file and, for a library file, its
-// row. A file already gone is fine only because the share was verified
-// readable (and non-empty) at the start of this pass.
-func (s *Service) offloadDeleteFile(ctx context.Context, stored offloadStored, f sqlite.OffloadFile) (int64, error) {
-	if err := rejectSymlinks(f.Path, true); err != nil {
+// openOffloadParent binds the final lookup and unlink to the reviewed storage
+// root and directory, even if an ancestor name is replaced after opening.
+func openOffloadParent(stored offloadStored, path string) (*os.Root, error) {
+	parentPath := filepath.Dir(path)
+	wantParent := stored.ParentIdentities[parentPath]
+	var rootPath, rel string
+	for _, candidate := range stored.Roots {
+		r, err := filepath.Rel(candidate, parentPath)
+		if err == nil && r != ".." && !strings.HasPrefix(r, ".."+string(filepath.Separator)) && len(candidate) > len(rootPath) {
+			rootPath, rel = candidate, r
+		}
+	}
+	wantRoot := stored.RootIdentities[rootPath]
+	if wantParent == "" || wantRoot == "" {
+		return nil, fmt.Errorf("reviewed storage identity is unavailable for %s", path)
+	}
+	if err := rejectSymlinks(rootPath, false); err != nil {
+		return nil, err
+	}
+	root, err := os.OpenRoot(rootPath)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = root.Close() }()
+	rootInfo, err := root.Stat(".")
+	if err != nil || offloadFileIdentity(rootInfo, false) != wantRoot {
+		return nil, fmt.Errorf("reviewed library volume changed at %s", rootPath)
+	}
+	parent, err := openDeliveryDirectoryNoSymlinks(root, rel)
+	if err != nil {
+		return nil, err
+	}
+	info, err := parent.Stat(".")
+	if err != nil || offloadFileIdentity(info, false) != wantParent {
+		_ = parent.Close()
+		return nil, fmt.Errorf("reviewed directory changed at %s", parentPath)
+	}
+	return parent, nil
+}
+
+var errOffloadStopped = errors.New("offload stopped before unlink")
+
+func (s *Service) offloadDeleteFile(ctx context.Context, op sqlite.OffloadOperation, stored offloadStored, f sqlite.OffloadFile) (int64, error) {
+	expected := stored.Identities[f.Path]
+	if expected == "" {
+		return 0, fmt.Errorf("reviewed file identity is unavailable for %s; stop and review again", f.Path)
+	}
+	parent, err := openOffloadParent(stored, f.Path)
+	if err != nil {
 		return 0, err
 	}
-	// What this delete actually releases: nothing for a file that is already
-	// gone or that other hard links keep alive (the preview's Freed says the same).
-	if expected := stored.Identities[f.Path]; expected != "" {
-		custody, err := s.db.GetMediaFileCustodyByPath(ctx, f.Path)
-		if err != nil && !errors.Is(err, sqlite.ErrNotFound) {
-			return 0, err
-		}
-		if err == nil && (f.Kind != "media" || custody.ID != f.FileID || custody.FileGeneration != stored.FileGenerations[f.Path]) {
-			return 0, fmt.Errorf("library ownership changed at %s", f.Path)
-		}
-		if current := offloadPathIdentity(f.Path, true); current != expected {
-			if _, err := os.Lstat(f.Path); !errors.Is(err, os.ErrNotExist) {
-				return 0, fmt.Errorf("file identity changed at %s", f.Path)
-			}
-		}
+	defer func() { _ = parent.Close() }()
+	name := filepath.Base(f.Path)
+	info, err := parent.Lstat(name)
+	absent := errors.Is(err, os.ErrNotExist)
+	if err != nil && !absent {
+		return 0, err
 	}
-	var freed int64
-	if info, err := os.Lstat(f.Path); err == nil && offloadLinkCount(f.Path) <= 1 {
-		freed = info.Size()
+	custody, err := s.db.GetMediaFileCustodyByPath(ctx, f.Path)
+	if err != nil && !errors.Is(err, sqlite.ErrNotFound) {
+		return 0, err
 	}
-	if err := os.Remove(f.Path); err != nil && !errors.Is(err, os.ErrNotExist) {
+	if err == nil && (f.Kind != "media" || custody.MediaItemID != op.ItemID || custody.ID != f.FileID ||
+		custody.FileGeneration != stored.FileGenerations[f.Path]) {
+		return 0, fmt.Errorf("library ownership changed at %s", f.Path)
+	}
+	if absent {
+		// Only infer replay from absence inside the exact reviewed directory.
+		return 0, syncRootDirectory(parent, ".")
+	}
+	if f.Kind == "media" && errors.Is(err, sqlite.ErrNotFound) {
+		return 0, fmt.Errorf("library ownership is missing at %s", f.Path)
+	}
+	if offloadFileIdentity(info, true) != expected ||
+		offloadPathIdentity(filepath.Dir(f.Path), false) != stored.ParentIdentities[filepath.Dir(f.Path)] {
+		return 0, fmt.Errorf("file or directory identity changed at %s", f.Path)
+	}
+	ready, err := s.db.BeginOffloadUnlink(ctx, op.ID, f.Path)
+	if err != nil {
+		return 0, err
+	}
+	if !ready {
+		return 0, errOffloadStopped
+	}
+	current, err := parent.Lstat(name)
+	if err != nil || offloadFileIdentity(current, true) != expected {
+		return 0, fmt.Errorf("file identity changed before removing %s", f.Path)
+	}
+	if err := parent.Remove(name); err != nil {
 		return 0, fmt.Errorf("delete %s: %w", f.Path, err)
-	} else if errors.Is(err, os.ErrNotExist) {
-		freed = 0
-		// Believed only while the share still lists: it may have gone away
-		// during the pass.
-		if why := s.offloadMountProblem(stored.Roots); why != "" {
-			return 0, fmt.Errorf("cannot tell whether %s is gone: %s", f.Path, why)
-		}
-		// A root that lists proves little when the title's own folder does
-		// not: a share mounted one level too high, or a partly mounted tree,
-		// answers ENOENT for files that are still there.
-		if stored.Folder != "" {
-			if _, err := os.ReadDir(stored.Folder); err != nil {
-				return 0, fmt.Errorf("cannot tell whether %s is gone: the title's folder %s cannot be listed (%v)", f.Path, stored.Folder, err)
-			}
-		}
 	}
-	_ = syncPath(filepath.Dir(f.Path))
-	switch f.Kind {
-	case "media":
-		if f.FileID != 0 {
-			if err := s.db.DeleteFile(ctx, f.FileID); err != nil && !errors.Is(err, sqlite.ErrNotFound) {
-				return 0, fmt.Errorf("remove the library row of %s: %w", f.Path, err)
-			}
-		}
-	default:
-		// A subtitle Curator placed is recorded as superseded, so cleanup does
-		// not find its library copy gone.
-		if rows, err := s.db.PlacedLibraryFilesWithPrefix(ctx, f.Path); err == nil {
-			for _, r := range rows {
-				if r.LibraryPath == f.Path {
-					s.supersedePlacedSubtitle(ctx, r, "its video was offloaded")
-				}
-			}
-		}
+	if err := syncRootDirectory(parent, "."); err != nil {
+		return 0, err
 	}
-	return freed, nil
+	if offloadInfoLinkCount(current) > 1 {
+		return 0, nil
+	}
+	return current.Size(), nil
 }
-
-// OffloadResult is what a finished Offload says it did.
-type offloadResult struct {
-	Files    int      `json:"files"`
-	Media    int      `json:"media"`
-	Bytes    int64    `json:"bytes"`
-	Episodes []string `json:"episodes,omitempty"`
-}
-
-// HistoryOffloaded records an Offload: the scope, how many files and bytes.
-const HistoryOffloaded = "offloaded"
 
 func (s *Service) finishOffload(ctx context.Context, id string, stored offloadStored) error {
 	op, err := s.db.GetOffloadOperation(ctx, id)
@@ -1115,7 +1153,7 @@ func (s *Service) StopOffload(ctx context.Context, id string) error {
 		cur, err := s.db.GetOffloadOperation(ctx, id)
 		if err != nil || !sqlite.OffloadOpen(cur.State) {
 			s.InvalidateWanted()
-			s.driveOffloads(s.rematchBase())
+			s.dispatchOffloads(s.rematchBase())
 			return err
 		}
 		if !s.offloadRunning(id) {
@@ -1143,6 +1181,34 @@ func (s *Service) finishStop(ctx context.Context, op sqlite.OffloadOperation, st
 	}
 	if cur, err := s.db.GetOffloadOperation(ctx, op.ID); err == nil {
 		op = cur
+	}
+	for i := range files {
+		f := &files[i]
+		if !f.UnlinkStarted || f.State == "deleted" {
+			continue
+		}
+		parent, err := openOffloadParent(stored, f.Path)
+		if err != nil {
+			return fmt.Errorf("waiting to settle interrupted unlink: %w", err)
+		}
+		_, statErr := parent.Lstat(filepath.Base(f.Path))
+		if errors.Is(statErr, os.ErrNotExist) {
+			err = syncRootDirectory(parent, ".")
+		}
+		_ = parent.Close()
+		if err != nil {
+			return err
+		}
+		if statErr == nil {
+			continue
+		}
+		if !errors.Is(statErr, os.ErrNotExist) {
+			return statErr
+		}
+		if err := s.db.RecordOffloadFileRemoved(ctx, op.ItemID, op.ID, *f, stored.FileGenerations[f.Path], 0); err != nil {
+			return err
+		}
+		f.State = "deleted"
 	}
 	// Bytes released, not file sizes: a hard-linked or already-missing file
 	// freed nothing (the preview's Freed counts the same way).

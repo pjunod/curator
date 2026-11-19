@@ -36,6 +36,10 @@ func offloadLinkCount(path string) uint64 {
 	if err != nil {
 		return 1
 	}
+	return offloadInfoLinkCount(info)
+}
+
+func offloadInfoLinkCount(info os.FileInfo) uint64 {
 	if st, ok := info.Sys().(*syscall.Stat_t); ok {
 		return uint64(st.Nlink) //nolint:unconvert // types differ per-OS
 	}
@@ -46,7 +50,14 @@ func offloadLinkCount(path string) uint64 {
 // Directory timestamps are omitted because deleting a disjoint scope can change them.
 func offloadPathIdentity(path string, file bool) string {
 	info, err := os.Lstat(path)
-	if err != nil || file && !info.Mode().IsRegular() {
+	if err != nil {
+		return ""
+	}
+	return offloadFileIdentity(info, file)
+}
+
+func offloadFileIdentity(info os.FileInfo, file bool) string {
+	if file && !info.Mode().IsRegular() || !file && !info.IsDir() {
 		return ""
 	}
 	st, ok := info.Sys().(*syscall.Stat_t)

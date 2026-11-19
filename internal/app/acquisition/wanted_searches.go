@@ -165,6 +165,14 @@ func runFromStore(r sqlite.WantedSearchRun) WantedSearchRun {
 	}
 }
 
+func wantedRunID() (string, error) {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b[:]), nil
+}
+
 // StartWantedSearch accepts and snapshots a complete server-owned scope.
 func (s *Service) StartWantedSearch(ctx context.Context, req WantedSearchRequest) (WantedSearchRun, error) {
 	if err := validateWantedSearch(req); err != nil {
