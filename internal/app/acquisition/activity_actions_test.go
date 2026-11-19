@@ -591,6 +591,15 @@ func checkActivityDeleteRecoversPartialPackAndCinemaOutbox(t *testing.T, already
 }
 
 func TestActivityDeleteAdoptsFirstInstallAfterInterruptedMetadata(t *testing.T) {
+	testActivityDeleteAdoptsFirstInstall(t, false)
+}
+
+func TestActivityRetainedFirstInstallWaitsForDurableObservedMetadata(t *testing.T) {
+	testActivityDeleteAdoptsFirstInstall(t, true)
+}
+
+func testActivityDeleteAdoptsFirstInstall(t *testing.T, retained bool) {
+	t.Helper()
 	svc, db, itemID := setup(t, nil, &fakeClient{})
 	ctx := context.Background()
 	item, err := db.GetMediaItemFull(ctx, itemID)
@@ -632,10 +641,36 @@ func TestActivityDeleteAdoptsFirstInstallAfterInterruptedMetadata(t *testing.T) 
 	if _, err := db.W.ExecContext(ctx, `DROP TRIGGER fail_first_install_metadata`); err != nil {
 		t.Fatal(err)
 	}
+	if retained {
+		// An earlier owner retained the stage after its rename but before
+		// recording the final target identity. Re-observation must never
+		// reinterpret a failed journal write as a rollback of installed bytes.
+		if _, err := db.W.ExecContext(ctx, `UPDATE import_placements SET state='retained',data=json_remove(json_set(data,'$.state','retained'),'$.published_file_generation','$.storage_identity','$.storage_root','$.storage_root_identity','$.target_parent_identity') WHERE id=?`, prepared[0].ID); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.W.ExecContext(ctx, `CREATE TRIGGER fail_observed_placement BEFORE UPDATE ON import_placements WHEN COALESCE(json_extract(NEW.data,'$.published_file_generation'),'')!='' BEGIN SELECT RAISE(ABORT,'observed journal not durable'); END`); err != nil {
+			t.Fatal(err)
+		}
+	}
 	const operationID = "delete-after-first-install"
 	job := claimActivityAction(t, db, operationID, "delete", sqlite.ActivityIdentity{
 		ID: dl.ID, GenerationKey: dl.GenerationKey, Epoch: strconv.FormatInt(attempt.Epoch, 10),
 	})
+	if retained {
+		if err := svc.handleActivityAction(ctx, job); !errors.Is(err, errActivityPending) {
+			t.Fatalf("failed observation did not stay pending: %v", err)
+		}
+		p, err := db.GetPlacement(ctx, prepared[0].ID)
+		if err != nil || p.State != "retained" || p.PublishedFileGeneration != "" {
+			t.Fatalf("failed observation invented rollback/commit: %+v, %v", p, err)
+		}
+		if body, err := os.ReadFile(destination); err != nil || string(body) != installed {
+			t.Fatalf("pending metadata changed installed bytes: %q, %v", body, err)
+		}
+		if _, err := db.W.ExecContext(ctx, `DROP TRIGGER fail_observed_placement`); err != nil {
+			t.Fatal(err)
+		}
+	}
 	if err := svc.handleActivityAction(ctx, job); err != nil {
 		t.Fatal(err)
 	}

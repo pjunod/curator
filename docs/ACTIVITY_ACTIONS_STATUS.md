@@ -17,7 +17,7 @@ at `bcc7b69d`. Integration is complete.
 | Storage and History | Storage uses root-only observations. Activity History opens a log of immutable recorded job events. |
 | Regression coverage | API, database, worker, and browser cases are written for frozen selection, replay, partial results, file preservation, and delayed Runner receipts. Execution is pending. |
 | Adversarial code review | Completed. Initial findings and focused recheck findings are addressed; Astra’s final source recheck found no remaining must-fix issues. |
-| Final validation | CI passed browser E2E, Docker, security, compatibility and five Go race shards. Correcting mobile typing, lint, and obsolete cancellation/test fixture assumptions; final required checks remain pending. |
+| Final validation | All eight Go race shards pass. Generation, mobile, lint, Docker and security gates pass. Added safety regressions clear the unchanged 86% coverage floor in the focused projection; a sign-in fixture race is fixed. Final required CI remains pending. |
 | Pull requests and merge | Runner #342 and Curator #165 are open with ownership and validation status. Merge follows required green checks. |
 | Workspace cleanup | Pending merge. The implementation workspaces remain available for review and verification. |
 
