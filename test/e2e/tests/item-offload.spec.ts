@@ -15,6 +15,13 @@ const ep1 = '/20t/tv/Slow Horses/Season 04/Slow Horses - S04E01-E02 [WEBDL-1080p
 async function fixture(page: Page) {
   const calls = { preview: [] as unknown[], start: [] as unknown[], cancel: 0, reacquire: [] as unknown[] }
   let stopped = false
+  const deleting = { operationId: 'of-1', requestId: 'r', state: 'deleting', itemId: 4301, scope: 'item', label: 'Dune (2021)', filesTotal: 2, filesDone: 1, bytesTotal: 60_000_090_000, bytesFreed: 0, stoppable: true }
+  const offloadStatus = () => stopped
+    ? { ...deleting, state: 'cancelled', bytesFreed: 60_000_000_000, stoppable: false }
+    : deleting
+  await page.route('**/api/v1/library/*/offload/operations', route => route.fulfill({
+    json: new URL(route.request().url()).pathname.includes('/4301/') && calls.start.length ? [offloadStatus()] : [],
+  }))
   await page.route('**/api/v1/library/4301', route => route.fulfill({ json: {
     id: 4301, kind: 'movie', title: 'Dune', year: 2021, monitored: true, path: '/20t/movies/Dune (2021)',
     genres: [], ratings: [], ids: { tmdb: 438631 }, seasons: [], copies: [], aliases: [], countries: [], identitySources: [],
@@ -34,11 +41,9 @@ async function fixture(page: Page) {
   await page.route('**/api/v1/library/4301/offload', async route => {
     if (route.request().method() === 'GET') return route.fulfill({ status: 204, body: '' })
     calls.start.push(route.request().postDataJSON())
-    await route.fulfill({ status: 202, json: { operationId: 'of-1', requestId: 'r', state: 'deleting', itemId: 4301, scope: 'item', label: 'Dune (2021)', filesTotal: 2, filesDone: 0, bytesTotal: 60_000_090_000, bytesFreed: 0, stoppable: true } })
+    await route.fulfill({ status: 202, json: { ...deleting, filesDone: 0 } })
   })
-  await page.route('**/api/v1/offload/of-1', route => route.fulfill({ json: stopped
-    ? { operationId: 'of-1', requestId: 'r', state: 'cancelled', itemId: 4301, scope: 'item', filesTotal: 2, filesDone: 1, bytesTotal: 60_000_090_000, bytesFreed: 60_000_000_000, stoppable: false }
-    : { operationId: 'of-1', requestId: 'r', state: 'deleting', itemId: 4301, scope: 'item', filesTotal: 2, filesDone: 1, bytesTotal: 60_000_090_000, bytesFreed: 0, stoppable: true } }))
+  await page.route('**/api/v1/offload/of-1', route => route.fulfill({ json: offloadStatus() }))
   await page.route('**/api/v1/offload/of-1/cancel', async route => { calls.cancel++; stopped = true; await route.fulfill({ status: 202 }) })
 
   await page.route('**/api/v1/library/4302', route => route.fulfill({ json: {
@@ -95,7 +100,7 @@ for (const width of [390, 1280]) {
     await expect(dialog.getByText(subPath)).toBeVisible()
     await expect(dialog.getByTestId('offload-space')).toContainText('free space 112 GB → 168 GB')
     await expect(dialog.getByTestId('offload-cinema')).toContainText('will drop the title and its watch history')
-    const go = dialog.getByRole('button', { name: 'Offload', exact: true })
+    const go = dialog.getByRole('button', { name: 'Queue Offload', exact: true })
     await expect(go).toBeDisabled() // not until the person says they understand
     await dialog.getByRole('checkbox', { name: /files are deleted/ }).check()
     await go.scrollIntoViewIfNeeded()
