@@ -988,7 +988,7 @@ func (s *Service) runOffload(ctx context.Context, id string) error {
 			}
 			continue
 		}
-		if err := s.db.RecordOffloadFileRemoved(bg, op.ItemID, id, f, stored.FileGenerations[f.Path], freed); err != nil {
+		if err := s.settleOffloadFile(bg, op, stored, f, freed); err != nil {
 			return fmt.Errorf("journal %s: %w", f.Path, err)
 		}
 	}
@@ -1102,6 +1102,30 @@ func (s *Service) offloadDeleteFile(ctx context.Context, op sqlite.OffloadOperat
 	return current.Size(), nil
 }
 
+func (s *Service) settleOffloadFile(ctx context.Context, op sqlite.OffloadOperation, stored offloadStored, file sqlite.OffloadFile, freed int64) error {
+	if file.Kind == "sidecar" {
+		// Preserve the custody record for a Curator-placed subtitle.
+		if rows, err := s.db.PlacedLibraryFilesWithPrefix(ctx, file.Path); err == nil {
+			for _, row := range rows {
+				if row.LibraryPath == file.Path {
+					s.supersedePlacedSubtitle(ctx, row, "its video was offloaded")
+				}
+			}
+		}
+	}
+	return s.db.RecordOffloadFileRemoved(ctx, op.ItemID, op.ID, file, stored.FileGenerations[file.Path], freed)
+}
+
+type offloadResult struct {
+	Files    int      `json:"files"`
+	Media    int      `json:"media"`
+	Bytes    int64    `json:"bytes"`
+	Episodes []string `json:"episodes,omitempty"`
+}
+
+// HistoryOffloaded records the scope and the files and bytes removed.
+const HistoryOffloaded = "offloaded"
+
 func (s *Service) finishOffload(ctx context.Context, id string, stored offloadStored) error {
 	op, err := s.db.GetOffloadOperation(ctx, id)
 	if err != nil {
@@ -1205,7 +1229,7 @@ func (s *Service) finishStop(ctx context.Context, op sqlite.OffloadOperation, st
 		if !errors.Is(statErr, os.ErrNotExist) {
 			return statErr
 		}
-		if err := s.db.RecordOffloadFileRemoved(ctx, op.ItemID, op.ID, *f, stored.FileGenerations[f.Path], 0); err != nil {
+		if err := s.settleOffloadFile(ctx, op, stored, *f, 0); err != nil {
 			return err
 		}
 		f.State = "deleted"
