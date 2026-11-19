@@ -112,11 +112,16 @@ test('saved indexers and clients: per-row Test with stored credentials', async (
 
   // And the buttons are on the saved rows in Settings.
   await page.goto('/settings#indexers')
-  await page.locator('#indexers').getByRole('button', { name: 'Test' }).first().click()
-  await expect(page.locator('#indexers .ok-text').first()).toBeVisible()
-  await expect(
-    page.locator('#downloadclients tbody').getByRole('button', { name: 'Test', exact: true }).first(),
-  ).toBeVisible()
+  const indexerRow = page.locator('#indexers tbody').getByRole('row').filter({
+    has: page.getByRole('cell', { name: idx[0].name, exact: true }),
+  })
+  await indexerRow.getByRole('button', { name: 'Test', exact: true }).click()
+  await expect(indexerRow.getByText('✓ reachable', { exact: true })).toBeVisible()
+
+  const clientRow = page.locator('#downloadclients tbody').getByRole('row').filter({
+    has: page.getByRole('cell', { name: clients[0].name, exact: true }),
+  })
+  await expect(clientRow.getByRole('button', { name: 'Test', exact: true })).toBeVisible()
 })
 
 test('metadata refresh re-hydrates from the provider', async ({ request }) => {
