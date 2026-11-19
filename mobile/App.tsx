@@ -22,7 +22,7 @@ import { CalendarScreen } from './src/screens/CalendarScreen'
 import { ReleaseSearchScreen } from './src/screens/ReleaseSearchScreen'
 
 type Tab = 'library' | 'discover' | 'wanted' | 'activity' | 'more'
-type Overlay = { name:'household';tab:'requests'|'account' } | { name: 'detail'; id: number } | { name: 'calendar' } | { name: 'releases'; id: number; scope: ReleaseSearchScope }
+type Overlay = { name:'household';tab:'requests'|'account' } | { name: 'detail'; id: number; assignFolder?: boolean } | { name: 'calendar' } | { name: 'releases'; id: number; scope: ReleaseSearchScope }
 
 export default function App() {
   return (
@@ -76,7 +76,7 @@ function MonarrApp() {
     setConnection(null)
   }
 
-  const openMedia = (id: number) => setOverlay({ name: 'detail', id })
+  const openMedia = (id: number, options?: { assignFolder?: boolean }) => setOverlay({ name: 'detail', id, assignFolder: options?.assignFolder })
   const openReleases = (id: number, scope: ReleaseSearchScope) => setOverlay({ name: 'releases', id, scope })
 
   if (booting) {
@@ -104,7 +104,7 @@ function MonarrApp() {
   if(overlay?.name==='household'&&account.data){
     content=<HouseholdScreen client={client} identity={account.data} initial={overlay.tab} onBack={()=>setOverlay(null)} onSignOut={()=>void disconnect()} onAccountChanged={()=>void account.refresh()}/>
   } else if (overlay?.name === 'detail') {
-    content = <MediaDetailScreen client={client} id={overlay.id} onBack={() => setOverlay(null)} onInteractiveSearch={(scope) => openReleases(overlay.id, scope)} onOpenActivity={() => { setOverlay(null); setTab('activity') }} />
+    content = <MediaDetailScreen client={client} id={overlay.id} assignFolder={overlay.assignFolder} onBack={() => setOverlay(null)} onInteractiveSearch={(scope) => openReleases(overlay.id, scope)} onOpenActivity={() => { setOverlay(null); setTab('activity') }} />
   } else if (overlay?.name === 'releases') {
     content = <ReleaseSearchScreen client={client} id={overlay.id} initialScope={overlay.scope} onBack={() => openMedia(overlay.id)} />
   } else if (overlay?.name === 'calendar') {

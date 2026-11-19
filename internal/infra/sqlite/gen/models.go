@@ -9,18 +9,61 @@ import (
 )
 
 type AcquisitionPlan struct {
-	ID                  int64
-	MediaItemID         int64
-	CopyID              int64
-	Season              int64
-	State               string
-	Revision            int64
-	PolicyVersion       int64
-	SnapshotFingerprint string
-	Decision            string
-	ReplanPending       int64
-	AddedAt             int64
-	UpdatedAt           int64
+	ID                          int64
+	MediaItemID                 int64
+	CopyID                      int64
+	Season                      int64
+	State                       string
+	Revision                    int64
+	PolicyVersion               int64
+	SnapshotFingerprint         string
+	Decision                    string
+	ReplanPending               int64
+	AddedAt                     int64
+	UpdatedAt                   int64
+	ReplacementOriginID         int64
+	ReplacementOriginGeneration string
+}
+
+type ActivityActionEvent struct {
+	ID            int64
+	OperationID   string
+	DownloadID    int64
+	GenerationKey string
+	At            int64
+	Step          string
+	Message       string
+}
+
+type ActivityDispositionLink struct {
+	DownloadID       int64
+	GenerationKey    string
+	OperationID      string
+	TargetID         int64
+	TargetGeneration string
+}
+
+type ActivityOperation struct {
+	ID          string
+	Fingerprint string
+	Action      string
+	Targets     string
+	CreatedAt   int64
+	UpdatedAt   int64
+}
+
+type ActivityOperationTarget struct {
+	OperationID   string
+	DownloadID    int64
+	GenerationKey string
+	State         string
+	Payload       string
+}
+
+type ActivitySelection struct {
+	ID        string
+	Targets   string
+	CreatedAt int64
 }
 
 type AppMetum struct {
@@ -204,6 +247,17 @@ type DownloadClient struct {
 	AddedAt         int64
 	Mode            string
 	RemoveCompleted int64
+}
+
+type DownloadDisposition struct {
+	DownloadID    int64
+	GenerationKey string
+	RequestedAt   int64
+	VerifiedAt    int64
+	State         string
+	Message       string
+	OwnerPayload  string
+	Revision      int64
 }
 
 type Episode struct {
@@ -862,6 +916,14 @@ type RematchOperation struct {
 	CreatedAt    int64
 	UpdatedAt    int64
 	DismissedAt  int64
+}
+
+type ReplacementAdmission struct {
+	ParentID         int64
+	ParentGeneration string
+	ChildID          int64
+	ChildGeneration  string
+	Phase            string
 }
 
 type ReplacementFileObservation struct {

@@ -474,7 +474,7 @@ func serve(ctx context.Context, cfg config.Config, log *slog.Logger, listener ne
 		Name:       acquisition.JobCompletedScan,
 		Interval:   acquisition.CompletedScanInterval,
 		RunOnStart: true,
-		Fn:         acq.ScanCompleted,
+		Fn:         acq.ScanStorageObservations,
 	}); err != nil {
 		return err
 	}
@@ -564,6 +564,9 @@ func serve(ctx context.Context, cfg config.Config, log *slog.Logger, listener ne
 		return err
 	}})
 	if err := library.RegisterJobHandlers(lib, queue.Register); err != nil {
+		return err
+	}
+	if err := acquisition.RegisterActivityActionJobs(acq, queue.Register); err != nil {
 		return err
 	}
 	if err := acquisition.RegisterWantedSearchJobs(acq, queue.Register); err != nil {

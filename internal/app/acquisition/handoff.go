@@ -272,6 +272,11 @@ func (s *Service) ImportNow(ctx context.Context, id int64) error {
 	if err != nil {
 		return err
 	}
+	if deleted, e := s.db.DownloadDeletionRequested(ctx, dl.ID, dl.GenerationKey); e != nil {
+		return e
+	} else if deleted {
+		return fmt.Errorf("job deletion was requested")
+	}
 	if dl.RunnerControl != "" {
 		var control *ports.DownloadControl
 		if json.Unmarshal([]byte(dl.RunnerControl), &control) != nil || control.Held() {

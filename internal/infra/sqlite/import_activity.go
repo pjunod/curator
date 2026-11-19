@@ -10,7 +10,10 @@ import (
 // dismissed Activity receipts, but not failures that never reached import.
 // Detailed publication manifests are loaded only for the requested page.
 type ImportActivityEntry struct {
+	GenerationKey, Epoch                                                                         string
+	RunnerActionable                                                                             bool
 	ReservationActionable, Superseded, LocalImportFailure, AutomaticImportRetry, ActionableFiles bool
+	DeletionState                                                                                string
 	ID                                                                                           int64
 	Protocol, SubmissionPhase, ParkedReason, CancelOutcome                                       string
 	State, Title, Kind, Destination                                                              string
@@ -52,6 +55,7 @@ func (d *DB) activityIndex(ctx context.Context, search string, transfers bool) (
  (d.state='failed' AND d.runner_outcome!='failed' AND (d.protocol='manual' OR EXISTS(SELECT 1 FROM json_each(d.handoff_log) h WHERE json_extract(h.value,'$.step') IN ('downloaded','importing','manual_import_queued')))),
  (d.state='failed' AND d.delivery_expected=0 AND instr(d.error,'import stopped')>0 AND (d.import_path!='' OR d.save_path!='')),
  EXISTS(SELECT 1 FROM publications p JOIN publication_files f ON f.publication_id=p.id WHERE p.download_id=d.id AND f.outcome='unresolved' AND f.reason!='kept by an operator in Resolve' AND (d.protocol='manual' OR f.reason='not selected for import; place or discard it in Resolve'))
+,COALESCE((SELECT x.state FROM download_dispositions x WHERE x.download_id=d.id AND x.generation_key=d.generation_key),''),d.generation_key,printf('%d',COALESCE(c.attempt_epoch,0)),COALESCE(CASE WHEN json_valid(d.runner_control) THEN json_extract(d.runner_control,'$.lifecycle')='held' AND (COALESCE(json_extract(d.runner_control,'$.manual_pause'),0)!=0 OR json_extract(d.runner_control,'$.cause') IN ('capacity','allocation','quota','mount_unavailable','storage_unavailable','password_required','missing_tool') OR json_extract(d.runner_control,'$.retry_policy')='review') ELSE 0 END,0)
  FROM downloads d LEFT JOIN media_items m ON m.id=d.media_item_id
  LEFT JOIN media_copies mc ON mc.id=d.copy_id AND mc.media_item_id=d.media_item_id
  LEFT JOIN import_attempt_controls c ON c.download_id=d.id AND c.generation_key=d.generation_key
@@ -62,7 +66,7 @@ func (d *DB) activityIndex(ctx context.Context, search string, transfers bool) (
  UNION ALL
  SELECT -p.id,p.state,p.path,'','',p.updated_at,p.state NOT IN ('imported','notified','removed'),0,0,
  p.state='import_failed',p.state='import_failed',
- EXISTS(SELECT 1 FROM publication_files f WHERE f.publication_id=p.id AND f.outcome='unresolved'),1,'historical','','','',0,0,0,0,0
+ EXISTS(SELECT 1 FROM publication_files f WHERE f.publication_id=p.id AND f.outcome='unresolved'),1,'historical','','','',0,0,0,0,0,'','','',0
  FROM publications p WHERE p.download_id IS NULL
  AND (p.state IN ('imported','notified') OR EXISTS(SELECT 1 FROM publication_files f WHERE f.publication_id=p.id AND f.outcome='placed'))
  AND (?='' OR instr(lower(p.path),lower(?))>0)
@@ -75,7 +79,7 @@ func (d *DB) activityIndex(ctx context.Context, search string, transfers bool) (
 	for rows.Next() {
 		var e ImportActivityEntry
 		var at int64
-		if err := rows.Scan(&e.ID, &e.State, &e.Title, &e.Kind, &e.Destination, &at, &e.Review, &e.Cancelled, &e.PendingPublication, &e.FailedPublication, &e.OpenFailedPublication, &e.Unresolved, &e.ImportedPublication, &e.Protocol, &e.SubmissionPhase, &e.ParkedReason, &e.CancelOutcome, &e.ReservationActionable, &e.Superseded, &e.LocalImportFailure, &e.AutomaticImportRetry, &e.ActionableFiles); err != nil {
+		if err := rows.Scan(&e.ID, &e.State, &e.Title, &e.Kind, &e.Destination, &at, &e.Review, &e.Cancelled, &e.PendingPublication, &e.FailedPublication, &e.OpenFailedPublication, &e.Unresolved, &e.ImportedPublication, &e.Protocol, &e.SubmissionPhase, &e.ParkedReason, &e.CancelOutcome, &e.ReservationActionable, &e.Superseded, &e.LocalImportFailure, &e.AutomaticImportRetry, &e.ActionableFiles, &e.DeletionState, &e.GenerationKey, &e.Epoch, &e.RunnerActionable); err != nil {
 			return nil, err
 		}
 		e.UpdatedAt = time.UnixMilli(at)

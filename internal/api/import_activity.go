@@ -102,7 +102,42 @@ func (s *Server) writeActivityPage(w http.ResponseWriter, r *http.Request, page 
 			item = apigen.QueueItem{Id: entry.ID, Title: entry.Title, State: pub.State, Protocol: "historical", AddedAt: pub.DiscoveredAt, ImportPath: &pub.Path}
 			s.fillPipelineV2(&item, sqlite.Download{}, []sqlite.Publication{pub}, map[int64][]sqlite.PublicationFile{pub.ID: files})
 		}
-		out.Items = append(out.Items, apigen.ImportActivityItem{Download: item, Category: apigen.ImportActivityItemCategory(entry.Category), Title: entry.Title, Kind: entry.Kind, Destination: entry.Destination, UpdatedAt: entry.UpdatedAt})
+		result := apigen.ImportActivityItem{Download: item, Category: apigen.ImportActivityItemCategory(entry.Category), Title: entry.Title, Kind: entry.Kind, Destination: entry.Destination, UpdatedAt: entry.UpdatedAt}
+		if entry.ID > 0 {
+			dl, err := s.deps.Store.GetDownload(r.Context(), entry.ID)
+			if err != nil {
+				s.acqErr(w, err)
+				return
+			}
+			info, err := s.deps.Acquisition.ActivityActions(r.Context(), dl)
+			if err != nil {
+				s.acqErr(w, err)
+				return
+			}
+			if info.Identity.GenerationKey != entry.GenerationKey || info.Identity.Epoch != entry.Epoch {
+				writeError(w, http.StatusConflict, "Activity changed while loading; refresh this view")
+				return
+			}
+			result.Identity = &apigen.ActivityIdentity{Id: info.Identity.ID, GenerationKey: info.Identity.GenerationKey, Epoch: info.Identity.Epoch}
+			result.Reason = &info.Reason
+			result.Prerequisite = &info.Prerequisite
+			actions := []apigen.ActivityAction{}
+			for _, a := range info.Actions {
+				actions = append(actions, apigen.ActivityAction{Kind: a.Kind, Label: a.Label, Enabled: a.Enabled})
+			}
+			result.Actions = &actions
+			if info.Operation != nil {
+				r := info.Operation
+				result.Operation = &struct {
+					Action  string `json:"action"`
+					Id      string `json:"id"`
+					Message string `json:"message"`
+					State   string `json:"state"`
+				}{Action: r.Action, Id: r.ID, Message: r.Message, State: r.State}
+			}
+
+		}
+		out.Items = append(out.Items, result)
 	}
 	writeJSON(w, 200, out)
 }

@@ -1,5 +1,5 @@
 import { availabilityLabel } from '../availability'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Alert, ScrollView, StyleSheet, Switch, Text, View } from 'react-native'
 import type { MonarrClient } from '../api'
 import { describeAutoSearch } from '../autosearch'
@@ -34,8 +34,10 @@ import { OffloadOperations, OffloadSheet } from './OffloadSheet'
 import { seasonOffload } from '../offload'
 import { RematchSheet } from './RematchSheet'
 
-export function MediaDetailScreen({ client, id, onBack, onInteractiveSearch, onOpenActivity }: { client: MonarrClient; id: number; onBack: () => void; onInteractiveSearch: (scope: ReleaseSearchScope) => void; onOpenActivity?: () => void }) {
+export function MediaDetailScreen({ client, id, assignFolder, onBack, onInteractiveSearch, onOpenActivity }: { client: MonarrClient; id: number; assignFolder?: boolean; onBack: () => void; onInteractiveSearch: (scope: ReleaseSearchScope) => void; onOpenActivity?: () => void }) {
   const theme = useTheme()
+  const scroll = useRef<ScrollView>(null)
+  const focusedFolder = useRef(false)
   const resource = useResource(() => client.getLibraryItem(id), [client, id])
   const profilesResource = useResource(() => client.getProfiles(), [client])
   const rootsResource = useResource(() => client.getRootFolders(), [client])
@@ -99,12 +101,14 @@ export function MediaDetailScreen({ client, id, onBack, onInteractiveSearch, onO
   const saveItem = async () => {
     if (!item) return
     const patch: UpdateMediaItemRequest = {}
-    if (draftMonitored !== item.monitored) patch.monitored = draftMonitored
-    if (draftProfileId !== item.qualityProfileId) patch.qualityProfileId = draftProfileId
-    const originalPriority = item.downloadPriorityOverride ?? INHERIT_DOWNLOAD_PRIORITY
-    if (draftDownloadPriority !== originalPriority) {
-      if (draftDownloadPriority === INHERIT_DOWNLOAD_PRIORITY) patch.inheritDownloadPriority = true
-      else patch.downloadPriority = draftDownloadPriority
+    if (!assignFolder) {
+      if (draftMonitored !== item.monitored) patch.monitored = draftMonitored
+      if (draftProfileId !== item.qualityProfileId) patch.qualityProfileId = draftProfileId
+      const originalPriority = item.downloadPriorityOverride ?? INHERIT_DOWNLOAD_PRIORITY
+      if (draftDownloadPriority !== originalPriority) {
+        if (draftDownloadPriority === INHERIT_DOWNLOAD_PRIORITY) patch.inheritDownloadPriority = true
+        else patch.downloadPriority = draftDownloadPriority
+      }
     }
     if (draftRootId !== item.rootFolderId) patch.rootFolderId = draftRootId
     if (pathEdited && draftPath !== item.path) patch.path = draftPath
@@ -237,7 +241,7 @@ export function MediaDetailScreen({ client, id, onBack, onInteractiveSearch, onO
   return (
     <AppScreen>
       <Header title={item.title} subtitle={item.kind === 'series' ? 'TV series' : item.kind === 'book' ? ownedBookTypes.map((bookType) => bookType === 'audiobook' ? 'Audiobook' : 'Ebook').join(' + ') : item.kind} left={<IconButton label="Back" glyph="‹" onPress={onBack} />} />
-      <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+      <ScrollView ref={scroll} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
         <View style={styles.hero}>
           <Poster path={item.posterPath} title={item.title} width={126} />
           <View style={styles.heroBody}>
@@ -260,8 +264,8 @@ export function MediaDetailScreen({ client, id, onBack, onInteractiveSearch, onO
         </View>
 
         {item.overview ? <Text style={[styles.overview, { color: theme.text }]}>{item.overview}</Text> : null}
-        <InlineError message={actionError || resource.error} />
-        {actionMessage ? <Text style={[styles.success, { color: theme.ok }]}>{actionMessage}</Text> : null}
+        {!assignFolder && <InlineError message={actionError || resource.error} />}
+        {!assignFolder && actionMessage ? <Text style={[styles.success, { color: theme.ok }]}>{actionMessage}</Text> : null}
 
         <Panel style={styles.actions}>
           <Button label={searching ? 'Starting search…' : 'Search now'} disabled={searching} onPress={() => void searchNow()} />
@@ -322,41 +326,49 @@ export function MediaDetailScreen({ client, id, onBack, onInteractiveSearch, onO
           </>
         ) : null}
 
-        <SectionTitle>Edit item</SectionTitle>
+        {assignFolder && <View collapsable={false} onLayout={event => {
+          if (focusedFolder.current) return
+          const offset = event.nativeEvent.layout.y
+          focusedFolder.current = true
+          requestAnimationFrame(() => scroll.current?.scrollTo({ y: Math.max(0, offset), animated: false }))
+        }} />}
+        <SectionTitle>{assignFolder ? 'Assign folder' : 'Edit item'}</SectionTitle>
         <Panel style={styles.formPanel}>
-          <View style={styles.monitorRow}>
-            <View style={styles.flex}>
-              <Text style={[styles.actionTitle, { color: theme.text }]}>Monitored</Text>
-              <Text style={[styles.actionHint, { color: theme.muted }]}>Let automation keep this title complete.</Text>
+          {!assignFolder && <>
+            <View style={styles.monitorRow}>
+              <View style={styles.flex}>
+                <Text style={[styles.actionTitle, { color: theme.text }]}>Monitored</Text>
+                <Text style={[styles.actionHint, { color: theme.muted }]}>Let automation keep this title complete.</Text>
+              </View>
+              <Switch disabled={saving} value={draftMonitored} onValueChange={setDraftMonitored} trackColor={{ true: theme.accent }} />
             </View>
-            <Switch disabled={saving} value={draftMonitored} onValueChange={setDraftMonitored} trackColor={{ true: theme.accent }} />
-          </View>
 
-          <ChoiceGroup
-            label="Quality profile"
-            options={eligibleProfiles.map((profile) => ({ id: profile.id, label: profile.name }))}
-            selected={draftProfileId}
-            onChange={setDraftProfileId}
-            disabled={saving}
-            empty={profilesResource.loading ? 'Loading profiles…' : profilesResource.error || 'No quality profiles are available.'}
-          />
+            <ChoiceGroup
+              label="Quality profile"
+              options={eligibleProfiles.map((profile) => ({ id: profile.id, label: profile.name }))}
+              selected={draftProfileId}
+              onChange={setDraftProfileId}
+              disabled={saving}
+              empty={profilesResource.loading ? 'Loading profiles…' : profilesResource.error || 'No quality profiles are available.'}
+            />
 
-          <ChoiceGroup
-            label="Download priority"
-            options={[
-              {
-                id: INHERIT_DOWNLOAD_PRIORITY,
-                label: `Profile default — ${downloadPriorityLabel(
-                  profiles.find((profile) => profile.id === draftProfileId)?.downloadPriority ?? 0,
-                )}`,
-              },
-              ...DOWNLOAD_PRIORITIES.map((priority) => ({ id: priority.value, label: priority.label })),
-            ]}
-            selected={draftDownloadPriority}
-            onChange={setDraftDownloadPriority}
-            disabled={saving}
-            empty="No download priority choices are available."
-          />
+            <ChoiceGroup
+              label="Download priority"
+              options={[
+                {
+                  id: INHERIT_DOWNLOAD_PRIORITY,
+                  label: `Profile default — ${downloadPriorityLabel(
+                    profiles.find((profile) => profile.id === draftProfileId)?.downloadPriority ?? 0,
+                  )}`,
+                },
+                ...DOWNLOAD_PRIORITIES.map((priority) => ({ id: priority.value, label: priority.label })),
+              ]}
+              selected={draftDownloadPriority}
+              onChange={setDraftDownloadPriority}
+              disabled={saving}
+              empty="No download priority choices are available."
+            />
+          </>}
 
           <ChoiceGroup
             label="Root folder"
@@ -383,7 +395,9 @@ export function MediaDetailScreen({ client, id, onBack, onInteractiveSearch, onO
             <Text style={[styles.actionHint, { color: theme.muted }]}>Changing this record never moves files already on disk.</Text>
           </View>
 
-          <Button label={saving ? 'Saving…' : 'Save item'} disabled={saving || draftProfileId === 0} onPress={() => void saveItem()} />
+          <Button label={saving ? 'Saving…' : assignFolder ? 'Save folder' : 'Save item'} disabled={saving || (!assignFolder && draftProfileId === 0)} onPress={() => void saveItem()} />
+          {assignFolder && <InlineError message={actionError || resource.error} />}
+          {assignFolder && actionMessage && <Text style={[styles.success, { color: theme.ok }]}>{actionMessage}</Text>}
         </Panel>
 
         {item.kind === 'series' ? (

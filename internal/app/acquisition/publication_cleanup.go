@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/pjunod/monarr/internal/app/transfers"
 	"github.com/pjunod/monarr/internal/infra/sqlite"
@@ -119,6 +120,7 @@ func (s *Service) sweepPublications(ctx context.Context) error {
 }
 
 var unsupportedCleanupNotice sync.Once
+var errPublicationUnmanagedResidue = errors.New("unmanaged entries remain outside the publication manifest")
 
 // errPerFileCleanupUnsupported stops a pass where a verified file cannot be
 // bound to its unlink (no inode generation on this platform).
@@ -284,9 +286,18 @@ func (s *Service) cleanupPublicationLocked(ctx context.Context, publicationID in
 		return res, nil
 	}
 	if pub.Cohort == "historical" && pub.CleanupApprovedAt.IsZero() {
-		res.Skipped = ErrHistoricalCohort.Error()
-		return res, nil
+		approved, e := s.approveProvenFailedPublication(ctx, pub)
+		if e != nil {
+			return res, e
+		}
+		if !approved {
+			// Rotate ineligible historical rows through the bounded sweep too.
+			_, _ = s.db.W.ExecContext(ctx, `UPDATE publications SET updated_at=? WHERE id=?`, time.Now().UnixMilli(), pub.ID)
+			res.Skipped = ErrHistoricalCohort.Error()
+			return res, nil
+		}
 	}
+
 	if !pub.CleanupPausedAt.IsZero() && !operatorCleanup(ctx) {
 		res.Skipped = "cleanup is paused by an operator"
 		return res, nil
@@ -305,6 +316,12 @@ func (s *Service) cleanupPublicationLocked(ctx context.Context, publicationID in
 	}
 	info, err := os.Lstat(root)
 	if errors.Is(err, os.ErrNotExist) {
+		if err = syncRemovedPublicationParent(pub.Path); err != nil {
+			return res, err
+		}
+		if _, err = s.db.W.ExecContext(ctx, `UPDATE publication_files SET outcome=CASE WHEN outcome IN ('pending','unresolved') THEN 'discarded' ELSE outcome END,discard_reason=CASE WHEN outcome IN ('pending','unresolved') THEN 'rejected' ELSE discard_reason END,removed_at=COALESCE(NULLIF(removed_at,0),?) WHERE publication_id=?`, time.Now().UnixMilli(), pub.ID); err != nil {
+			return res, err
+		}
 		return res, s.finishRemovedPublication(ctx, pub, 0, 0, "the publication directory was already gone")
 	}
 	if err != nil {
@@ -374,6 +391,9 @@ func (s *Service) cleanupPublicationLocked(ctx context.Context, publicationID in
 		return res, nil
 	}
 	removedDir, err := s.removeEmptyPublicationDirectory(ctx, pub, item)
+	if disposition, _ := ctx.Value(activityDispositionContext{}).(bool); disposition && errors.Is(err, errPublicationUnmanagedResidue) {
+		return res, s.finishRemovedPublication(ctx, pub, res.Removed, bytes, "every owned manifest file removed; unrelated entries left unchanged")
+	}
 	if err != nil {
 		if res.Removed > 0 {
 			s.recordPublicationFilesRemoved(ctx, pub, res.Removed, bytes)
@@ -426,7 +446,8 @@ func (s *Service) cleanupManifest(pub sqlite.Publication, allRemoved bool) (map[
 	default:
 		return nil, err
 	}
-	if err := verifyManifestShape(m, pub.Generation); err != nil {
+	m, err = verifiedRecordedPublicationManifest(pub, m, true)
+	if err != nil {
 		return nil, fmt.Errorf("publication manifest is invalid; nothing deleted: %w", err)
 	}
 	if pub.Generation != "" && m.Generation != pub.Generation {
@@ -489,6 +510,17 @@ func (s *Service) cleanupPublicationFile(ctx context.Context, pub sqlite.Publica
 	if generation == "" || named.Size() != expected.Bytes {
 		return fmt.Errorf("the source size or identity does not match the manifest; nothing deleted")
 	}
+	if f.SHA256 == "" {
+		var disposing bool
+		if e := s.db.R.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM download_dispositions x JOIN downloads d ON d.id=x.download_id AND d.generation_key=x.generation_key WHERE d.id=?)`, pub.DownloadID).Scan(&disposing); e != nil {
+			return e
+		}
+		observed, _ := ctx.Value(activityDispositionContext{}).(bool)
+		if (observed || disposing) && !recordedPublicationFileMatches(pub, expected) {
+			return fmt.Errorf("this legacy file has no recorded digest or object identity; its ownership cannot be verified for deletion")
+		}
+	}
+
 	digest := expected.SHA256
 	if digest == "" {
 		digest = f.SHA256
@@ -549,7 +581,9 @@ func (s *Service) cleanupPublicationFile(ctx context.Context, pub sqlite.Publica
 	if err := parent.Remove(name); err != nil {
 		return err
 	}
-	_ = syncRootDirectory(parent, ".")
+	if err := syncRootDirectory(parent, "."); err != nil {
+		return err
+	}
 	// The download lock held by every caller keeps Resolve from changing the
 	// outcome between the verification and this record.
 	return s.db.MarkPublicationFileRemoved(ctx, pub.ID, f.Path, f.Outcome)
@@ -680,7 +714,7 @@ func (s *Service) removeEmptyPublicationDirectory(ctx context.Context, pub sqlit
 		return false, err
 	}
 	if !empty {
-		return false, fmt.Errorf("the directory holds %d entr(ies) no manifest file accounts for (%s); kept", len(others), strings.Join(firstN(others, 3), ", "))
+		return false, fmt.Errorf("%w: %d entries (%s)", errPublicationUnmanagedResidue, len(others), strings.Join(firstN(others, 3), ", "))
 	}
 	ctx, releaseTarget := s.lockImportTarget(ctx, item)
 	defer releaseTarget()
@@ -700,9 +734,8 @@ func (s *Service) removeEmptyPublicationDirectory(ctx context.Context, pub sqlit
 	if err := os.Remove(pub.Path); err != nil {
 		return false, err
 	}
-	if parent, err := os.OpenRoot(filepath.Dir(pub.Path)); err == nil {
-		_ = syncRootDirectory(parent, ".")
-		_ = parent.Close()
+	if err := syncRemovedPublicationParent(pub.Path); err != nil {
+		return false, err
 	}
 	return true, nil
 }
@@ -842,4 +875,47 @@ func (s *Service) DiscardPublicationFiles(ctx context.Context, dir string, selec
 		return fmt.Errorf("discarded; deletion waits: %s", res.Skipped)
 	}
 	return s.ScanCompleted(ctx)
+}
+
+func syncRemovedPublicationParent(path string) error {
+	parent, err := os.OpenRoot(filepath.Dir(path))
+	if err != nil {
+		return err
+	}
+	defer func() { _ = parent.Close() }()
+	if _, err = parent.Lstat(filepath.Base(path)); !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("a directory appeared while its removal was being verified")
+	}
+	return syncRootDirectory(parent, ".")
+}
+
+// The user's default-discard policy can migrate an old failed publication
+// only from positive, complete ownership evidence. A pause/Keep, missing
+// digest, changed mount, unresolved file or unattached history stays untouched.
+func (s *Service) approveProvenFailedPublication(ctx context.Context, pub sqlite.Publication) (bool, error) {
+	if pub.DownloadID == 0 || pub.State != "import_failed" || !pub.CleanupPausedAt.IsZero() {
+		return false, nil
+	}
+	if err := s.cleanupGate(ctx, pub); err != nil {
+		return false, nil
+	}
+	manifest, err := s.cleanupManifest(pub, false)
+	if err != nil {
+		return false, nil
+	}
+	files, err := s.db.ListPublicationFiles(ctx, pub.ID)
+	if err != nil {
+		return false, err
+	}
+	if len(files) == 0 || len(files) != len(manifest) {
+		return false, nil
+	}
+	for _, f := range files {
+		m, ok := manifest[f.Path]
+		if !ok || len(m.SHA256) != 64 || m.SHA256 != f.SHA256 || m.Bytes != f.Bytes || (f.Outcome != "discarded" && f.Outcome != "placed") {
+			return false, nil
+		}
+	}
+	_, err = s.db.ApprovePublicationCleanup(ctx, []int64{pub.ID})
+	return err == nil, err
 }

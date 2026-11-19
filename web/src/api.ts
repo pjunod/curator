@@ -1844,6 +1844,8 @@ export interface CompletedReviewFile {
   snapshotIdentity: string
 }
 export interface CompletedRoot {
+  freeBytes?: number
+  totalBytes?: number
   storageIdentity?: string
   observedStorageIdentity?: string
   path: string

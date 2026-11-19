@@ -3,6 +3,7 @@ package acquisition
 import (
 	"context"
 	"sort"
+	"time"
 
 	"github.com/pjunod/monarr/internal/infra/sqlite"
 )
@@ -95,7 +96,12 @@ func (s *Service) Activity(ctx context.Context, view, search string, importsOnly
 	}
 	page := ImportActivityPage{Rows: []ImportActivityRow{}, Counts: map[string]int{"progress": 0, "attention": 0, "history": 0, "all": 0}}
 	s.importMu.Lock()
+	retention := s.RetentionDays(ctx)
 	for _, entry := range entries {
+		if entry.DeletionState == "verified" && retention > 0 && entry.UpdatedAt.Before(time.Now().Add(-time.Duration(retention)*24*time.Hour)) {
+			continue
+		}
+
 		worker := ""
 		if ticket := s.importJobs[entry.ID]; ticket != nil {
 			worker = "running"
@@ -117,6 +123,16 @@ func (s *Service) Activity(ctx context.Context, view, search string, importsOnly
 }
 
 func activityCategory(e sqlite.ImportActivityEntry, worker string) string {
+	if e.DeletionState == "verified" {
+		return "history"
+	}
+	if e.DeletionState == "blocked" {
+		return "attention"
+	}
+	if e.DeletionState != "" {
+		return "progress"
+	}
+
 	// Historical publication IDs are evidence, never mutable queue targets.
 	if e.ID < 0 {
 		return "history"
@@ -125,7 +141,7 @@ func activityCategory(e sqlite.ImportActivityEntry, worker string) string {
 	if worker != "" {
 		return "progress"
 	}
-	if e.Review || e.State == "awaiting_import" || e.ReservationActionable || e.ActionableFiles {
+	if e.RunnerActionable || e.Review || e.State == "awaiting_import" || e.ReservationActionable || e.ActionableFiles {
 		return "attention"
 	}
 	if e.CancelOutcome == "pending" {

@@ -878,6 +878,12 @@ func addToClient(ctx context.Context, c ports.DownloadClient, downloadURL, categ
 // Add response was lost; clients without that contract remain visibly
 // uncertain instead of receiving a possible duplicate.
 func (s *Service) retryAutomaticSubmission(ctx context.Context, dl sqlite.Download, cfg ports.ClientConfig) error {
+	if deleted, e := s.db.DownloadDeletionRequested(ctx, dl.ID, dl.GenerationKey); e != nil {
+		return e
+	} else if deleted {
+		return fmt.Errorf("job deletion requested")
+	}
+
 	if !automaticSubmissionRetryable(dl) || dl.Transfer == "" || dl.GenerationKey == "" {
 		return fmt.Errorf("automatic submission cannot be safely replayed")
 	}
@@ -1179,6 +1185,12 @@ func (s *Service) resumeManualRequest(ctx context.Context, id int64) (int64, err
 }
 
 func (s *Service) dispatchManualRequest(ctx context.Context, dl sqlite.Download, cfg ports.ClientConfig, client ports.DownloadClient, payload manualSubmissionPayload) (int64, error) {
+	if deleted, e := s.db.DownloadDeletionRequested(ctx, dl.ID, dl.GenerationKey); e != nil {
+		return dl.ID, e
+	} else if deleted {
+		return dl.ID, fmt.Errorf("job deletion requested")
+	}
+
 	if err := s.db.SetSubmissionPhase(ctx, dl.ID, "submitting"); err != nil {
 		return dl.ID, err
 	}
@@ -1510,6 +1522,9 @@ func (s *Service) grab(ctx context.Context, req GrabRequest, manual bool) (int64
 			releaseAllocation()
 			return inserted.ID, nil
 		}
+	} else if origin := replacementGrabOwner(ctx); origin > 0 {
+		captured, _ := ctx.Value(replacementGrabOwnerKey{}).(replacementGrabOrigin)
+		inserted, err = s.db.InsertReplacementDownload(allocationCtx, download, origin, captured.Generation)
 	} else {
 		inserted, err = s.db.InsertDownloadRecord(allocationCtx, download)
 	}
@@ -1536,7 +1551,7 @@ func (s *Service) grab(ctx context.Context, req GrabRequest, manual bool) (int64
 	// moment later. The id is in the trace's first line because that is
 	// where someone starts reading when a transfer goes wrong.
 	dl := sqlite.Download{ID: id, GenerationKey: inserted.GenerationKey, MediaItemID: item.ID, ReleaseTitle: req.Title,
-		State: "grabbed", Transfer: transfer, Indexer: req.Indexer, Protocol: req.Protocol, ClientID: cfg.ID}
+		State: "grabbed", Transfer: transfer, Indexer: req.Indexer, Protocol: req.Protocol, ClientID: cfg.ID, Handoff: inserted.Handoff}
 	if inserted.State == "submitting" {
 		dl.State = "submitting"
 	}
@@ -1550,11 +1565,18 @@ func (s *Service) grab(ctx context.Context, req GrabRequest, manual bool) (int64
 		dl.DeliveryExpected = inserted.DeliveryExpected
 		return s.resumeManualRequest(ctx, id)
 	}
+
 	unlockDownload := s.lockDownload(id)
 	defer unlockDownload()
 	fresh, freshErr := s.db.GetDownload(ctx, id)
 	if freshErr != nil || fresh.GenerationKey != inserted.GenerationKey || fresh.Transfer != transfer || !automaticSubmissionPending(fresh) {
 		return id, fmt.Errorf("automatic submission was cancelled before client admission")
+	}
+	if deleted, e := s.db.DownloadDeletionRequested(ctx, fresh.ID, fresh.GenerationKey); e != nil {
+		return id, e
+	} else if deleted {
+		_ = s.db.RejectDownloadSubmission(ctx, fresh.ID, fresh.GenerationKey, fresh.Transfer, "deleted before admission")
+		return id, fmt.Errorf("job deletion requested")
 	}
 	inserted = fresh
 	s.advance(ctx, &dl, dl.State, 0, "", stepGrabbed, "sent to "+clientLabel(*cfg)+" as "+transfer)
@@ -2231,17 +2253,18 @@ func (s *Service) cancelRunnerDownload(ctx context.Context, id int64, cfg ports.
 		return err
 	}
 	if fromClient && dl.Handle != "" && (dl.RunnerOutcome == "" || dl.Provisional) {
-		if err := client.Remove(ctx, ports.Handle(dl.Handle), false); err != nil {
+		if cancel, ok := client.(ports.QueueCanceller); ok {
+			err = cancel.CancelQueued(ctx, ports.Handle(dl.Handle))
+		} else {
+			err = client.Remove(ctx, ports.Handle(dl.Handle), false)
+		}
+		if err != nil {
 			return err
 		}
 	}
-	if dl.RunnerOutcome == "" || dl.Provisional {
-		if _, err := s.recordTerminal(ctx, dl, cfg, ports.RunnerTerminal{Outcome: ports.OutcomeCancelled,
-			Message: "cancelled in Curator by the operator", Salvage: "none"}, "operator", 0, false); err != nil {
-			return err
-		}
-	}
-	_, err = s.db.W.ExecContext(ctx, `UPDATE downloads SET activity_dismissed=1, updated_at=? WHERE id=? AND generation_key=?`, time.Now().UnixMilli(), id, dl.GenerationKey)
+	// Legacy removal grants queue/view removal only. The real Runner terminal
+	// arrives through facts; physical disposal has its own explicit command.
+	_, err = s.db.W.ExecContext(ctx, `UPDATE downloads SET activity_dismissed=1,updated_at=? WHERE id=? AND generation_key=?`, time.Now().UnixMilli(), id, dl.GenerationKey)
 	return err
 }
 

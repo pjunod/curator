@@ -291,6 +291,12 @@ func (s *Service) enqueueImportJob(ctx context.Context, dl sqlite.Download, cfg 
 
 // enqueueImportJobFor queues one import job; spec carries its kind.
 func (s *Service) enqueueImportJobFor(ctx context.Context, dl sqlite.Download, cfg ports.ClientConfig, spec importJob, inline bool) bool {
+	if dl.ID != 0 {
+		if deleted, e := s.db.DownloadDeletionRequested(ctx, dl.ID, dl.GenerationKey); e != nil || deleted {
+			return false
+		}
+	}
+
 	receiptID := spec.deliveryReceiptID
 	inlineRun := s.importCh == nil
 	if inlineRun && !inline {

@@ -52,6 +52,7 @@ Each records what was built, reviewed and verified for one piece of work.
 
 | File | What it is |
 |---|---|
+| [ACTIVITY_ACTIONS_STATUS.md](ACTIVITY_ACTIONS_STATUS.md) | Activity actions implementation, review, validation and delivery. |
 | [ADHOC_JOB_PRIORITY_STATUS.md](ADHOC_JOB_PRIORITY_STATUS.md) | Ad-hoc job priority: delivery and verification. |
 | [BAD_DOWNLOAD_API.md](BAD_DOWNLOAD_API.md) | Bad media reports and replacement operations. |
 | [COMPLETED_FOLDER_STATUS.md](COMPLETED_FOLDER_STATUS.md) | Completed-folder accounting: delivery status. |

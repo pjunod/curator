@@ -319,6 +319,18 @@ func TestEpisodeFailureGrabsEpisodeNotPack(t *testing.T) {
 	if n := f.count(`SELECT COUNT(*) FROM jobs WHERE kind=?`, SeasonSearchJobKind); n != 1 {
 		t.Fatalf("season planner jobs = %d, want one, for the episode with no single release", n)
 	}
+	job, err := f.db.LatestJob(f.ctx, SeasonSearchJobKind)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var checkpoint seasonCheckpoint
+	if err = json.Unmarshal([]byte(job.Payload), &checkpoint); err != nil {
+		t.Fatal(err)
+	}
+	wantOrigin := sqlite.SeasonReplacementOrigin{DownloadID: dl.ID, GenerationKey: dl.GenerationKey}
+	if checkpoint.ReplacementOrigin == nil || *checkpoint.ReplacementOrigin != wantOrigin {
+		t.Fatalf("replacement fallback origin = %+v, want %+v", checkpoint.ReplacementOrigin, wantOrigin)
+	}
 }
 
 // (d) A held row whose stored control is older than anything the terminal
@@ -1100,16 +1112,17 @@ func TestRemovingARunnerRowCancelsItNeverParks(t *testing.T) {
 	if err := f.svc.RemoveDownload(f.ctx, dl.ID, true); err != nil {
 		t.Fatal(err)
 	}
+	assertRunnerQueueCancellation(t, f.runner, ports.Handle(dl.Handle))
+	pending := f.row(dl.ID)
+	if pending.State != dl.State || pending.RunnerOutcome != "" || pending.Provisional || pending.ParkedReason != "" ||
+		f.count(`SELECT parked_at FROM downloads WHERE id=?`, dl.ID) != 0 {
+		t.Fatalf("row after queue cancellation request = %s/%s provisional=%v parked %q, want its current state until Runner reports a terminal", pending.State, pending.RunnerOutcome, pending.Provisional, pending.ParkedReason)
+	}
+	f.observe(dl, terminalFact(dl, ports.RunnerTerminal{Outcome: ports.OutcomeCancelled, Salvage: "none"}, "event 1"))
 	got := f.row(dl.ID)
 	if got.State != "failed" || got.RunnerOutcome != ports.OutcomeCancelled || got.Provisional || got.ParkedReason != "" ||
 		f.count(`SELECT parked_at FROM downloads WHERE id=?`, dl.ID) != 0 {
-		t.Fatalf("removed row = %s/%s provisional=%v parked %q, want a final cancelled terminal and no park", got.State, got.RunnerOutcome, got.Provisional, got.ParkedReason)
-	}
-	f.runner.mu.Lock()
-	removed := len(f.runner.removed)
-	f.runner.mu.Unlock()
-	if removed != 1 {
-		t.Fatalf("Runner remove calls = %d, want the job cancelled", removed)
+		t.Fatalf("row after Runner event = %s/%s provisional=%v parked %q, want a final cancelled terminal and no park", got.State, got.RunnerOutcome, got.Provisional, got.ParkedReason)
 	}
 	if n := f.count(`SELECT COUNT(*) FROM replacement_grabs`); n != 0 || len(mustBlocklist(t, f)) != 0 {
 		t.Fatal("an operator cancel re-grabbed or blocklisted")

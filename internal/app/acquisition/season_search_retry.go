@@ -65,7 +65,17 @@ func (s *Service) recoverFailedSeasonSearches(ctx context.Context) error {
 		if time.Since(time.UnixMilli(f.at)) < failedSeasonRetryDelay(old.SearchRetryCount) {
 			continue
 		}
-		fresh := seasonCheckpoint{Version: 1, ItemID: old.ItemID, CopyID: old.CopyID, Season: old.Season, Trigger: "failed_search", BackgroundPriority: 50, SearchRetryCount: old.SearchRetryCount + 1}
+		// Pre-upgrade failures from the old replacement worker have no
+		// proven origin to resume. Independently promoted jobs can recover.
+		if old.ReplacementOrigin == nil && old.Trigger == seasonTriggerFailedAcquisition && !old.Manual && old.ManualGeneration == 0 {
+			continue
+		}
+		if e := s.db.CheckSeasonReplacementOrigin(ctx, old.ReplacementOrigin); errors.Is(e, sqlite.ErrParentDispositionRequested) {
+			continue
+		} else if e != nil {
+			return e
+		}
+		fresh := seasonCheckpoint{Version: 1, ItemID: old.ItemID, CopyID: old.CopyID, Season: old.Season, Trigger: "failed_search", BackgroundPriority: 50, SearchRetryCount: old.SearchRetryCount + 1, ReplacementOrigin: old.ReplacementOrigin}
 		_, pack, profile, targets, _, e := s.seasonSnapshot(ctx, fresh)
 		if errors.Is(e, sqlite.ErrNotFound) {
 			continue
@@ -87,7 +97,7 @@ func (s *Service) recoverFailedSeasonSearches(ctx context.Context) error {
 		}
 		// The queue's unique active key preserves concurrent manual work and any
 		// provider retry deadline it already owns.
-		_, e = s.db.EnqueueFailedJobReplacement(ctx, f.id, domain.Job{Kind: SeasonSearchJobKind, Payload: string(raw), DedupeKey: seasonJobKey(old.ItemID, old.CopyID, old.Season), Priority: 50, MaxAttempts: 3})
+		_, e = s.db.EnqueueFailedJobReplacement(ctx, f.id, domain.Job{Kind: SeasonSearchJobKind, Payload: string(raw), DedupeKey: fresh.jobKey(), Priority: 50, MaxAttempts: 3})
 		if e != nil {
 			return e
 		}

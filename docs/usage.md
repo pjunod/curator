@@ -651,8 +651,7 @@ download numbers, any earlier attempts (a failed grab, a cancelled one), and
 the actions that apply: **Search now**, **Interactive search**, **Open in
 Activity**, **Cancel download** (asks first, then cancels in Runner and
 blocklists that release so the next automatic search does not grab it straight
-back; Activity's Remove stays a plain removal, and you can still pick the
-release yourself from interactive search),
+back. You can still pick the release yourself from interactive search),
 **Retry import**, **Send to cinema again**, and **Ask cinema to confirm**,
 which sends a scan request naming the item's current files so cinema's
 answer confirms them — the way to check an item imported before this record
@@ -984,38 +983,17 @@ clients default on; torrent clients default off because they may still be
 seeding. Curator verifies guarded local removal when a client no longer has
 the job. This setting never grants deletion authority inside a library root.
 
-Native Runner downloads are cleaned up **per file**, by what became of each
-file of the publication (Activity → expand the row). A file leaves when it was
-*placed* and the library copy still has exactly its bytes (checked by digest,
-never by size), or when it was *discarded* (superseded, a duplicate, a sample,
-or discarded by you). *Unresolved* files stay, and so does the folder, until
-you **Place**, **Discard** or **Keep** them. Before each deletion Curator
-re-checks that the folder is still the same publication, that the file is
-still the one its manifest names, and that the download storage is still the
-same disk; if the storage changed (an unmounted share), nothing is deleted
-and the publication says why. Cleanup runs right after the import and again
-every hour. If the library copy changed (for example a different file of the
-same size is there now), the publication's file is kept as *unresolved* and
-the reason is shown, because it may be the only good copy. If you replaced
-the download storage and accepted it, publications that were on the old disk
-are held: nothing is deleted from them automatically until you discard their
-files yourself. The **Clean up after import** switch does not apply to Runner
-publications.
+Curator cleans up native Runner publications per file. A placed file can be
+removed when its Library copy matches the manifest digest. A discarded file
+also requires current source and storage proof. Curator retains files when
+the proof is missing or the recorded Library copy changed. Cleanup runs after
+import and hourly. **Clean up after import** is a setting for ordinary
+download clients. Runner publication cleanup follows its own file ledger.
 
-While a cleanup pass runs or waits, the publication in Activity says so and
-why (*after its import*, *hourly sweep*) with **Pause cleanup**; a paused
-publication is left alone until you **Resume cleanup**. A folder whose
-manifest files are all gone but that still holds something Curator did not
-put there (a `.DS_Store`) shows **Delete files…** in Download storage to
-remove it whole.
-
-*Historical* publications — payloads that existed before v0.39.0, including
-the older pre-delivery review backlog — import normally but are never deleted,
-automatically or by **Delete selected files…**, until their review batch is
-approved (`POST /api/v1/downloads/publications/approve-cleanup` with the
-publication ids; the same per-file rule then removes only what has evidence).
-A historical folder with no manifest at all is shown as *import failed* with
-the reason; once approved, delete it whole from Download storage.
+Historical publications keep their approval fence. Explicit Activity
+**Delete** can authorize the exact job generation after Curator verifies its
+manifest and original storage. Foreign siblings and files without reliable
+ownership evidence stay in place.
 
 When you retry a held job in Runner, Curator clears its cached hold only after
 Runner supplies a newer control revision from the same instance, with the same
@@ -1035,91 +1013,22 @@ newly observed history row cannot silently authorize deletion.
 
 ### Completed folders — accounting survives an empty queue
 
-System → Storage → **Download storage** inventories configured Curator-owned working
-trees independently of the queue. The deployed `/working/monarr` root contains
-`completed`, also mounted at `/downloads`; both names refer to the same files.
-The `completed` container is omitted as a row, while its payloads are listed
-individually. Hidden entries, loose files, archives, and nested files count;
-symbolic-link targets are not followed. Sizes are **logical bytes**, not
-allocated space or a promise of how many bytes deletion would reclaim.
+System → Storage shows the last observed capacity and accessibility of Library
+and download folders. Capacity comes from an observation of the root volume and is unavailable
+when there is no valid measurement. A hard-linked file can remain on the volume
+after its download path is removed, so job cleanup does not promise that a
+given number of bytes will become free.
 
-| Explanation | What to do |
-|---|---|
-| Active | A download or import still owns this path; let it finish |
-| Awaiting import | Check Activity for approval, cancellation, or a stalled handoff |
-| Failed | Review the failure and use **Choose files to import** to choose a destination |
-| Cleanup pending | A cleanup obligation remains; its owning worker retries it |
-| Retained | Files remain accounted for and are not eligible for automatic cleanup |
-| Untracked / ambiguous | No current record, or multiple associations; review the files and historical receipts |
-| Symlink | Target bytes are excluded; check the link separately |
+The automatic cleanup panel shows whether cleanup is running and the last
+recorded run or error. Follow **Jobs needing attention** for blocked work or
+**Job history** for job outcomes. **Manage storage folders** opens Settings.
+If a download mount has changed, use **Review replacement storage** only for
+an intentional change. See [storage replacement](#review-intentional-replacement-of-download-storage).
 
-**Scan download storage** queues another scan. **Choose files to import** opens the
-shared manual import dialog with that location prefilled; opening it does not import
-or delete anything. Untracked entries and legacy history-only associations
-are not automatically adopted. Clearing or aging out an Activity row does not
-cancel durable receipt, acknowledgement, or cleanup work. The inventory keeps
-showing files until a later complete scan confirms their state. Cleanup uses
-recorded file identities and current ownership checks; unknown siblings remain
-protected. A configured storage root alone does not identify every child as
-belonging to one download.
-
-A full download progress bar does not prove a complete payload. PAR repair,
-archive extraction, or a disk write can fail after most bytes arrive. A failed
-season may contain usable episodes alongside missing or unfinished ones.
-Monarr preserves any payload path reported with the failure so these files
-remain associated with the failed download and available for manual review.
-Native Runner failure details also include its `Failure:Files` explanation
-when available, such as a failed move into failed-download storage. These
-failures still use the existing blocklist and bounded replacement search;
-retained media is not automatically declared complete or imported.
-
-The **Storage entries** list starts collapsed; click its heading to expand or
-collapse it. The heading shows the total entry count. Storage totals, scan
-status, and deletion progress remain visible while the list is closed. Closing
-and reopening the list preserves its filters, page, and selection.
-
-The expanded list defaults to **25 entries per page**. Search paths or download titles,
-filter by status, and sort by name or largest first. Names and parent paths wrap
-within each row so size, explanation, and actions remain visible on narrow screens.
-**Select page** selects eligible entries on the current page; **Select all**
-selects all matching eligible entries across pages. Changing the search or status
-filter clears selection. Changing pages preserves it.
-
-**Delete selected…** reviews the selected paths, file count, and logical size
-before permanent deletion. Each entry is checked independently; the result
-reports successful deletions and individual failures. Progress and results survive
-navigation within the app and changes between desktop and mobile layouts; keep
-the browser tab open until the batch finishes. Confirmation opens in a focused
-dialog, including when you select an entry near the bottom of the list.
-Entries that change after
-selection must be selected again. Active downloads, awaiting imports, storage
-containers, and entries from incomplete scans cannot be selected for deletion.
-**Choose files to import** remains an individual action because each payload needs a
-library destination.
-
-**Delete files…** shows a confirmation for the selected entry. This is an
-explicit operator action. Curator rechecks ownership, active work, and the
-selected file identities before unlinking through a directory handle. Library
-and recovery paths, storage roots, and active download/import paths cannot be
-deleted through this action. Removing a symlink removes the link, never its
-target.
-
-A scan error retains the last complete inventory and shows the error and its
-last successful timestamp. The health check warns on entries needing review,
-failed scans, or a snapshot older than 15 minutes. Each root scan is limited
-to 100,000 entries; hitting that limit is reported as incomplete, not an empty
-folder. Background scans have no fixed 30-second timeout, allowing slow network
-storage to finish. They respect shutdown cancellation between filesystem calls;
-an unresponsive mount can still delay a call. Scans are serialized so they cannot
-accumulate workers. Deletion rechecks only the selected payload under its own
-30-second deadline.
-
-A successful client delete response alone does not prove local files
-disappeared. Curator checks the recorded path and keeps retry/error state when
-the result is uncertain. Runner-owned processing and recovery trees remain
-outside Curator's cleanup authority. A reused path is not treated as the old
-payload merely because its name matches; accepted generation and file identity
-must still match before cleanup.
+The inventory still scans configured download roots independently of Activity.
+The cached inventory and file receipts support internal audit and cleanup
+checks. A failed scan keeps its last complete snapshot. Unknown files and
+siblings remain protected by the file identity and ownership checks.
 
 ## The same release, twice
 
@@ -1223,10 +1132,10 @@ on its configured schedule and backlog search catches up older releases.
 
 ## When an import doesn't import
 
-The manual import panel (System → Storage → Import files…) validates the selected
+The manual import panel (Activity → Import files…) validates the selected
 files, queues an Activity job, and closes immediately. The copy continues in
 the background, so an 18 GB file never turns the panel into a progress modal.
-Expand the Activity row for the per-file result and the exact reason anything
+Check Activity for its result and the reason anything
 was declined — "no files imported from `<path>`" on its own is true and
 useless.
 
@@ -1378,55 +1287,14 @@ cooldowns; this recovery does not repeatedly search upgrades alone.
 
 ## Activity, and keeping it finite
 
-The Activity page leads with what is **moving**: the in-flight sections
-(Downloading, Verifying, Repairing, Copying to library…) are always shown
-whole, because a partly-hidden answer to "what is happening" is not an
-answer.
+Activity shows live work, jobs that need a decision, and finished attempts.
+Use [the Activity guide](#activity--transfers-imports-and-history-in-one-place)
+to retry a job, delete its owned files, or read its log.
 
-A download leaves those sections the moment Runner reports how it ended,
-even when Monarr cannot act on that ending yet. When Runner still owns a
-failed attempt's source files, the row waits under **Waiting** with the
-reason ("replacement held until cleanup is settled"); it is no longer shown as
-downloading. As soon as Runner disposes of those files (or you delete or Keep
-them in Runner's Files), the next check fails the attempt, blocklists the
-release, and searches for a replacement. Runner disposes of a failed attempt
-that left no files on its own, so a release that failed health before
-anything finished is replaced without anyone touching it. For a series, the
-failure re-runs that season's comparison straight away, even when the season
-was waiting for its next scheduled search, and the failed release (that exact
-post from that indexer) is never chosen again.
-
-Use **History** for completed attempts, terminal transfer failures, and cancelled
-imports whose custody is fully resolved. Cancellation alone does not clear
-**Needs attention**: held stages, prepared or retained placements, publication
-custody, unresolved files and actionable reservations still require review.
-The compatibility `/api/v1/imports` endpoint also exposes these resolved
-cancellations as `history` (including `filter=history`), never as successful
-`imported` rows. Original failure messages and publication outcomes remain
-unchanged. The cancellation pill says **Cancelled** once custody is resolved;
-remaining custody still says **Review required**. Local
-placement failures that require a decision appear under **Needs attention**;
-environmental retries remain **In progress**. Rejected publications are cleaned
-automatically and remain in **History** after their files are removed. The row
-shows the original failure reason; retained history does not mean retained files.
-Cancelled scratch stages whose entire publication was removed as superseded are
-retired automatically at startup and by the hourly cleanup pass, when their
-recorded storage and object identities still match and no publication
-authorization or prior-file backup holds them. Search and pagination cover the
-complete selected view. **Details → Remove** removes an eligible download
-record without deleting library files; durable custody checks can refuse it.
-Bulk history deletion is not offered on the consolidated web page.
-
-Underneath, **Activity retention** (Settings → Library) ages out finished
-and failed rows, and the events behind them, after a number of days —
-30 by default, `0` to keep everything. A daily task does the sweep. It only
-ever touches terminal rows: a download stuck in "grabbed" for six weeks is
-something to look at, not something to hide, so it stays no matter how old
-it is. Pending imported-payload cleanup remains internal until removal is
-confirmed, even after its Activity row ages out. Before this, nothing was ever
-deleted: every grab monarr had ever
-made was still in the table, and the page rendered the most recent hundred
-of them forever.
+**Activity retention** (Settings → Library) expires eligible terminal rows
+and their events after 30 days by default. Set it to `0` to retain them.
+Pending work, unresolved deletion and durable cleanup obligations survive
+the history sweep.
 
 ## Activity, calendar, wanted
 
@@ -1435,8 +1303,7 @@ of them forever.
   task). Imported files are renamed to the library layout —
   `Movie (Year) [Quality].ext`, `Show - S01E02 - Title [Quality].ext`,
   `Author/Title/Title - Author.ext` — using hardlinks when the download and
-  library share a filesystem. **Expand any row** (the ▸) to see the
-  handoff, below.
+  library share a filesystem. Open **Job log** in History for recorded events.
 - **Calendar** has two views, switched with the **Month · Agenda** toggle in
   the page head. The choice is remembered.
 - **Wanted** shows one collapsed row per library title. Expanding a show lists
@@ -1518,14 +1385,9 @@ just upgraded gets them over the following day — or immediately, if you run
 ## The handoff: download to library
 
 The stretch between "the download client finished" and "the files are in
-the library" is a black box in most tools — when something doesn't show up,
-you can't tell why. Monarr lays it out. Expand a row on the **Activity**
-page (the ▸) to see the handoff step by step, each with a timestamp:
-**grabbed** → **downloading** → **downloaded** → **importing** →
-**imported**. Alongside the trace it shows the two paths that matter: what
-the download client *reported*, and where Monarr *looked* after any remote
-path mapping. When an import stops, the trace ends at **failed** with the
-exact reason — no guessing.
+the library" includes download processing, admission and file placement.
+Follow the live stage in **Activity**. Needs attention shows the cause and
+next step for a blocked job. Use **History → Job log** for its recorded events.
 
 For nzbd, the admission request also carries the effective download priority.
 Normal is `0`; High and Very high move the job ahead of normal work; Low and
@@ -1534,56 +1396,15 @@ can run through queue pauses and quota holds, but never through nzbd's disk
 safety guard. Download clients without a native priority capability continue
 to receive the grab normally and ignore this field.
 
-Every row carries the controls for its state:
-
-- **Import now** — on a download **awaiting approval** (from a client set to
-  require approval), imports it right now.
-- **Retry** — on a **failed** row, re-runs the import using the same path,
-  for after you've fixed a mount or added a path mapping.
-- **Restart import** — on an interrupted **importing** row with no live
-  worker, queues the saved payload again. Monarr also recovers these rows on
-  the next completed-download observation after a restart.
-- **Cancel import** — stops a queued or live import, removes any unfinished
-  destination temp file, keeps the completed payload, and returns the row to
-  a restartable **downloaded** state.
-- **Manual import** — browse Monarr to the real files (a folder or a single
-  file), select exactly which scan results belong, pick the target title and
-  copy, and queue the import.
-  Use it when automation couldn't resolve the payload, or to pull in files
-  you placed by hand. It's also on the top of the Activity page for imports
-  not tied to any download.
-- **Blocklist** — declare the release bad: blocklist it so it's never
-  grabbed again and search for a replacement. This is the *only* way a
-  handoff gets blocklisted — an import failure never does it on its own, so
-  a mount problem never churns silently through replacements.
-- **Remove** — drop the row (leaves the client and any files alone).
-
-An **importing** row is only called live when a worker exists. A live row
-shows bytes copied, total bytes, average rate, elapsed time, and the current
-detail. A durable row left behind by a stopped process instead says
-**interrupted · No importer is running**; a full progress bar is not used as
-a substitute for status.
-
-An accepted import waiting behind the bounded workers (four by default,
-`MONARR_IMPORT_WORKERS`; imports of different titles run side by side) sits under
-**Waiting to copy**, says **queued**, and offers **Cancel import**. It is not
-an interrupted job and pressing Retry again is neither necessary nor
-accepted. The durable handoff trace records `Queued for import` before the
-worker starts.
-
-**Nothing an interrupted import leaves behind needs you.** A restart (or a
-killed copy) leaves a half-written `.monarr-stage-…` file beside the library
-file; the next attempt of that import deletes it and copies again, by itself.
-Imports start as soon as Monarr is up: the placement journal of the previous
-process is reconciled in the background, one title at a time, never by
-holding the whole library. An import of a Runner publication is one read of
-each file and one write (its bytes are checked against Runner's manifest
-while they copy, nothing is read back), and a library on the same filesystem
-as the completed folder gets a hard link instead of a copy.
+Activity displays measured import progress when a worker is running.
+A queued import waits for the configured worker pool (four by default,
+`MONARR_IMPORT_WORKERS`). Interrupted imports can recover in the background
+as Curator reconciles the placement journal. Use the actions shown for the
+attempt and see [the Activity guide](#activity--transfers-imports-and-history-in-one-place).
 
 **Require approval per client** (Settings → Download clients) flips a
 client from hands-free to hold-for-approval: its completed downloads park at
-*awaiting approval* until you press **Import now**. Off by default.
+*awaiting approval* until you press **Approve import**. Off by default.
 
 ## Finding things fast
 
@@ -1659,7 +1480,7 @@ hours, and a publication whose import has not finished within 6 hours of its
 first start (time queued behind other imports does not count, and a retry
 does not restart the clock; past it the want is grabbed again). A download waiting for
 your approval (`awaiting_import`) has no deadline; it shows its age in
-Activity instead. Open the named row in Activity to see its handoff trace.
+Activity instead. Open the named job in Activity to see its available actions.
 The tiles are read from `GET /api/v1/system/pipeline`.
 
 Every overdue download leaves on its own (v0.45.2). On each poll Curator asks
@@ -1720,9 +1541,8 @@ next pass.
   itself.
 - **Awaiting approval** rows (a client with manual approval) show how long
   they have waited for you: it is the one state with no deadline.
-- Expand a row to see its **publications** — one per Runner generation (the
-  finished payload, a salvage of a failed one) — and what became of each
-  file: *placed* (with the library path), *discarded* (superseded by the
+- Curator records each **publication** for its Runner generation, including
+  finished or salvaged payloads. It records file outcomes as *placed* (with the library path), *discarded* (superseded by the
   attempt Curator chose, a duplicate of what the library has, a release
   sample, or a file Curator does not keep), or *unresolved* (an obfuscated
   name with no episode, a file Curator cannot rank against another attempt).
@@ -1783,15 +1603,9 @@ next pass.
   only waits: the publication shows **held** with why and for how long, the
   System page counts held publications under the pipeline tiles, it is
   tried again every few minutes and imports by itself once the cause
-  clears, and nothing of the download is deleted. **Retry import** starts it over. *Unresolved* remains only for files
-  a person left undecided in a manual or approval-held import (and rows
-  older versions left); they offer **Place**, **Discard** and **Keep**. A file whose bytes have left the folder says *removed from the
-  publication*. *historical* marks a publication that existed before v0.39.0:
-  it imports normally, and nothing deletes it until its review is approved
-  (*historical · cleanup approved* afterwards).
-- The mobile app (0.28.0) labels the same rows *held by Runner*, *held
-  (stale)* and *failed (provisional)*; a hold's message is shown in grey, not
-  as an error. Resolving publication files is web-only.
+  clears. Use **Retry** when Activity offers it. Historical publications
+  keep their cleanup approval fence. See
+  [Runner payload cleanup](#runner-payload-cleanup) for the owner checks.
 - A failed download starts its replacement within seconds (the next grab is
   written with the failure itself). It does not wait for Runner to clean up
   the failed bytes, and it blocklists the release only when Runner says the
@@ -1847,22 +1661,18 @@ roots, before the first import finds it.
 
 ## Runner payload cleanup
 
-Runner owns its processing source and retires it itself; Curator never asks it
-to. Curator owns each publication folder under the completed root and removes
-it file by file, as described in [Cleaning up after a download](#cleaning-up-after-a-download):
-only *placed* files whose library copy still matches the manifest digest and
-*discarded* files leave, after the generation, the file and the storage are
-re-checked; the folder goes when only its manifest is left. A release's sample
-clip is never imported and is discarded. A manifest that holds only a sample
-(or only sidecars) is a failed import rather than an empty one marked imported.
+Runner owns its processing source. On **Delete**, Curator requests disposition
+for the exact Runner job and waits for verified owner cleanup. Curator handles
+the publication under its completed root through the recorded file manifest,
+storage identity and per-file checks. Installed Library files, unrelated
+files and manual-import originals stay in place. A changed drive or missing
+proof can block cleanup. Correct the issue shown in Activity and retry the
+action.
 
-Each completed-folder entry that a publication claims says which state holds
-it (historical, awaiting import, failed, cleanup pending) and why anything is
-still there. **Delete selected files…** on such an entry discards only its
-unresolved files and removes them through the same checks. The v1 receipt
-trace still shows the old Runner handoff; its **Retry Curator cleanup** runs
-the publication's per-file cleanup. Title or path matches never establish
-ownership.
+Routine cleanup still removes verified discarded files and placed files whose
+Library copy matches the manifest. A sample is normally discarded. A manifest
+containing only samples or sidecars can fail import. See
+[Cleaning up after a download](#cleaning-up-after-a-download).
 
 ## Historical staged recovery records
 
@@ -1871,9 +1681,9 @@ Existing staged-copy APIs, receipts and worker safeguards remain available for
 operators maintaining earlier workflows; removing the page does not release a
 Runner claim or authorize source cleanup. See the
 [settings reference](settings.md#runner-published-file-mapping) for mount rules.
-Use an item's **Import file** action or System → Storage → **Import files…**
-for current manual imports. Storage entries prefill their exact inspected path;
-changed historical storage still requires review of the current file snapshot.
+Use an item's **Import file** action or Activity → **Import files…**
+for current manual imports. Changed historical storage must pass current drive
+and file identity checks.
 
 Existing recovery placements journal intent before publishing library files.
 Cancellation waits for the actual writer to stop and preserves committed files
@@ -1962,8 +1772,9 @@ the manifest, even if its earlier library copy is intact or the file was marked
 discarded. Missing or unreadable manifest evidence also keeps it. Activity
 shows the cleanup reason; restoring the expected source or evidence allows a
 later pass to finish. If saving a manifest fails, import waits without placing
-or discarding files. Existing v1 stored manifests and historical batch approval
-continue to work; this upgrade does not approve any cleanup batch.
+or discarding files. Existing v1 stored manifests and historical approval records remain valid.
+Explicit Activity deletion can authorize cleanup of the exact job generation
+after Curator verifies the corresponding manifest and storage.
 
 Runner admission reads the `deliveries-v1` status capability independently of
 retained publications. Curator persists that choice before submitting a download.
@@ -2004,7 +1815,7 @@ review fences when you select a parent or child of the recorded payload folder.
 
 System → Storage → Download storage shows the expected and observed mount when storage
 changes. Returning the expected mount recovers automatically. For an intentional
-replacement, open **Review changed storage…** to compare both identities and the
+replacement, open **Review replacement storage** to compare both identities and the
 counts of existing payloads and pre-change requests, including work still in
 flight. Refresh the review if custody changes before acceptance.
 
@@ -2023,30 +1834,14 @@ fallback; network storage keeps its server/export identity.
 
 ### Read the joined lifecycle trace
 
-Runner lifecycle history joins download and processing steps, publication and
-handoff, Curator import, completed-file cleanup, and processing-source cleanup.
-Measured times stay separate for different machines and restarts. Overlapping
-completed steps count once within their recorded timing reference. Processing
-details expand major steps and do not add their duration a second time. Missing,
-running and interrupted durations stay explicitly unknown. The immutable Runner
-snapshot ends at publication; consumer acceptance and later handoff retries have
-their own receipt observations. Historical POST details retain measured durations
-with origin unrecorded when their original machine/session cannot be proved.
-Bounded history says **at least N omitted** and labels totals as a **recorded
-subset**; omission counts are conservative lower bounds, never an exact lifetime
-total.
+Open **Job log** on the attempt in Activity → **History**. It shows recorded
+job events and their times. The job summary remains visible without opening
+the technical log. Older records can have fewer events, and expired History
+cannot be reconstructed from the page.
 
-The lifecycle API projects each Curator file ledger with the same camel-case
-fields the UI reads (`path`, `disposition`, `cleanupState`, `cleanupError` and
-retry timing). A placement may be complete while its exact publication file
-still reports a cleanup permission error; the error stays visible until the
-separate cleanup obligation completes.
-
-Clustered publications show each processing-source copy's node, cleanup status,
-retry attempts and reason. Retry controls show their pending state and visible
-result. Background status refresh preserves focus and scroll position. Reporting
-and file deletion show results in a dialog that remains visible after the file
-row or review form changes.
+Historical lifecycle and receipt reads remain available for internal audit.
+They distinguish transfer, import and cleanup, so an installed file and a
+cleanup error can both be recorded for the same job.
 
 ### Runner native torrent acquisitions
 
@@ -2114,14 +1909,10 @@ receive an explicit streaming error rather than an unbounded stream.
 
 ## Durable import cancellation and deployment drain
 
-Activity's **Cancel import** records durable intent. **Cancelling** remains
-visible until the actual writer exits or uncertain publication is reviewed.
-Committed library files are kept, and ordinary retries cannot erase cancellation.
-Explicit retry uses a new import epoch. **Review retained import** opens the
-source/stage/publication evidence and explicit fencing/disposition actions inside
-the current viewport; Curator never deletes the retained bytes through review.
-The native mobile Activity screen displays pending and retained-review status;
-use the web dialog for the detailed retained-byte review.
+Activity **Delete** records durable intent and requests stop and cleanup.
+Curator waits for writer exit and verifies the job's files before completing
+deletion. A stopped copy can be retried when Activity offers **Retry**. Curator
+checks the recorded temporary files and starts a new import epoch.
 
 For deployments, pause new mutation/work admission while existing copies finish,
 keep status available, then stop and verify actual exit before replacement. See
@@ -2130,29 +1921,34 @@ pending qualification limits. NAS outages may still block restart.
 
 ## Activity — transfers, imports and history in one place
 
-Open **Activity** in the sidebar or phone navigation. **In progress** follows
-transfers, Runner processing, admission and import workers. **Needs attention**
-contains approvals and explicit retained-file reviews. **History** holds terminal
-attempts and historical publication receipts. Automatic retry and environmental
-waits stay in progress rather than becoming manual recovery tasks.
+Open **Activity** in the sidebar or phone navigation. **In progress** shows
+active transfers, processing, admission and imports. Automatic retries and
+environmental waits stay with the running or waiting work. **Needs attention**
+shows the cause, what you can do next and the available actions. **History**
+shows terminal attempts and historical receipts. Open **Job log** for a
+recorded attempt's technical events.
 
-Search matches library titles and release names. **Imports only** includes
-retained import records even after Activity dismissal; `/imports` redirects to
-that scope. Counts cover every matching record and pages contain 50 attempts.
-Existing retention still expires eligible history; deleted records cannot be
-reconstructed. Historical receipts without a download are read-only.
+Use **Retry** after correcting the stated prerequisite. For example, assign a
+Library folder when the job has no destination, reconnect the original drive
+when the recorded files are inaccessible, or resolve a Runner hold before
+resuming a job that supports it. **Approve import** starts a completed download
+waiting for approval. The Activity page also offers **Import files…** on the web
+for files you choose yourself.
 
-**How to read it:** a worker ticket means **Waiting for an import worker**.
-Interrupted imports wait for automatic retry. Copy bytes and rate appear only
-when measured by the importer; download percentages never stand in for copy
-progress. **Details** exposes source, destination, file outcomes and handoff
-history. A failed refresh retains the last snapshot with a warning and disables
-mutations until a successful refresh.
+**Delete** requests that Curator stop the job and remove its verified downloaded
+and temporary files. It keeps committed Library files, prior-file backups
+awaiting recovery and originals supplied to manual import. A pending result means
+an owner still has work to confirm. A blocked result includes the reason and
+can be retried after you correct it. An older Runner without verified
+disposition support must be updated to finish Runner-owned deletion.
 
-Use **Retry selected** for eligible import failures. Attempts run serially and
-report each acceptance or rejection. **Cancel import** retains custody until
-the writer exits; retained-file disposition still needs the exact recorded
-identities and acknowledgement. Review buttons appear on the relevant attempt.
-Removing an eligible download record leaves library files in place; custody
-checks still protect active work. System → Storage holds disk scans, guarded deletion and
-conditional historical delivery tools; those tools no longer crowd daily work.
+Use the checkboxes in **Needs attention** or **Select all matching jobs** to
+freeze a selection across pages. You can uncheck jobs before submitting. New
+matches stay outside that selection, and a changed attempt can be blocked.
+Use **Retry selected** or **Delete selected** and open **Action results** to see
+completed, waiting and blocked jobs. Retry success means the retry was accepted.
+The server keeps processing accepted actions after you close the app.
+
+Search matches titles and releases. Counts cover the selected view across pages.
+**Imports only** includes retained import records, and `/imports` opens that
+scope. Historical receipts without an associated job are read-only.

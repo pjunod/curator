@@ -1056,6 +1056,18 @@ func (d *DB) CompletePublicationImport(ctx context.Context, w PublicationImportW
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
+	var disposing bool
+	if w.DownloadID != 0 {
+		if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM download_dispositions x JOIN downloads d ON d.id=x.download_id AND d.generation_key=x.generation_key WHERE x.download_id=?)`, w.DownloadID).Scan(&disposing); err != nil {
+			return err
+		}
+	}
+	if disposing {
+		w.DownloadState = ""
+		w.DownloadError = ""
+		w.Handoff = nil
+		w.RegrabWantables = nil
+	}
 	now := time.Now().UnixMilli()
 	for _, f := range w.Files {
 		if _, err := tx.ExecContext(ctx, `INSERT INTO publication_files (publication_id, path, bytes, sha256, wantable_id, outcome, discard_reason, library_path, placed_sha256, reason, updated_at)
@@ -1244,7 +1256,7 @@ func (d *DB) GetReplacementGrab(ctx context.Context, downloadID int64) (Replacem
 // ClaimReplacementGrab marks one attempt started, so a crash mid-grab is
 // visible as an attempt and a concurrent worker cannot take the same row.
 func (d *DB) ClaimReplacementGrab(ctx context.Context, downloadID int64, now time.Time) (bool, error) {
-	res, err := d.W.ExecContext(ctx, `UPDATE replacement_grabs SET attempted_at=?, attempts=attempts+1, next_at=? WHERE download_id=? AND result='' AND next_at<=?`,
+	res, err := d.W.ExecContext(ctx, `UPDATE replacement_grabs SET attempted_at=?, attempts=attempts+1, next_at=? WHERE download_id=? AND result='' AND next_at<=? AND NOT EXISTS(SELECT 1 FROM download_dispositions x JOIN downloads d ON d.id=x.download_id AND d.generation_key=x.generation_key WHERE x.download_id=replacement_grabs.download_id)`,
 		now.UnixMilli(), now.Add(time.Minute).UnixMilli(), downloadID, now.UnixMilli())
 	if err != nil {
 		return false, err
@@ -1440,7 +1452,7 @@ func (d *DB) CountHistoricalPublications(ctx context.Context) (int, error) {
 // file gone and the directory perhaps left behind. The oldest-touched come
 // first so a publication that keeps failing cannot starve the rest.
 func (d *DB) PublicationsToSweep(ctx context.Context, limit int) ([]Publication, error) {
-	rows, err := d.R.QueryContext(ctx, `SELECT `+publicationColumns+` FROM publications WHERE state IN ('imported','notified','import_failed') AND (cohort='live' OR cleanup_approved_at>0) AND cleanup_paused_at=0
+	rows, err := d.R.QueryContext(ctx, `SELECT `+publicationColumns+` FROM publications WHERE state IN ('imported','notified','import_failed') AND (cohort='live' OR cleanup_approved_at>0 OR (cohort='historical' AND state='import_failed')) AND cleanup_paused_at=0
 		AND (EXISTS (SELECT 1 FROM publication_files f WHERE f.publication_id=publications.id AND f.removed_at=0 AND f.outcome IN ('placed','discarded','pending'))
 		     OR NOT EXISTS (SELECT 1 FROM publication_files f WHERE f.publication_id=publications.id AND f.removed_at=0))
 		ORDER BY updated_at, id LIMIT ?`, limit)

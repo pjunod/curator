@@ -535,13 +535,14 @@ func (c *Client) CancelQueued(ctx context.Context, h ports.Handle) error {
 // (which is also how Test knows it is talking to nzbd) and the queue-hold
 // reasons.
 type statusDto struct {
-	Version        string   `json:"version"`
-	Capabilities   []string `json:"capabilities"`
-	DownloadPaused bool     `json:"download_paused"`
-	DiskLow        bool     `json:"disk_low"`
-	QuotaReached   bool     `json:"quota_reached"`
-	BlockedServers []int    `json:"blocked_servers"`
-	HealthAbort    bool     `json:"health_abort"`
+	Storage        []ports.StorageVolumeObservation `json:"storage"`
+	Version        string                           `json:"version"`
+	Capabilities   []string                         `json:"capabilities"`
+	DownloadPaused bool                             `json:"download_paused"`
+	DiskLow        bool                             `json:"disk_low"`
+	QuotaReached   bool                             `json:"quota_reached"`
+	BlockedServers []int                            `json:"blocked_servers"`
+	HealthAbort    bool                             `json:"health_abort"`
 }
 
 // SupportsDeliveryV1 negotiates the explicit status capability without reading
