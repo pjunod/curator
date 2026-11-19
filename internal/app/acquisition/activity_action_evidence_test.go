@@ -331,6 +331,13 @@ func TestActivityRetryRevalidatesQueuedJobAndResumesSameRunnerHandle(t *testing.
 					t.Fatal(err)
 				}
 			}
+			beforeRetry, err := db.GetDownload(ctx, job.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tc.change == "epoch" && (beforeRetry.State != "downloaded" || beforeRetry.RunnerControl != "") {
+				t.Fatalf("new import epoch retained a transfer hold: %+v", beforeRetry)
+			}
 			if err := service.handleActivityAction(ctx, work); err != nil {
 				t.Fatal(err)
 			}
@@ -346,7 +353,7 @@ func TestActivityRetryRevalidatesQueuedJobAndResumesSameRunnerHandle(t *testing.
 				t.Fatalf("Retry bypassed changed eligibility: result=%+v handle=%q", result, client.resumed)
 			}
 			current, err := db.GetDownload(ctx, job.ID)
-			if err != nil || current.RunnerControl != job.RunnerControl || current.Transfer != job.Transfer ||
+			if err != nil || current.RunnerControl != beforeRetry.RunnerControl || current.Transfer != job.Transfer ||
 				len(client.added) != 0 || len(client.removed) != 0 {
 				t.Fatalf("Retry rewrote the hold or replaced the original Runner job: %+v err=%v", current, err)
 			}

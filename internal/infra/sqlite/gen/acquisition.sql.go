@@ -2141,9 +2141,9 @@ func (q *Queries) UpdateDownloadClient(ctx context.Context, arg UpdateDownloadCl
 	return err
 }
 
-const updateDownloadControl = `-- name: UpdateDownloadControl :exec
+const updateDownloadControl = `-- name: UpdateDownloadControl :execrows
 UPDATE downloads SET runner_control = ?, state = ?, progress = ?, error = ?,
-    updated_at = ? WHERE id = ?
+    updated_at = ? WHERE id = ? AND runner_outcome = '' AND state IN ('planned','grabbed','submitting','downloading','held')
 `
 
 type UpdateDownloadControlParams struct {
@@ -2155,8 +2155,8 @@ type UpdateDownloadControlParams struct {
 	ID            int64
 }
 
-func (q *Queries) UpdateDownloadControl(ctx context.Context, arg UpdateDownloadControlParams) error {
-	_, err := q.db.ExecContext(ctx, updateDownloadControl,
+func (q *Queries) UpdateDownloadControl(ctx context.Context, arg UpdateDownloadControlParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, updateDownloadControl,
 		arg.RunnerControl,
 		arg.State,
 		arg.Progress,
@@ -2164,7 +2164,10 @@ func (q *Queries) UpdateDownloadControl(ctx context.Context, arg UpdateDownloadC
 		arg.UpdatedAt,
 		arg.ID,
 	)
-	return err
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const updateDownloadHandoff = `-- name: UpdateDownloadHandoff :exec

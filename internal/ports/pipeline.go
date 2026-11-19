@@ -69,11 +69,13 @@ type RunnerFact struct {
 	// Transfer must equal the row's token or the fact is dropped. Empty only
 	// on a legacy event that carried none; the reducer then falls back to the
 	// handle.
-	Transfer    string
-	Handle      Handle
-	Status      *DownloadStatus
-	Terminal    *RunnerTerminal
-	Publication *RunnerPublication
+	Transfer string
+	Handle   Handle
+	Status   *DownloadStatus
+	// ProgressOnly marks a status sample that carries no change of lifecycle.
+	ProgressOnly bool
+	Terminal     *RunnerTerminal
+	Publication  *RunnerPublication
 	// Source names the feed for the handoff trace: "event <seq>",
 	// "history <incarnation>:<seq>", "deliveries <seq>", "admission", "poll".
 	Source             string

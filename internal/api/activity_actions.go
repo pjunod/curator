@@ -76,7 +76,7 @@ func (s *Server) CreateActivityAction(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "invalid action request")
 		return
 	}
-	if len(body.RequestID) < 8 || len(body.RequestID) > 128 || strings.ContainsAny(body.RequestID, "/\\\x00") || (body.Action != "retry" && body.Action != "delete" && body.Action != "approve" && body.Action != "archive") || ((body.Selection == nil) == (len(body.Targets) == 0)) {
+	if len(body.RequestID) < 8 || len(body.RequestID) > 128 || strings.ContainsAny(body.RequestID, "/\\\x00") || (body.Action != "retry" && body.Action != "delete" && body.Action != "approve" && body.Action != "archive" && body.Action != "recheck") || ((body.Selection == nil) == (len(body.Targets) == 0)) {
 		writeError(w, 400, "provide a requestId, action, and either frozen selection or exact targets")
 		return
 	}

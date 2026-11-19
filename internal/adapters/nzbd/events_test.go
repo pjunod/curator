@@ -194,7 +194,7 @@ func TestStagesAreProgressNotCompletion(t *testing.T) {
 // before post-processing has touched the files.
 func TestTickIsProgressOnly(t *testing.T) {
 	srv := newSSE(t, []string{
-		frame("", "tick", `{"status":{},"jobs":[{"id":1,"name":"A","status":"queued","size_bytes":100,"downloaded_bytes":25},{"id":2,"name":"B","status":"completed","size_bytes":100,"downloaded_bytes":100},{"id":3,"name":"C","status":{"post":{"stage":"unpack"}},"size_bytes":100,"downloaded_bytes":100},{"id":4,"name":"D","status":"completed","size_bytes":100,"downloaded_bytes":100,"pp_done":true,"ready":true}]}`),
+		frame("", "tick", `{"status":{},"jobs":[{"id":1,"name":"A","status":"queued","size_bytes":100,"downloaded_bytes":25},{"id":2,"name":"B","status":"completed","size_bytes":100,"downloaded_bytes":100},{"id":3,"name":"C","status":{"post":{"stage":"unpack"}},"size_bytes":100,"downloaded_bytes":100},{"id":4,"name":"D","status":"completed","size_bytes":100,"downloaded_bytes":100,"pp_done":true,"ready":true},{"id":5,"name":"Held","status":"queued","status_projected":"held"}]}`),
 	}, true)
 	c := New(ports.ClientConfig{URL: srv.URL})
 	ctx, cancel := context.WithCancel(context.Background())
@@ -202,9 +202,12 @@ func TestTickIsProgressOnly(t *testing.T) {
 	ch, _ := c.Subscribe(ctx)
 
 	got := map[ports.Handle]ports.ClientEvent{}
-	for i := 0; i < 3; i++ {
+	for i := 0; i < 4; i++ {
 		ev := recv(t, ch)
 		got[ev.Handle] = ev
+	}
+	if ev := got["5"]; ev.Fact == nil || ev.Fact.Status.OperationalState != "held" || ev.Fact.ProgressOnly {
+		t.Fatalf("projected hold lost in tick: %+v", ev)
 	}
 	if ev := got["2"]; ev.Kind != ports.EventProgress ||
 		ev.Status.State != ports.StateDownloading ||

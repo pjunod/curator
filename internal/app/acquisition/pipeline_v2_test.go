@@ -346,9 +346,21 @@ func TestTerminalCompletesHeldRowWithOlderRevision(t *testing.T) {
 	if held.State != "held" || held.Error != "waiting for disk" || held.DeadlineAt.Before(time.Now().Add(time.Hour)) {
 		t.Fatalf("held row = %s %q deadline %s, want held with Runner's deadline + grace", held.State, held.Error, held.DeadlineAt)
 	}
+	partial := ports.DownloadStatus{State: ports.StateDownloading, Stage: "move"}
+	f.observe(held, ports.RunnerFact{Kind: ports.FactStatus, Transfer: dl.Transfer, Status: &partial, ProgressOnly: true})
+	if after := f.row(dl.ID); after.State != "held" || after.RunnerControl != held.RunnerControl {
+		t.Fatal("partial sample released real hold")
+	}
 	pub := f.publish("Test.Show.S01E01.job-101.runner-aaa", "aaa", map[string]string{epOne + ".mkv": "video"})
 	f.observe(held, terminalFact(held, ports.RunnerTerminal{Outcome: ports.OutcomeCompleted, Publication: &pub, Salvage: "none"}, "event 3"))
 	done := f.row(dl.ID)
+	if done.RunnerControl != "" {
+		t.Fatalf("imported job retained control %s", done.RunnerControl)
+	}
+	page, err := f.svc.Activity(f.ctx, "attention", fmt.Sprintf("#%d", dl.ID), false, 10, 0)
+	if err != nil || page.Total != 0 {
+		t.Fatalf("completed hold still needs attention: %+v %v", page, err)
+	}
 	if done.RunnerOutcome != "completed" || done.State != "imported" {
 		t.Fatalf("row = %s/%s (%s), want completed and imported", done.State, done.RunnerOutcome, done.Error)
 	}
@@ -357,6 +369,55 @@ func TestTerminalCompletesHeldRowWithOlderRevision(t *testing.T) {
 	// evidence.
 	if len(pubs) != 1 || pubs[0].State != "removed" || pubs[0].Cohort != "live" {
 		t.Fatalf("publications = %+v, want one live publication, imported and cleaned up", pubs)
+	}
+}
+
+func TestActivityCheckRunnerReceipt(t *testing.T) {
+	f := setupV2(t, nil)
+	dl := f.grab(1, epOne)
+	st := ports.DownloadStatus{State: ports.StateQueued, Control: &ports.DownloadControl{Version: 1, Lifecycle: "held", Cause: "capacity"}}
+	f.observe(dl, ports.RunnerFact{Kind: ports.FactStatus, Transfer: dl.Transfer, Status: &st, Source: "poll"})
+	held := f.row(dl.ID)
+	actions, err := f.svc.ActivityActions(f.ctx, held)
+	if err != nil || !actions.allows("recheck") {
+		t.Fatalf("missing check action: %+v %v", actions, err)
+	}
+	f.runner.admitErr = context.DeadlineExceeded
+	timeoutWork := claimActivityAction(t, f.db, "operator-receipt-timeout", "recheck", actions.Identity)
+	if err = f.svc.handleActivityAction(f.ctx, timeoutWork); err != nil {
+		t.Fatal(err)
+	}
+	timedOut, err := f.db.ActivityOperation(f.ctx, "operator-receipt-timeout")
+	if err != nil || timedOut.Blocked != 1 || timedOut.State != "completed" {
+		t.Fatalf("unreachable Runner left operation pending: %+v %v", timedOut, err)
+	}
+	f.runner.admitErr = nil
+	adm := f.runner.admissions[dl.Transfer]
+	adm.RequestToken = "another-transfer"
+	adm.Outcome = "cancelled"
+	f.runner.admissions[dl.Transfer] = adm
+	if err = f.svc.checkActivityReceipt(f.ctx, held, actions.Identity.Epoch); err == nil || f.row(dl.ID).State != "held" {
+		t.Fatal("foreign receipt changed a hold", err)
+	}
+	adm.RequestToken = dl.Transfer
+	adm.JobID = dl.Handle
+	adm.Generation = dl.RunnerAdmissionGeneration
+	adm.RunnerInstanceID = dl.RunnerInstanceID
+	adm.Outcome = "completed"
+	adm.PublicationPath = f.root
+	f.runner.admissions[dl.Transfer] = adm
+	if err = f.svc.checkActivityReceipt(f.ctx, held, actions.Identity.Epoch); err == nil || f.row(dl.ID).State != "held" {
+		t.Fatal("reported success for an unusable publication", err)
+	}
+	adm.Outcome = "cancelled"
+	f.runner.admissions[dl.Transfer] = adm
+	work := claimActivityAction(t, f.db, "operator-check-receipt", "recheck", actions.Identity)
+	if err = f.svc.handleActivityAction(f.ctx, work); err != nil {
+		t.Fatal(err)
+	}
+	result, err := f.db.ActivityOperation(f.ctx, "operator-check-receipt")
+	if err != nil || result.Succeeded != 1 || f.row(dl.ID).RunnerOutcome != ports.OutcomeCancelled || f.row(dl.ID).RunnerControl != "" {
+		t.Fatalf("receipt did not retire the hold: %+v %v", result, err)
 	}
 }
 
