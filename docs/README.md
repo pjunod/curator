@@ -64,6 +64,7 @@ Each records what was built, reviewed and verified for one piece of work.
 | [NFS_QUALIFICATION_RESULTS.md](NFS_QUALIFICATION_RESULTS.md) | NFS shutdown qualification results. |
 | [NFS_SHUTDOWN_IMPLEMENTATION.md](NFS_SHUTDOWN_IMPLEMENTATION.md) | NFS shutdown implementation (historical design, superseded by ADR 0025). |
 | [NFS_SHUTDOWN_IMPLEMENTATION_STATUS.md](NFS_SHUTDOWN_IMPLEMENTATION_STATUS.md) | NFS shutdown: implementation, review and delivery status. |
+| [OPERATION_CONCURRENCY_STATUS.md](OPERATION_CONCURRENCY_STATUS.md) | Wanted and file operation concurrency implementation and review status. |
 | [RELEASE_IDENTITY_STATUS.md](RELEASE_IDENTITY_STATUS.md) | Release identity: implementation and delivery record. |
 | [SCAN_DISK_STATUS.md](SCAN_DISK_STATUS.md) | Disk scan status: visible progress through durable completion. |
 | [SEASON_ACQUISITION_STATUS.md](SEASON_ACQUISITION_STATUS.md) | Season acquisition: implementation and verification status. |
