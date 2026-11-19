@@ -339,9 +339,14 @@ type RematchBlocker struct {
 // a download not yet terminal, a running import attempt, a replacement
 // operation still open, another Re-match still open.
 func (d *DB) RematchBlockers(ctx context.Context, itemIDs ...int64) ([]RematchBlocker, error) {
+	return rematchBlockers(ctx, d.R, itemIDs...)
+}
+func rematchBlockers(ctx context.Context, q interface {
+	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
+}, itemIDs ...int64) ([]RematchBlocker, error) {
 	var out []RematchBlocker
 	for _, id := range itemIDs {
-		rows, err := d.R.QueryContext(ctx, `
+		rows, err := q.QueryContext(ctx, `
 			SELECT 'download', CAST(id AS TEXT), state FROM downloads
 			 WHERE media_item_id=? AND state NOT IN ('imported','notified','failed')
 			UNION ALL
@@ -368,6 +373,9 @@ func (d *DB) RematchBlockers(ctx context.Context, itemIDs ...int64) ([]RematchBl
 			out = append(out, b)
 		}
 		if err := rows.Close(); err != nil {
+			return nil, err
+		}
+		if err := rows.Err(); err != nil {
 			return nil, err
 		}
 	}

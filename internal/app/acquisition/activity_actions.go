@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -36,6 +37,15 @@ type ActivityActions struct {
 	Actions      []ActivityAction        `json:"actions"`
 }
 
+func (a ActivityActions) allows(kind string) bool {
+	for _, action := range a.Actions {
+		if action.Kind == kind && action.Enabled {
+			return true
+		}
+	}
+	return false
+}
+
 func (s *Service) ActivityActions(ctx context.Context, dl sqlite.Download) (ActivityActions, error) {
 	out := ActivityActions{Identity: sqlite.ActivityIdentity{ID: dl.ID, GenerationKey: dl.GenerationKey, Epoch: "0"}, Actions: []ActivityAction{}}
 	a, e := s.db.GetImportAttempt(ctx, dl.ID, dl.GenerationKey)
@@ -59,6 +69,9 @@ func (s *Service) ActivityActions(ctx context.Context, dl sqlite.Download) (Acti
 			out.Reason = "Deletion is waiting for cleanup to finish."
 			if out.Operation != nil && out.Operation.Message != "" {
 				out.Reason = out.Operation.Message
+				if out.Operation.State == "blocked" {
+					out.Actions = append(out.Actions, ActivityAction{Kind: "archive", Label: "Clear from attention (keep files)", Enabled: true})
+				}
 			}
 			out.Actions = append(out.Actions, ActivityAction{Kind: "retry", Label: "Retry deletion", Enabled: true})
 		}
@@ -114,10 +127,13 @@ func (s *Service) ActivityActions(ctx context.Context, dl sqlite.Download) (Acti
 		return out, nil
 	}
 
+	if dl.State == "failed" || dl.State == "downloaded" || a.Outcome == "cancelled" {
+		out.Actions = append(out.Actions, ActivityAction{Kind: "archive", Label: "Move to History (keep files)", Enabled: true})
+	}
 	out.Reason = ""
 	if dl.Error != "" {
 		out.Reason = "The import stopped before it finished."
-		out.Prerequisite = "Retry checks the recorded files. The job log contains the original error."
+		out.Prerequisite = dl.Error
 	}
 
 	switch {
@@ -179,6 +195,12 @@ func (s *Service) handleActivityAction(ctx context.Context, job domain.Job) erro
 		if err == nil {
 			if deleting, _, readErr := s.db.DownloadDeletionStatus(ctx, dl.ID, dl.GenerationKey); readErr != nil {
 				err = readErr
+			} else if o.Action == "archive" {
+				if deleting {
+					err = s.db.ArchiveBlockedCleanup(ctx, t.ActivityIdentity)
+				} else {
+					err = s.acknowledgeActivity(ctx, dl, t.ActivityIdentity)
+				}
 			} else if o.Action == "delete" || (o.Action == "retry" && deleting) {
 				t.DispositionRevision, err = s.db.DispositionRevision(ctx, dl.ID, dl.GenerationKey)
 				if err == nil {
@@ -191,9 +213,12 @@ func (s *Service) handleActivityAction(ctx context.Context, job domain.Job) erro
 		switch {
 		case err == nil:
 			t.State = "succeeded"
-			if o.Action == "delete" {
+			switch o.Action {
+			case "archive":
+				t.Message = "Moved to History. Files and cleanup records kept."
+			case "delete":
 				t.Message = "Job stopped. Downloaded and temporary files removed. Library media preserved."
-			} else {
+			default:
 				t.Message = "Retry accepted. Follow its progress in Activity."
 			}
 		case activityPending(err):
@@ -221,6 +246,17 @@ func (s *Service) handleActivityAction(ctx context.Context, job domain.Job) erro
 
 var errActivityPending = errors.New("waiting for the file owner to finish deletion")
 
+func (s *Service) acknowledgeActivity(ctx context.Context, dl sqlite.Download, target sqlite.ActivityIdentity) error {
+	info, err := s.ActivityActions(ctx, dl)
+	if err != nil {
+		return err
+	}
+	if !info.allows("archive") {
+		return fmt.Errorf("this job is no longer stopped; refresh Activity")
+	}
+	return s.db.AcknowledgeImport(ctx, target)
+}
+
 func (s *Service) retryActivityJob(ctx context.Context, dl sqlite.Download, action, epoch string) error {
 	info, e := s.ActivityActions(ctx, dl)
 	if e != nil {
@@ -229,13 +265,7 @@ func (s *Service) retryActivityJob(ctx context.Context, dl sqlite.Download, acti
 	if info.Identity.Epoch != epoch {
 		return fmt.Errorf("this import attempt changed; refresh and select it again")
 	}
-	allowed := false
-	for _, candidate := range info.Actions {
-		if candidate.Kind == action && candidate.Enabled {
-			allowed = true
-		}
-	}
-	if !allowed {
+	if !info.allows(action) {
 		return fmt.Errorf("this action is no longer available for this job; refresh Activity")
 	}
 	requested, _, e := s.db.DownloadDeletionStatus(ctx, dl.ID, dl.GenerationKey)
@@ -540,7 +570,13 @@ func (s *Service) reconcileActivityScratch(ctx context.Context, dl sqlite.Downlo
 			p = fresh
 		}
 
-		if p.State == "cleaned" || p.State == "rolled_back" {
+		if p.State == "detached" && deleting {
+			if !s.removeCancelledSupersededScratch(targetCtx, p) {
+				release()
+				return fmt.Errorf("cleanup cannot verify the original temporary file in %s. Move the job to History to keep the record", filepath.Dir(p.Target))
+			}
+			_, e = s.db.W.ExecContext(targetCtx, `UPDATE import_placements SET state='rolled_back',data=json_set(data,'$.state','rolled_back'),updated_at=? WHERE id=? AND state='detached'`, time.Now().UnixMilli(), p.ID)
+		} else if p.State == "cleaned" || p.State == "rolled_back" || p.State == "detached" {
 			e = nil
 		} else if p.State == "committed" {
 			e = s.cleanupPlacement(targetCtx, p)
@@ -566,15 +602,21 @@ func (s *Service) reconcileActivityScratch(ctx context.Context, dl sqlite.Downlo
 			}
 		} else if p.PublishedFileGeneration != "" {
 			e = fmt.Errorf("an installed file is waiting for its original placement metadata; retry reconciliation")
+		} else if !deleting && absentUnpublishedDestination(p) {
+			// Keep the old object and parent identity as a cleanup obligation.
+			// A later delete must still verify it, even after a successful retry.
+			_, e = s.db.W.ExecContext(targetCtx, `UPDATE import_placements SET state='detached',data=json_set(data,'$.state','detached'),updated_at=? WHERE id=? AND state IN ('prepared','retained')`, time.Now().UnixMilli(), p.ID)
 		} else if s.removeCancelledSupersededScratch(targetCtx, p) {
 			_, e = s.db.W.ExecContext(targetCtx, `UPDATE import_placements SET state='rolled_back',data=json_set(data,'$.state','rolled_back'),updated_at=? WHERE id=? AND state IN ('prepared','retained')`, time.Now().UnixMilli(), p.ID)
+		} else if _, statErr := os.Lstat(filepath.Dir(p.Target)); errors.Is(statErr, os.ErrNotExist) {
+			e = fmt.Errorf("the recorded import directory %s is missing. Move the job to History to keep the cleanup record and any remaining files", filepath.Dir(p.Target))
 		} else {
 			e = fmt.Errorf("temporary file identity is unproven or its original drive is unavailable; restore the original storage to retry")
 		}
 		if e == nil {
 			// Only a proven terminal placement can settle the revoked authorization.
 			// A retry never reactivates the old grant.
-			_, e = s.db.W.ExecContext(targetCtx, `UPDATE import_publication_authorizations SET outcome='reconciled',resolution=CASE WHEN (SELECT state FROM import_placements WHERE id=placement_id) IN ('committed','cleaned') THEN 'operator_adopted' ELSE 'operator_disposed' END,resolved_at=? WHERE download_id=? AND generation_key=? AND placement_id=? AND (outcome='pending' OR resolution='retained_for_review') AND EXISTS(SELECT 1 FROM import_placements p WHERE p.id=placement_id AND p.state IN ('committed','cleaned','rolled_back'))`, time.Now().UnixMilli(), dl.ID, dl.GenerationKey, p.ID)
+			_, e = s.db.W.ExecContext(targetCtx, `UPDATE import_publication_authorizations SET outcome='reconciled',resolution=CASE WHEN (SELECT state FROM import_placements WHERE id=placement_id) IN ('committed','cleaned') THEN 'operator_adopted' ELSE 'operator_disposed' END,resolved_at=? WHERE download_id=? AND generation_key=? AND placement_id=? AND (outcome='pending' OR resolution='retained_for_review') AND EXISTS(SELECT 1 FROM import_placements p WHERE p.id=placement_id AND p.state IN ('committed','cleaned','rolled_back','detached'))`, time.Now().UnixMilli(), dl.ID, dl.GenerationKey, p.ID)
 		}
 		release()
 		if e != nil {
@@ -616,6 +658,32 @@ func (s *Service) reconcileActivityScratch(ctx context.Context, dl sqlite.Downlo
 		}
 	}
 	return nil
+}
+
+// An explicit retry may abandon an unpublished placement when its entire
+// destination directory disappeared on the recorded filesystem. It cannot
+// authorize an unlink or certify a deletion, including at a renamed path.
+func absentUnpublishedDestination(p sqlite.Placement) bool {
+	if p.StorageIdentity == "" || p.StorageRoot != filepath.Dir(p.Target) || p.TargetObserved || p.PreviousSHA256 != "" || p.PublishedFileGeneration != "" || len(p.Superseded) > 0 {
+		return false
+	}
+	dir := p.StorageRoot
+	if _, err := os.Lstat(dir); !errors.Is(err, os.ErrNotExist) {
+		return false
+	}
+	for dir != filepath.Dir(dir) {
+		dir = filepath.Dir(dir)
+		info, err := os.Lstat(dir)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil || !info.IsDir() || rejectSymlinks(dir, false) != nil {
+			return false
+		}
+		storage, err := expectedStorageIdentity(dir)
+		return err == nil && storage == p.StorageIdentity
+	}
+	return false
 }
 
 func activityPending(err error) bool {

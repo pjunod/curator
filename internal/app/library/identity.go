@@ -93,13 +93,13 @@ func (s *Service) RefreshIdentity(ctx context.Context, itemID int64, force bool)
 			if errors.As(fetchErr, &remote) && !remote.RetryAt.IsZero() {
 				retry = remote.RetryAt
 			}
-			if persistErr := s.db.RecordIdentityFailure(ctx, itemID, entry.name, now, retry, fetchErr.Error()); persistErr != nil {
+			if persistErr := s.db.RecordIdentityFailure(ctx, itemID, entry.name, now, retry, fetchErr.Error(), item.IDs.TMDB); persistErr != nil {
 				return fmt.Errorf("persisting identity failure: %w", persistErr)
 			}
 			s.log.Warn("library: identity provider failed", "item", itemID, "source", entry.name, "retryAfter", retry, "err", fetchErr)
 			continue
 		}
-		if err := s.db.ReplaceIdentitySnapshot(ctx, itemID, entry.name, metadata.Aliases, metadata.Countries, now); err != nil {
+		if err := s.db.ReplaceIdentitySnapshot(ctx, itemID, entry.name, metadata.Aliases, metadata.Countries, now, item.IDs.TMDB); err != nil {
 			return err
 		}
 		s.log.Info("library: identity refreshed", "item", itemID, "source", entry.name, "aliases", len(metadata.Aliases))

@@ -1949,6 +1949,23 @@ Use **Retry selected** or **Delete selected** and open **Action results** to see
 completed, waiting and blocked jobs. Retry success means the retry was accepted.
 The server keeps processing accepted actions after you close the app.
 
+Choose **Move selected to History (keep files)** to clear stopped jobs from
+Needs attention. History keeps the job log. A blocked deletion keeps its
+cleanup record and can be retried from History. Moving a job to History
+changes its visibility. Use **Delete selected** to request file removal.
+
+If an import stopped because its destination filled up, free space and use
+**Retry** on the job. Curator can retry a first installation whose original
+destination folder disappeared on the same storage. A prior library file
+or a changed mount still requires review. An intentionally purged title
+with zero tracked files can be marked **Offload…** from its library page.
+
+System lists each affected release with a link to its Activity job. A single
+episode can have both a late download record and a late import record.
+For a missing TMDB movie with no tracked files, open its library page,
+choose **Correct metadata match…**, search for the movie and select **Use
+this match**. The entry keeps its library ID, monitoring and folder.
+
 Search matches titles and releases. Counts cover the selected view across pages.
 **Imports only** includes retained import records, and `/imports` opens that
 scope. Historical receipts without an associated job are read-only.

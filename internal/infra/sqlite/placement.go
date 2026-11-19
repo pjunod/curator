@@ -186,7 +186,7 @@ func (d *DB) UnresolvedPlacementReferences(ctx context.Context) ([]Placement, er
 	return d.unresolvedPlacements(ctx, false)
 }
 func (d *DB) unresolvedPlacements(ctx context.Context, batch bool) ([]Placement, error) {
-	query := `SELECT data FROM import_placements WHERE state IN ('prepared','committed','retained') ORDER BY updated_at`
+	query := `SELECT data FROM import_placements WHERE state IN ('prepared','committed','retained','detached') ORDER BY updated_at`
 	if batch {
 		query = `SELECT data FROM import_placements WHERE state IN ('prepared','committed') ORDER BY updated_at`
 	}

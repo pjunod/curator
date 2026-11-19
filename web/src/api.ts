@@ -1623,6 +1623,7 @@ export interface PipelineTiming {
 }
 
 export interface PipelineSummary {
+  issues?: { id: number; kind: string; title: string; reason: string }[]
   windowHours: number
   /** Downloads older than their state's allowance (the pipeline:overdue check). */
   overdueRows: number
@@ -1737,8 +1738,8 @@ export interface AutoSearchResult {
 
 export const autoSearchItem = (id: number) =>
   send<AutoSearchResult>('POST', `/library/${id}/autosearch`)
-export const refreshLibraryItem = (id: number) =>
-  send<MediaItemDetail>('POST', `/library/${id}/refresh`)
+export const refreshLibraryItem = (id: number, match?: { previousTmdbId: number; tmdbId: number }) =>
+  send<MediaItemDetail>('POST', `/library/${id}/refresh`, match)
 export const addMediaCopy = (id: number, req: MediaCopyInput) =>
   send<MediaItemDetail>('POST', `/library/${id}/copies`, req)
 export const updateMediaCopy = (

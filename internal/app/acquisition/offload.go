@@ -272,7 +272,7 @@ func (s *Service) planOffload(ctx context.Context, req OffloadRequest) (*offload
 			}
 		}
 		plan.seasons = seasons
-		if len(set) == 0 && len(plan.seasons) == 0 {
+		if len(set) == 0 && len(plan.seasons) == 0 && (!plan.whole || item.Offloaded()) {
 			return nil, fmt.Errorf("%w: that is already offloaded", ErrInvalidOffload)
 		}
 		// A file covers its episodes whole: every episode of a multi-episode
@@ -553,6 +553,18 @@ func (s *Service) offloadBlocker(ctx context.Context, item domain.MediaItem, req
 		scopeEpisodes[id] = true
 	}
 	for _, b := range bl {
+		// A blocked deletion fences future import authorization. Once archived
+		// it cannot install anything, and a fileless offload only records intent.
+		if len(plan.files) == 0 && b.Reason == "download" {
+			var archived bool
+			err := s.db.R.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM download_dispositions x JOIN downloads d ON d.id=x.download_id AND d.generation_key=x.generation_key WHERE d.id=? AND x.state='archived')`, b.Ref).Scan(&archived)
+			if err != nil {
+				return nil, err
+			}
+			if archived {
+				continue
+			}
+		}
 		if b.Reason == "download" && item.Kind == domain.KindSeries && req.Scope != "item" && req.Scope != "" {
 			// A download for another season or episode does not hold this one.
 			if !s.downloadTouches(ctx, b.Ref, scopeEpisodes) {

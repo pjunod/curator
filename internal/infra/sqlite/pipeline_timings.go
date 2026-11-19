@@ -3,6 +3,7 @@ package sqlite
 import (
 	"context"
 	"strings"
+	"time"
 )
 
 // Pipeline timing kinds (migration 0071, contract section 3.5).
@@ -152,4 +153,35 @@ func (d *DB) OverdueRows(ctx context.Context, nowMs int64, limit int) ([]Overdue
 		out = append(out, r)
 	}
 	return out, rows.Err()
+}
+
+type OperatorIssue struct {
+	ID                  int64
+	Kind, Title, Reason string
+}
+
+// OperatorIssues returns one addressable job even when both the download
+// and its publication exceed their deadlines.
+func (d *DB) OperatorIssues(ctx context.Context, now time.Time) ([]OperatorIssue, error) {
+	rows, err := d.R.QueryContext(ctx, `WITH affected(id,reason) AS (
+    SELECT id,'Download overdue' FROM downloads WHERE `+overdueDownloadsWhere+`
+    UNION SELECT download_id,'Import overdue' FROM publications WHERE `+overduePublicationsWhere+`
+    UNION SELECT download_id,'Import held: ' || error FROM publications WHERE state='discovered' AND last_stop='environment'
+ )
+ SELECT d.id,'job',d.release_title,group_concat(a.reason,' · ') FROM affected a JOIN downloads d ON d.id=a.id GROUP BY d.id
+ UNION ALL SELECT m.id,'metadata',m.title,'Metadata provider could not find this title' FROM metadata_match_issues i JOIN media_items m ON m.id=i.item_id
+ ORDER BY 2,1`, now.UnixMilli())
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var issues []OperatorIssue
+	for rows.Next() {
+		var issue OperatorIssue
+		if err := rows.Scan(&issue.ID, &issue.Kind, &issue.Title, &issue.Reason); err != nil {
+			return nil, err
+		}
+		issues = append(issues, issue)
+	}
+	return issues, rows.Err()
 }

@@ -12,7 +12,7 @@ const moviePath = '/20t/movies/Dune (2021)/Dune (2021) [Bluray-2160p].mkv'
 const subPath = '/20t/movies/Dune (2021)/Dune (2021).en.srt'
 const ep1 = '/20t/tv/Slow Horses/Season 04/Slow Horses - S04E01-E02 [WEBDL-1080p].mkv'
 
-async function fixture(page: Page) {
+async function fixture(page: Page, fileless = false) {
   const calls = { preview: [] as unknown[], start: [] as unknown[], cancel: 0, reacquire: [] as unknown[] }
   let stopped = false
   const deleting = { operationId: 'of-1', requestId: 'r', state: 'deleting', itemId: 4301, scope: 'item', label: 'Dune (2021)', filesTotal: 2, filesDone: 1, bytesTotal: 60_000_090_000, bytesFreed: 0, stoppable: true }
@@ -23,10 +23,10 @@ async function fixture(page: Page) {
     json: new URL(route.request().url()).pathname.includes('/4301/') && calls.start.length ? [offloadStatus()] : [],
   }))
   await page.route('**/api/v1/library/4301', route => route.fulfill({ json: {
-    id: 4301, kind: 'movie', title: 'Dune', year: 2021, monitored: true, path: '/20t/movies/Dune (2021)',
+    id: 4301, kind: 'movie', source: 'tmdb', title: 'Dune', year: 2021, monitored: true, path: '/20t/movies/Dune (2021)',
     genres: [], ratings: [], ids: { tmdb: 438631 }, seasons: [], copies: [], aliases: [], countries: [], identitySources: [],
     downloadPriority: 0, downloadPriorityOverride: null, qualityProfileId: 1, rootFolderId: 1,
-    files: [{ id: 51, path: moviePath, size: 60_000_000_000, episodeIds: [], copyId: 0, quality: 'Bluray-2160p', fileGeneration: 'g51', sourceGeneration: '', sourceTransfer: '' }],
+    files: fileless ? [] : [{ id: 51, path: moviePath, size: 60_000_000_000, episodeIds: [], copyId: 0, quality: 'Bluray-2160p', fileGeneration: 'g51', sourceGeneration: '', sourceTransfer: '' }],
   } }))
   await page.route('**/api/v1/library/4301/status', route => route.fulfill({ status: 404, json: { error: 'none' } }))
   await page.route('**/api/v1/library/4301/offload/preview', async route => {
@@ -83,6 +83,17 @@ async function inViewport(page: Page, locator: ReturnType<Page['locator']>) {
 }
 
 for (const width of [390, 1280]) {
+  test(`a fileless movie offers Offload and metadata repair at ${width}px`, async ({page}) => {
+    await page.setViewportSize({width,height:800})
+    await fixture(page,true)
+    await page.route('**/api/v1/metadata/search?**', route => route.fulfill({json:[{kind:'movie',tmdbId:902,title:'Correct movie',year:2026,inLibrary:false}]}))
+    await page.goto('/library/4301')
+    await expect(page.getByRole('button',{name:'Offload…'})).toBeVisible()
+    await page.getByRole('button',{name:'Correct metadata match…'}).click()
+    const dialog=page.getByRole('dialog',{name:'Correct metadata match for Dune'})
+    await inViewport(page,dialog.getByRole('button',{name:'Use this match'}))
+  })
+
   test(`Offload… previews what is deleted, runs with progress and Stop, at ${width}px`, async ({ page }) => {
     await page.setViewportSize({ width, height: 800 })
     const calls = await fixture(page)

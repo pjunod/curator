@@ -25,6 +25,13 @@ type AcquisitionPlan struct {
 	ReplacementOriginGeneration string
 }
 
+type ActivityAcknowledgment struct {
+	DownloadID    int64
+	GenerationKey string
+	Epoch         int64
+	State         string
+}
+
 type ActivityActionEvent struct {
 	ID            int64
 	OperationID   string
@@ -716,6 +723,12 @@ type MediaItem struct {
 	MonitorSeason    int64
 	Origin           string
 	OffloadedAt      int64
+}
+
+type MetadataMatchIssue struct {
+	ItemID     int64
+	Provider   string
+	ProviderID int64
 }
 
 type Notifier struct {

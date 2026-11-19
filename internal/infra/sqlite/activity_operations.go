@@ -317,3 +317,36 @@ func (d *DB) SetDispositionProgress(ctx context.Context, t ActivityTarget) error
 	_, e := d.W.ExecContext(ctx, `UPDATE download_dispositions SET state=?,message=? WHERE download_id=? AND generation_key=? AND revision=? AND verified_at=0`, state, t.Message, t.ID, t.GenerationKey, t.DispositionRevision)
 	return e
 }
+
+func (d *DB) ArchiveBlockedCleanup(ctx context.Context, target ActivityIdentity) error {
+	result, err := d.W.ExecContext(ctx, `UPDATE download_dispositions SET state='archived'
+      WHERE download_id=? AND generation_key=? AND state IN ('blocked','archived') AND verified_at=0
+      AND EXISTS(SELECT 1 FROM downloads d WHERE d.id=download_id AND d.generation_key=download_dispositions.generation_key)
+      AND COALESCE((SELECT attempt_epoch FROM import_attempt_controls c WHERE c.download_id=download_dispositions.download_id AND c.generation_key=download_dispositions.generation_key),0)=CAST(? AS INTEGER)`, target.ID, target.GenerationKey, target.Epoch)
+	if err != nil {
+		return err
+	}
+	n, err := result.RowsAffected()
+	if err == nil && n == 0 {
+		return fmt.Errorf("cleanup changed; refresh Activity")
+	}
+	return err
+}
+
+func (d *DB) AcknowledgeImport(ctx context.Context, target ActivityIdentity) error {
+	res, err := d.W.ExecContext(ctx, `INSERT INTO activity_acknowledgments(download_id,generation_key,epoch,state)
+      SELECT d.id,d.generation_key,COALESCE(c.attempt_epoch,0),d.state FROM downloads d
+      LEFT JOIN import_attempt_controls c ON c.download_id=d.id AND c.generation_key=d.generation_key
+      WHERE d.id=? AND d.generation_key=? AND printf('%d',COALESCE(c.attempt_epoch,0))=?
+      AND (d.state IN ('failed','downloaded') OR c.outcome='cancelled')
+      AND NOT EXISTS(SELECT 1 FROM download_dispositions x WHERE x.download_id=d.id AND x.generation_key=d.generation_key)
+      ON CONFLICT(download_id,generation_key) DO UPDATE SET epoch=excluded.epoch,state=excluded.state`, target.ID, target.GenerationKey, target.Epoch)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err == nil && n == 0 {
+		return fmt.Errorf("this job changed or is still running; refresh Activity")
+	}
+	return err
+}

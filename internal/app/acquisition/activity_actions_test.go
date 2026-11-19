@@ -32,10 +32,11 @@ func claimActivityAction(t *testing.T, db *sqlite.DB, requestID, kind string, ta
 
 func TestActivityActionsReconcileInterruptedScratch(t *testing.T) {
 	for _, tc := range []struct {
-		name, action, prior string
-		legacy              bool
+		name, action, prior   string
+		legacy, missingParent bool
 	}{
 		{name: "retry an owned stage", action: "retry"},
+		{name: "retry after the destination was moved", action: "retry", missingParent: true},
 		{name: "delete an owned stage", action: "delete"},
 		{name: "preserve an older stage without object identity", action: "retry", legacy: true},
 		{name: "retain a prior Library backup", action: "delete", prior: "different-target"},
@@ -113,6 +114,18 @@ func TestActivityActionsReconcileInterruptedScratch(t *testing.T) {
 			if err := db.PreparePlacement(ctx, placement); err != nil {
 				t.Fatal(err)
 			}
+			if tc.missingParent {
+				moved := filepath.Join(t.TempDir(), "former season")
+				if err := os.Rename(parent, moved); err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(func() {
+					body, err := os.ReadFile(filepath.Join(moved, filepath.Base(temporary)))
+					if err != nil || string(body) != sourceContents[:12] {
+						t.Errorf("moved scratch changed: %s %v", body, err)
+					}
+				})
+			}
 			cancelled, err := svc.CancelImportAttempt(ctx, dl.ID, &attempt.ImportAttemptKey)
 			if err != nil || cancelled.Status != "cancelled" {
 				t.Fatalf("settle prior cancellation: %+v err=%v", cancelled, err)
@@ -143,7 +156,7 @@ func TestActivityActionsReconcileInterruptedScratch(t *testing.T) {
 				if _, err := os.Lstat(backup); !errors.Is(err, os.ErrNotExist) {
 					t.Fatalf("settled backup name remained: %v", err)
 				}
-			} else {
+			} else if !tc.missingParent {
 				assertContents(target, libraryContents)
 			}
 			assertContents(source, sourceContents)
@@ -175,7 +188,11 @@ func TestActivityActionsReconcileInterruptedScratch(t *testing.T) {
 				t.Fatalf("owned scratch was not removed: %v", err)
 			}
 			stored, err := db.GetPlacement(ctx, placementID)
-			if err != nil || stored.State != "rolled_back" {
+			wantState := "rolled_back"
+			if tc.missingParent {
+				wantState = "detached"
+			}
+			if err != nil || stored.State != wantState {
 				t.Fatalf("the placement still owns scratch: %+v err=%v", stored, err)
 			}
 			if tc.action == "retry" {
@@ -750,5 +767,18 @@ func TestActivityDeleteKeepsDigestlessReplacementDuringOrdinarySweep(t *testing.
 	}
 	if got, err := os.ReadFile(source); err != nil || string(got) != replacement {
 		t.Fatalf("ordinary sweep changed the unrelated file: %q err=%v", got, err)
+	}
+}
+
+func TestMissingLibraryDestinationDistinguishesSourceFromTarget(t *testing.T) {
+	item := domain.MediaItem{Path: "/library/Show"}
+	for _, tc := range []struct {
+		path    string
+		missing bool
+	}{{item.Path, true}, {"/library/Show/Season 05", true}, {"/completed/Show.mkv", false}, {"/library/Showcase", false}} {
+		e := &os.PathError{Op: "lstat", Path: tc.path, Err: os.ErrNotExist}
+		if got := missingLibraryDestination(e, item, 0); got != tc.missing {
+			t.Errorf("path %s missing destination=%v", tc.path, got)
+		}
 	}
 }

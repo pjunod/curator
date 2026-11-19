@@ -127,7 +127,7 @@ export function OffloadDialog({ itemId, title, request, initialOperation, onClos
               {p.cinema && <span className={p.cinemaWarning ? 'warning-text' : 'muted'} data-testid="offload-cinema">{p.cinema}.</span>}
               {p.blocked && (
                 <div className="banner warning" role="alert">
-                  {p.blocked.message}
+                  {p.blocked.message} {p.blocked.reason === 'download' && /^\d+$/.test(p.blocked.ref ?? '') && <a href={`/activity?job=${p.blocked.ref}#attention`}>Review blocking job</a>}
                   {p.blocked.reason !== 'unmounted' && ' You can queue this Offload while it waits.'}
                   {p.blocked.reason === 'unmounted' && <button type="button" onClick={() => void preview.refetch()}>Refresh preview</button>}
                 </div>
@@ -135,7 +135,7 @@ export function OffloadDialog({ itemId, title, request, initialOperation, onClos
               {run.isError && <div className="banner warning" role="alert">{(run.error as Error).message}</div>}
               <label className="rmd-check">
                 <input type="checkbox" checked={sure} onChange={(e) => setSure(e.target.checked)} />
-                I understand the files are deleted, not moved to a trash
+                {p.files.length ? 'I understand the files are deleted, not moved to a trash' : 'Keep this scope offloaded until I re-acquire it'}
               </label>
               <div className="rmd-foot">
                 <span className="muted">{p.summary}</span>

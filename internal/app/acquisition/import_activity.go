@@ -60,6 +60,9 @@ func (s *Service) ImportActivity(ctx context.Context, filter, search string, lim
 }
 
 func importActivityCategory(e sqlite.ImportActivityEntry, worker string) string {
+	if e.DeletionState == "archived" || e.DeletionState == "acknowledged" {
+		return "history"
+	}
 	if worker == "running" {
 		return "active"
 	}
@@ -123,7 +126,7 @@ func (s *Service) Activity(ctx context.Context, view, search string, importsOnly
 }
 
 func activityCategory(e sqlite.ImportActivityEntry, worker string) string {
-	if e.DeletionState == "verified" {
+	if e.DeletionState == "verified" || e.DeletionState == "archived" || e.DeletionState == "acknowledged" {
 		return "history"
 	}
 	if e.DeletionState == "blocked" {

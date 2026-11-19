@@ -114,7 +114,7 @@ type Dialog =
 
 const emptySelection = (): Selection => ({ items: {}, excludeIds: [] })
 const readyToRetry = (item: ActivityItem) => item.actions?.some(action => action.kind === 'retry' && action.enabled) ?? false
-const ACTION_TITLES = { delete: 'Delete jobs', retry: 'Retry jobs', approve: 'Approve import' }
+const ACTION_TITLES = { delete: 'Delete jobs', retry: 'Retry jobs', approve: 'Approve import', archive: 'Clear from attention' }
 const operationQueryKey = (id: string) => ['activity-operation', id]
 function operationOptions(id: string) {
   return {
@@ -131,7 +131,8 @@ export function ActivityPage() {
   const hash = useLocation({ select: location => location.hash.replace(/^#/, '') })
   const [view, setView] = useState<ActivityView>(() => hash === 'history' || hash === 'attention' ? hash : 'progress')
   const [scope, setScope] = useState<ActivityScope>(() => new URLSearchParams(window.location.search).get('scope') === 'imports' ? 'imports' : 'all')
-  const [search, setSearch] = useState('')
+  const [linkedJob] = useState(() => new URLSearchParams(window.location.search).get('job'))
+  const [search, setSearch] = useState(() => linkedJob && /^\d+$/.test(linkedJob) ? `#${linkedJob}` : '')
   const [offset, setOffset] = useState(0)
   const [dialog, setDialog] = useState<Dialog | null>(null)
   const [selection, setSelection] = useState<Selection>(emptySelection)
@@ -147,6 +148,12 @@ export function ActivityPage() {
     retry: false,
   })
   const data = query.data
+  useEffect(() => {
+    if (linkedJob && search === `#${linkedJob}` && data?.total === 0) {
+      const found = VIEWS.find(([key]) => data.counts[key] > 0)
+      if (found) setView(found[0])
+    }
+  }, [linkedJob, search, data])
   const operations = useQueries({ queries: operationIds.map(operationOptions) })
   const completedIds = operations.flatMap(({ data }) => data?.state === 'completed' ? [data.id] : []).join(',')
   const currentDialogOperation = dialog?.kind === 'operation'
@@ -329,6 +336,7 @@ export function ActivityPage() {
         {selectedCount > 0 && <>
           <span role="status">{selectedCount} selected{retryableCount !== null ? ` · ${retryableCount} can retry` : ''}</span>
           <button className="btn-accent" disabled={selectionLocked || !canRetrySelected} onClick={event => launch(event, 'retry', selectionTargets, selectedCount)}>Retry selected</button>
+          <button disabled={selectionLocked} onClick={event => launch(event, 'archive', selectionTargets, selectedCount)}>Move selected to History (keep files)</button>
           <button className="btn-danger" disabled={selectionLocked} onClick={event => launch(event, 'delete', selectionTargets, selectedCount)}>Delete selected</button>
         </>}
       </div>
@@ -361,6 +369,7 @@ export function ActivityPage() {
             {view !== 'attention' && <span className="pill pill-neutral">{status}</span>}
           </div>
           {view === 'progress' && <StageProgress d={d} />}
+          {d.publications?.filter(pub => pub.held).map(pub => <p key={pub.id}>Import held · {pub.heldReason || pub.error || 'Waiting for storage'}</p>)}
           {(item.reason || view === 'attention') && <p className="muted activity-row-message">{item.reason || (d.id > 0 ? 'This job needs attention.' : 'History is available for this import.')}</p>}
           {item.prerequisite && item.prerequisite !== item.reason && <p className="muted activity-row-message">{item.prerequisite}</p>}
           {!item.prerequisite && unavailable && unavailable !== item.reason && <p className="muted activity-row-message">{unavailable}</p>}
@@ -380,7 +389,9 @@ export function ActivityPage() {
             updateActivityOperationIds(pendingDelete.id, true)
             open(event, { kind: 'operation', id: pendingDelete.id })
           }}>Deletion status</button>}
-          {view === 'history' && d.id !== 0 && <button onClick={event => open(event, { kind: 'log', item })}>Job log</button>}
+          {view === 'history' && pendingDelete?.state === 'blocked' && identity && <button disabled={busy} onClick={event => launch(event, 'delete', { targets: [identity] }, 1)}>Retry cleanup</button>}
+          {view === 'history' && !pendingDelete && identity && actions.some(a => a.kind === 'archive') && actions.some(a => a.kind === 'retry' && a.enabled) && <button disabled={busy} onClick={event => launch(event, 'retry', { targets: [identity] }, 1)}>Retry import</button>}
+          {d.id !== 0 && <button onClick={event => open(event, { kind: 'log', item })}>Job log</button>}
         </div>
       </article>
     })}
@@ -440,7 +451,7 @@ function activityStatus(item: ActivityItem, view: ActivityView) {
 }
 
 function operationStatus(operation: ActivityOperation) {
-  const action = { delete: 'Deletion', retry: 'Retry', approve: 'Import approval' }[operation.action]
+  const action = { delete: 'Deletion', retry: 'Retry', approve: 'Import approval', archive: 'Clear from attention' }[operation.action]
   if (operation.state === 'running') return `${action} in progress · ${operation.completed} of ${operation.total} jobs processed`
   return `${action} finished · ${operation.succeeded} succeeded · ${operation.blocked} blocked`
 }
