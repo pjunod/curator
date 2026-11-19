@@ -474,7 +474,7 @@ func serve(ctx context.Context, cfg config.Config, log *slog.Logger, listener ne
 		Name:       acquisition.JobCompletedScan,
 		Interval:   acquisition.CompletedScanInterval,
 		RunOnStart: true,
-		Fn:         acq.ScanCompleted,
+		Fn:         acq.ScanStorageObservations,
 	}); err != nil {
 		return err
 	}

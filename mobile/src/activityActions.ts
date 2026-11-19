@@ -1,20 +1,50 @@
 import * as Crypto from 'expo-crypto'
 import * as SecureStore from 'expo-secure-store'
-import type { QueueItem } from './types'
+import type { QueueItem, ScannedFile } from './types'
 
 export type ActivityView = 'progress' | 'attention' | 'history'
 export type ActivityActionKind = 'retry' | 'delete' | 'approve'
 export type ActivityIdentity = { id: number; generationKey: string; epoch: string }
 export type ActivityItem = {
-  download: QueueItem & { reservationActionable?: boolean }
+  download: QueueItem & {
+    copyId?: number
+    reservationActionable?: boolean
+    publications?: {
+      id: number
+      state: string
+      path: string
+      files: { path: string; bytes?: number; outcome: string; reason?: string; removed?: boolean }[]
+    }[]
+  }
+  kind: string
   title: string
   updatedAt: string
   identity?: ActivityIdentity
   reason?: string
   prerequisite?: string
-  actions?: { kind: ActivityActionKind; label: string; enabled: boolean; reason?: string }[]
+  actions?: { kind: ActivityActionKind | 'choose_files'; label: string; enabled: boolean; reason?: string }[]
   operation?: { id: string; action: ActivityActionKind; state: string; message?: string }
 }
+export type ActivityFileScope = { files: ScannedFile[]; copyId?: number }
+
+export function activityFileScope(item: ActivityItem): ActivityFileScope {
+  const d = item.download
+  return {
+    copyId: d.copyId,
+    files: (d.publications ?? []).flatMap(publication =>
+      publication.state === 'removed' ? [] : publication.files
+        .filter(file => file.outcome === 'unresolved' && !file.removed &&
+          file.reason === 'not selected for import; place or discard it in Resolve')
+        .map(file => ({
+          name: file.path,
+          path: `${publication.path.replace(/\/$/, '')}/${file.path}`,
+          size: file.bytes ?? 0, kind: item.kind === 'book' ? 'book' : 'video',
+          quality: '', season: -1, episodes: [],
+          publication: { downloadId: d.id, publicationId: publication.id, path: file.path, outcome: file.outcome },
+        }))),
+  }
+}
+
 export type ActivityPage = {
   items: ActivityItem[]
   total: number

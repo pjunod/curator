@@ -28,8 +28,15 @@ const (
 // replacementGrabOwnerKey marks a search the worker runs for one failed row,
 // so that row's own pending grab does not count as "in flight" against it.
 type replacementGrabOwnerKey struct{}
+type replacementGrabOrigin struct {
+	ID         int64
+	Generation string
+}
 
 func replacementGrabOwner(ctx context.Context) int64 {
+	if origin, ok := ctx.Value(replacementGrabOwnerKey{}).(replacementGrabOrigin); ok {
+		return origin.ID
+	}
 	id, _ := ctx.Value(replacementGrabOwnerKey{}).(int64)
 	return id
 }
@@ -125,7 +132,7 @@ func (s *Service) runReplacementGrab(ctx context.Context, g sqlite.ReplacementGr
 		return
 	}
 	key := pipeline.Key(dl.Transfer, dl.ID)
-	ctx = context.WithValue(ctx, replacementGrabOwnerKey{}, dl.ID)
+	ctx = context.WithValue(ctx, replacementGrabOwnerKey{}, replacementGrabOrigin{ID: dl.ID, Generation: dl.GenerationKey})
 	var grabbed, planned []string
 	var lastErr error
 	plannerSeasons := map[[3]int64]bool{}
@@ -175,8 +182,12 @@ func (s *Service) runReplacementGrab(ctx context.Context, g sqlite.ReplacementGr
 			}
 		}
 	}
+	origin := sqlite.SeasonReplacementOrigin{DownloadID: dl.ID, GenerationKey: dl.GenerationKey}
 	for season := range plannerSeasons {
-		status, err := s.enqueueSeasonStatus(ctx, season[0], season[2], int(season[1]), seasonTriggerFailedAcquisition, true)
+		status, err := s.enqueueSeasonComparison(ctx, seasonCheckpoint{
+			Version: 1, ItemID: season[0], CopyID: season[2], Season: int(season[1]),
+			Trigger: seasonTriggerFailedAcquisition, ReplacementOrigin: &origin,
+		}, true)
 		if err != nil {
 			lastErr = err
 			continue

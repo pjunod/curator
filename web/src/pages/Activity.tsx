@@ -1,14 +1,15 @@
-import { useEffect, useRef, useState, type SyntheticEvent } from 'react'
+import { useEffect, useRef, useState, type RefObject, type SyntheticEvent } from 'react'
 import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useLocation } from '@tanstack/react-router'
 import { ActionDialog, ActionNotice, focusActionTrigger } from '../ActionDialog'
+import { ImportFileDialog } from '../ImportFileDialog'
 import { PathInput } from '../PathInput'
 import {
   ApiError, fmtBytes, fmtRelative, getLibrary, getLibraryItem, getManualImportDefaultPath,
   manualImport, resolveQueueReservation, scanImportPath, type QueueItem, type ScannedFile, type Stage,
 } from '../api'
 import {
-  activityIdentityKey, activityOperationChange, createActivitySelection, getActivityJobLog,
+  activityFileScope, activityIdentityKey, activityOperationChange, createActivitySelection, getActivityJobLog,
   getActivityOperation, getJobActivity, newActivityRequestId, postActivityAction,
   readActivityOperationIds, updateActivityOperationIds, type ActivityActionKind, type ActivityIdentity,
   type ActivityItem, type ActivityOperation, type ActivityOperationTarget, type ActivityRequest,
@@ -45,7 +46,7 @@ function StageProgress({ d }: { d: QueueItem }) {
   if (d.importControl?.outcome === 'pending') return <span className="muted">Waiting for import to stop</span>
 
   if (d.control && (d.control.lifecycle === 'held' || d.control.version !== 1)) {
-    return <div><span className="pill pill-neutral">Held</span><div className="muted">{d.control.message}</div><div className="muted">Transfer {Math.round(d.progress * 100)}% · import pending</div></div>
+    return <p className="muted">Transfer {Math.round(d.progress * 100)}% · import pending</p>
   }
   if (d.importState === 'queued') {
     return <span className="muted">Waiting for an import worker</span>
@@ -108,6 +109,7 @@ type Dialog =
   | { kind: 'operation'; id: string }
   | { kind: 'log'; item: ActivityItem }
   | { kind: 'manual' }
+  | { kind: 'choose-files'; item: ActivityItem }
   | { kind: 'reservation'; item: ActivityItem }
 
 const emptySelection = (): Selection => ({ items: {}, excludeIds: [] })
@@ -370,12 +372,15 @@ export function ActivityPage() {
           {view === 'attention' && d.reservationActionable && <button disabled={busy} onClick={event => { release.reset(); open(event, { kind: 'reservation', item }) }}>Review reservation</button>}
           {view !== 'history' && identity && actions.filter(action => !(pendingDelete && action.kind === 'delete')).map(action => <button
             key={action.kind} className={action.kind === 'delete' ? 'btn-danger' : ''} disabled={busy || !action.enabled}
-            onClick={event => launch(event, action.kind, { targets: [identity] }, 1, action.label)}>{action.label}</button>)}
+            onClick={event => {
+              if (action.kind === 'choose_files') open(event, { kind: 'choose-files', item })
+              else launch(event, action.kind, { targets: [identity] }, 1, action.label)
+            }}>{action.label}</button>)}
           {view !== 'history' && pendingDelete && <button onClick={event => {
             updateActivityOperationIds(pendingDelete.id, true)
             open(event, { kind: 'operation', id: pendingDelete.id })
           }}>Deletion status</button>}
-          {view === 'history' && d.id > 0 && <button onClick={event => open(event, { kind: 'log', item })}>Job log</button>}
+          {view === 'history' && d.id !== 0 && <button onClick={event => open(event, { kind: 'log', item })}>Job log</button>}
         </div>
       </article>
     })}
@@ -412,6 +417,7 @@ export function ActivityPage() {
     {dialog?.kind === 'manual' && <ActionDialog title="Choose files to import" returnFocus={opener} onClose={close}>
       <ManualImportPanel onDone={() => { close(); changeView('progress'); invalidate(); setManualQueued(count => count + 1) }} />
     </ActionDialog>}
+    {dialog?.kind === 'choose-files' && <ActivityFilePicker item={dialog.item} returnFocus={opener} onClose={() => { close(); invalidate() }} />}
     {dialog?.kind === 'reservation' && <ActionDialog title="Review episode reservation" returnFocus={opener} onClose={close}>
       <p>The original submission may still complete. Releasing the reservation lets you search for another copy of the episode and may result in a duplicate.</p>
       {dialog.item.download.parkedReason && <p>{dialog.item.download.parkedReason}</p>}
@@ -475,6 +481,21 @@ function JobLog({ id }: { id: number }) {
       </li>)}
     </ol> : <p className="muted">No detailed events remain for this job.</p>)}
   </>
+}
+
+function ActivityFilePicker({ item, returnFocus, onClose }: {
+  item: ActivityItem
+  returnFocus: RefObject<HTMLElement | null>
+  onClose: () => void
+}) {
+  const id = item.download.mediaItemId
+  const library = useQuery({ queryKey: ['library', id], queryFn: () => getLibraryItem(id), enabled: id > 0, retry: false })
+  if (library.data) return <ImportFileDialog item={library.data} scope={activityFileScope(item)} returnFocus={returnFocus} onClose={onClose} />
+  return <ActionDialog title="Choose files to import" returnFocus={returnFocus} onClose={onClose}>
+    {library.isLoading && <p role="status">Loading the library title…</p>}
+    {library.error && <p className="error-text" role="alert">{library.error.message} <button onClick={() => void library.refetch()}>Try again</button></p>}
+    {id <= 0 && <p>No library title is assigned to this job.</p>}
+  </ActionDialog>
 }
 
 function ManualImportPanel({ onDone }: { onDone: () => void }) {

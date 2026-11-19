@@ -1,5 +1,6 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useState, type RefObject } from 'react'
 import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query'
+import type { ActivityFileScope } from './activityActions'
 import { ActionDialog } from './ActionDialog'
 import {
   browseFilesystem,
@@ -52,30 +53,35 @@ interface Started { downloadId?: number; label: string; error?: string }
  * plan. Runner deliveries go through Resolve's placement; loose files through
  * the queued manual import. The target item is fixed: it is this page's.
  */
-export function ImportFileDialog({ item, onClose }: { item: MediaItemDetail; onClose: () => void }) {
+export function ImportFileDialog({ item, scope, onClose, returnFocus }: {
+  item: MediaItemDetail
+  scope?: ActivityFileScope
+  onClose: () => void
+  returnFocus?: RefObject<HTMLElement | null>
+}) {
   const qc = useQueryClient()
   const [step, setStep] = useState<'choose' | 'confirm' | 'started'>('choose')
   const [path, setPath] = useState('')
   const [draft, setDraft] = useState('')
   const [selected, setSelected] = useState<Record<string, ScannedFile>>({})
   const [choices, setChoices] = useState<Record<string, Choice>>({})
-  const [copyId, setCopyId] = useState(0)
+  const [copyId, setCopyId] = useState(scope?.copyId ?? 0)
   const [removeOriginal, setRemoveOriginal] = useState(false)
   const [started, setStarted] = useState<Started[]>([])
 
-  const defaultPath = useQuery({ queryKey: ['import-default-path'], queryFn: getManualImportDefaultPath })
-  const roots = useQuery({ queryKey: ['rootfolders'], queryFn: getRootFolders })
+  const defaultPath = useQuery({ queryKey: ['import-default-path'], queryFn: getManualImportDefaultPath, enabled: !scope })
+  const roots = useQuery({ queryKey: ['rootfolders'], queryFn: getRootFolders, enabled: !scope })
   const current = path || defaultPath.data?.path || ''
   const dirs = useQuery({
     queryKey: ['filesystem', current.endsWith('/') ? current : current + '/'],
     queryFn: () => browseFilesystem(current.endsWith('/') ? current : current + '/'),
-    enabled: current !== '',
+    enabled: !scope && current !== '',
     retry: false,
   })
   const files = useQuery({
     queryKey: ['import-folder', current],
     queryFn: () => scanImportFolder(current),
-    enabled: current !== '',
+    enabled: !scope && current !== '',
     retry: false,
   })
 
@@ -88,6 +94,7 @@ export function ImportFileDialog({ item, onClose }: { item: MediaItemDetail; onC
     return parts.map((name, i) => ({ name, path: '/' + parts.slice(0, i + 1).join('/') }))
   }, [current])
 
+  const listedFiles = scope?.files ?? files.data ?? []
   const chosen = Object.values(selected)
   const toggle = (f: ScannedFile) =>
     setSelected((prev) => {
@@ -125,7 +132,8 @@ export function ImportFileDialog({ item, onClose }: { item: MediaItemDetail; onC
     enabled: step === 'confirm' && chosen.length > 0,
     retry: false,
   })
-  const blocked = !plan.data || plan.data.some((line) => line.error)
+  const missingMapping = scope && item.kind === 'series' && chosen.some(f => !choiceFor(f))
+  const blocked = !plan.data || plan.data.some((line) => line.error) || missingMapping
   const loose = chosen.filter((f) => !f.publication)
 
   const submit = useMutation({
@@ -190,7 +198,7 @@ export function ImportFileDialog({ item, onClose }: { item: MediaItemDetail; onC
   })
 
   return (
-    <ActionDialog title={`Import into ${item.title}`} className="ifd" onClose={onClose}>
+    <ActionDialog title={`Import into ${item.title}`} className="ifd" onClose={onClose} returnFocus={returnFocus}>
       <ol className="ifd-steps" aria-label="Import steps">
         <li aria-current={step === 'choose' ? 'step' : undefined}>1 · Choose files</li>
         <li aria-current={step === 'confirm' ? 'step' : undefined}>2 · Confirm</li>
@@ -198,37 +206,39 @@ export function ImportFileDialog({ item, onClose }: { item: MediaItemDetail; onC
 
       {step === 'choose' && (
         <>
-          <div className="ifd-shortcuts" role="group" aria-label="Go to folder">
-            {defaultPath.data?.path && <button type="button" onClick={() => go(defaultPath.data!.path)}>Completed downloads</button>}
-            {item.path && <button type="button" onClick={() => go(item.path)}>This item's folder</button>}
-            {(roots.data ?? []).map((r) => (
-              <button type="button" key={r.id} onClick={() => go(r.path)}>{r.path}</button>
-            ))}
-          </div>
-          <form className="ifd-pathbox" onSubmit={(e) => { e.preventDefault(); if (draft.trim()) go(draft.trim()) }}>
-            <input id="import-path" aria-label="Folder path" type="text" spellCheck={false} autoComplete="off"
-              placeholder="Type a path…" value={draft} onChange={(e) => setDraft(e.target.value)} />
-            <button type="submit" disabled={!draft.trim()}>Open</button>
-          </form>
-          <nav className="ifd-crumbs mono" aria-label="Current folder">
-            <button type="button" className="link-btn" onClick={() => go('/')}>/</button>
-            {crumbs.map((c, i) => (
-              <span key={c.path}>
-                {i > 0 && '/'}
-                {i === crumbs.length - 1 ? <span aria-current="location">{c.name}</span>
-                  : <button type="button" className="link-btn" onClick={() => go(c.path)}>{c.name}</button>}
-              </span>
-            ))}
-          </nav>
-          {files.isError && <div className="banner warning" role="alert">{(files.error as Error).message}</div>}
-          <ul className="ifd-list" aria-label="Folder contents">
-            {dirs.data?.parent && dirs.data.parent !== current && (
+          {!scope && <>
+            <div className="ifd-shortcuts" role="group" aria-label="Go to folder">
+              {defaultPath.data?.path && <button type="button" onClick={() => go(defaultPath.data!.path)}>Completed downloads</button>}
+              {item.path && <button type="button" onClick={() => go(item.path)}>This item's folder</button>}
+              {(roots.data ?? []).map((r) => (
+                <button type="button" key={r.id} onClick={() => go(r.path)}>{r.path}</button>
+              ))}
+            </div>
+            <form className="ifd-pathbox" onSubmit={(e) => { e.preventDefault(); if (draft.trim()) go(draft.trim()) }}>
+              <input id="import-path" aria-label="Folder path" type="text" spellCheck={false} autoComplete="off"
+                placeholder="Type a path…" value={draft} onChange={(e) => setDraft(e.target.value)} />
+              <button type="submit" disabled={!draft.trim()}>Open</button>
+            </form>
+            <nav className="ifd-crumbs mono" aria-label="Current folder">
+              <button type="button" className="link-btn" onClick={() => go('/')}>/</button>
+              {crumbs.map((c, i) => (
+                <span key={c.path}>
+                  {i > 0 && '/'}
+                  {i === crumbs.length - 1 ? <span aria-current="location">{c.name}</span>
+                    : <button type="button" className="link-btn" onClick={() => go(c.path)}>{c.name}</button>}
+                </span>
+              ))}
+            </nav>
+          </>}
+          {!scope && files.isError && <div className="banner warning" role="alert">{(files.error as Error).message}</div>}
+          <ul className="ifd-list" aria-label={scope ? "Files from this job" : "Folder contents"}>
+            {!scope && dirs.data?.parent && dirs.data.parent !== current && (
               <li><button type="button" className="ifd-row" onClick={() => go(dirs.data!.parent)}><span aria-hidden="true">↰</span> ..</button></li>
             )}
-            {(dirs.data?.dirs ?? []).map((d) => (
+            {(!scope ? dirs.data?.dirs ?? [] : []).map((d) => (
               <li key={d.path}><button type="button" className="ifd-row" onClick={() => go(d.path)}><span aria-hidden="true">▸</span> {d.name}/</button></li>
             ))}
-            {(files.data ?? []).map((f) => f.skipped ? (
+            {listedFiles.map((f) => f.skipped ? (
               <li key={f.path} className="ifd-row ifd-skipped">
                 <span className="ifd-name">{f.name}</span>
                 <span className="muted">{f.skipped}</span>
@@ -240,17 +250,18 @@ export function ImportFileDialog({ item, onClose }: { item: MediaItemDetail; onC
                   <span className="ifd-name">{f.name}</span>
                   <span className="ifd-meta">
                     <span className="pill pill-neutral">{fmtBytes(f.size)}</span>
-                    {item.kind === 'series' && (f.episodes.length
+                    {!scope && item.kind === 'series' && (f.episodes.length
                       ? <span className="pill pill-ok">{episodeLabel(f.season, f.episodes)}</span>
                       : <span className="pill pill-warning">no episode in name</span>)}
                     {f.quality && <span className="pill pill-neutral">{f.quality}</span>}
                     {!!f.subtitles && <span className="pill pill-info">{f.subtitles} sub{f.subtitles === 1 ? '' : 's'}</span>}
-                    {f.publication && <span className="pill pill-info">runner delivery</span>}
+                    {!scope && f.publication && <span className="pill pill-info">runner delivery</span>}
                   </span>
                 </label>
               </li>
             ))}
-            {files.isSuccess && files.data.length === 0 && (dirs.data?.dirs.length ?? 0) === 0 && (
+            {scope && !listedFiles.length && <li className="muted ifd-empty">No files from this job need a choice.</li>}
+            {!scope && files.isSuccess && files.data.length === 0 && (dirs.data?.dirs.length ?? 0) === 0 && (
               <li className="muted ifd-empty">Nothing importable in this folder.</li>
             )}
           </ul>

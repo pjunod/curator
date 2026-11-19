@@ -6577,6 +6577,9 @@ type ServerInterface interface {
 	// GetSystemStatus System status
 	// (GET /system/status)
 	GetSystemStatus(w http.ResponseWriter, r *http.Request)
+	// GetStorageObservations Read cached capacity and cleanup facts from each storage owner
+	// (GET /system/storage-observations)
+	GetStorageObservations(w http.ResponseWriter, r *http.Request)
 	// ListTasks Scheduler task states
 	// (GET /system/tasks)
 	ListTasks(w http.ResponseWriter, r *http.Request)
@@ -11565,6 +11568,20 @@ func (siw *ServerInterfaceWrapper) GetSystemStatus(w http.ResponseWriter, r *htt
 	handler.ServeHTTP(w, r)
 }
 
+// GetStorageObservations operation middleware
+func (siw *ServerInterfaceWrapper) GetStorageObservations(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetStorageObservations(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // ListTasks operation middleware
 func (siw *ServerInterfaceWrapper) ListTasks(w http.ResponseWriter, r *http.Request) {
 
@@ -11974,6 +11991,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/queue/failed", wrapper.ClearFailedQueue)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/history", wrapper.ListHistory)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/activity", wrapper.ListActivity)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/system/storage-observations", wrapper.GetStorageObservations)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/activity/selections", wrapper.CreateActivitySelection)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/activity/actions", wrapper.CreateActivityAction)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/activity/operations/{id}", wrapper.GetActivityOperation)

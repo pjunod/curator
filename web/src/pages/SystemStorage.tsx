@@ -3,9 +3,10 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
 import { ActionDialog, ActionNotice, focusActionTrigger } from '../ActionDialog'
 import {
-  acceptCompletedStorageChange, fmtBytes, getCompletedInventory, getRootFolders, getTasks,
-  previewCompletedStorageChange, type CompletedRoot, type RootFolder, type TaskState,
+  acceptCompletedStorageChange, fmtBytes, getRootFolders, getTasks,
+  previewCompletedStorageChange, type RootFolder, type TaskState,
 } from '../api'
+import { getStorageObservations, type StorageObservation } from '../activityActions'
 import '../Activity.css'
 
 function observedAt(at?: string) {
@@ -20,6 +21,10 @@ function capacity(root?: RootFolder & { totalBytes?: number }) {
     : `${fmtBytes(root.freeBytes)} free`
 }
 
+function measuredBytes(bytes: number) {
+  return bytes === 0 ? '0 B' : fmtBytes(bytes)
+}
+
 function cleanupObservation(task?: TaskState) {
   if (!task) return 'Cleanup status unavailable.'
   if (task.running) return 'Download cleanup is running.'
@@ -32,17 +37,16 @@ export function SystemStorage() {
   const qc = useQueryClient()
   const opener = useRef<HTMLElement | null>(null)
   const heading = useRef<HTMLHeadingElement | null>(null)
-  const [review, setReview] = useState<CompletedRoot | null>(null)
+  const [review, setReview] = useState<StorageObservation | null>(null)
   const roots = useQuery({ queryKey: ['rootfolders'], queryFn: getRootFolders, staleTime: 30_000 })
   const downloads = useQuery({
-    queryKey: ['completed-inventory'],
-    queryFn: getCompletedInventory,
-    select: inventory => inventory.roots,
-    staleTime: 30_000,
+    queryKey: ['storage-observations'],
+    queryFn: getStorageObservations,
+    refetchInterval: 30_000,
   })
   const tasks = useQuery({ queryKey: ['tasks'], queryFn: getTasks, refetchInterval: 10_000 })
   const preview = useMutation({
-    mutationFn: (root: CompletedRoot) => previewCompletedStorageChange({
+    mutationFn: (root: StorageObservation) => previewCompletedStorageChange({
       root: root.path, expectedIdentity: root.storageIdentity!, observedIdentity: root.observedStorageIdentity!,
     }),
   })
@@ -51,11 +55,14 @@ export function SystemStorage() {
     onSuccess: () => {
       opener.current = heading.current
       setReview(null)
+      void qc.invalidateQueries({ queryKey: ['storage-observations'] })
       void qc.invalidateQueries({ queryKey: ['completed-inventory'] })
       void qc.invalidateQueries({ queryKey: ['activity'] })
     },
   })
   const cleanup = tasks.data?.find(task => task.name === 'downloads.cleanup')
+  const recorded = downloads.data?.cleanup
+  const lastRemoval = observedAt(recorded?.lastRemovalAt)
   return <section id="storage" className="system-storage">
     <div className="activity-storage-heading">
       <div>
@@ -74,24 +81,27 @@ export function SystemStorage() {
           <strong className="mono">{root.path}</strong>
           <span>{capacity(root)}</span>
         </div>
-        <p className="muted small">{root.accessible ? 'Accessible' : 'Unavailable'} · Checked {new Date(roots.dataUpdatedAt).toLocaleString()}</p>
+        <p className="muted small">{root.accessible ? 'Curator · Accessible' : 'Curator · Unavailable'} · Checked {new Date(roots.dataUpdatedAt).toLocaleString()}</p>
       </article>)}
     </section>
     <section aria-labelledby="download-storage-title">
       <h3 id="download-storage-title">Download folders</h3>
       {downloads.isLoading && <p role="status">Checking download storage…</p>}
       {downloads.isError && <p role="alert" className="error-text">Could not check download storage. {downloads.error.message}</p>}
-      {downloads.data?.length === 0 && !downloads.isError && <p className="muted">No download folders have been checked yet.</p>}
-      {downloads.data?.map(root => {
-        const changed = root.storageIdentity && root.observedStorageIdentity && root.storageIdentity !== root.observedStorageIdentity
-        const checked = observedAt(root.checkedAt)
-        const matchingLibraryRoot = root.error ? undefined : roots.data?.find(volume => volume.path === root.path)
-        return <article className="panel activity-storage-observation" key={root.path}>
+      {downloads.data?.roots.length === 0 && !downloads.isError && <p className="muted">No download folders have been checked yet.</p>}
+      {downloads.data?.roots.map(root => {
+        const changed = root.owner === 'Curator' && root.storageIdentity && root.observedStorageIdentity && root.storageIdentity !== root.observedStorageIdentity
+        const checked = observedAt(root.observedAt)
+        const free = root.status === 'available' && root.freeBytes !== undefined
+          ? `${measuredBytes(root.freeBytes)} free${root.totalBytes !== undefined ? ` of ${measuredBytes(root.totalBytes)}` : ''}`
+          : 'Available space unknown'
+        return <article className="panel activity-storage-observation" key={`${root.owner}/${root.name ?? ''}/${root.role}/${root.path}`}>
           <div className="activity-storage-heading">
-            <strong className="mono">{root.path}</strong>
-            <span>{root.freeBytes !== undefined && !root.error ? `${fmtBytes(root.freeBytes)} free${root.totalBytes !== undefined ? ` of ${fmtBytes(root.totalBytes)}` : ''}` : capacity(matchingLibraryRoot)}</span>
+            <strong className="mono">{root.path || root.name || root.role}</strong>
+            <span>{free}</span>
           </div>
-          <p className="muted small">{root.error || (changed ? 'Storage has changed.' : 'Accessible at last check')}{checked ? ` · Checked ${checked}` : ''}</p>
+          <p className="muted small">{[root.owner, root.path ? root.name : null, root.role, checked ? `Reported ${checked}` : null].filter(Boolean).join(' · ')}</p>
+          {(root.error || root.status !== 'available') && <p className="muted small">{root.error || 'Capacity has not been measured.'}</p>}
           {changed && <button disabled={downloads.isError} onClick={event => {
             focusActionTrigger(event)
             opener.current = event.currentTarget
@@ -108,6 +118,10 @@ export function SystemStorage() {
       <div className="panel activity-storage-observation">
         {tasks.isLoading ? <p role="status">Checking cleanup status…</p> : <p className="muted">{cleanupObservation(cleanup)}</p>}
         {tasks.isError && <p role="alert" className="error-text">Could not refresh cleanup status. {tasks.error.message}</p>}
+        {recorded?.filesRemoved !== undefined && recorded.logicalBytesRemoved !== undefined && <p className="muted">
+          Recorded cleanup · {recorded.filesRemoved.toLocaleString()} files · {measuredBytes(recorded.logicalBytesRemoved)} in logical file sizes
+          {lastRemoval ? ` · Last removal ${lastRemoval}` : ''}
+        </p>}
         <div className="row-actions"><Link to="/activity" hash="attention">Jobs needing attention</Link><Link to="/activity" hash="history">Job history</Link></div>
       </div>
     </section>

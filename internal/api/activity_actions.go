@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -46,7 +48,7 @@ func (s *Server) CreateActivitySelection(w http.ResponseWriter, r *http.Request)
 			s.acqErr(w, e)
 			return
 		}
-		targets = append(targets, info.Identity)
+		targets = append(targets, sqlite.ActivityIdentity{ID: row.ID, GenerationKey: row.GenerationKey, Epoch: row.Epoch})
 		for _, a := range info.Actions {
 			if a.Kind == "retry" && a.Enabled {
 				retryable++
@@ -145,48 +147,80 @@ func (s *Server) GetActivityOperation(w http.ResponseWriter, r *http.Request, id
 	writeActivityOperation(w, 200, o)
 }
 func (s *Server) GetActivityJobLog(w http.ResponseWriter, r *http.Request, id int64) {
-	dl, e := s.deps.Store.GetDownload(r.Context(), id)
-	if e != nil {
-		s.acqErr(w, e)
-		return
-	}
 	type event struct {
 		At      string `json:"at"`
 		Step    string `json:"step"`
 		Message string `json:"message"`
 	}
 	events := []event{}
-	for _, h := range dl.Handoff {
-		events = append(events, event{time.UnixMilli(h.At).UTC().Format(time.RFC3339), strings.ReplaceAll(h.Step, "_", " "), h.Detail})
+	if id < 0 {
+		pub, e := s.deps.Store.GetPublication(r.Context(), -id)
+		if e != nil {
+			s.acqErr(w, e)
+			return
+		}
+		events = append(events, event{pub.DiscoveredAt.UTC().Format(time.RFC3339), "publication recorded", "Historical publication recorded; original transfer identity was not recorded."})
+		events = append(events, event{pub.UpdatedAt.UTC().Format(time.RFC3339), "publication outcome", pub.State})
+		writeJSON(w, 200, map[string]any{"title": filepath.Base(pub.Path), "summary": "Historical import; transfer identity incomplete.", "events": events})
+		return
 	}
-	rows, e := s.deps.Store.R.QueryContext(r.Context(), `SELECT created_at,action,targets FROM activity_operations WHERE EXISTS(SELECT 1 FROM json_each(targets) t WHERE json_extract(t.value,'$.id')=? AND json_extract(t.value,'$.generationKey')=?) ORDER BY created_at`, id, dl.GenerationKey)
+	dl, e := s.deps.Store.GetDownload(r.Context(), id)
 	if e != nil {
 		s.acqErr(w, e)
 		return
 	}
-	defer func() { _ = rows.Close() }()
-	for rows.Next() {
-		var at int64
-		var action, raw string
-		if e = rows.Scan(&at, &action, &raw); e != nil {
-			s.acqErr(w, e)
-			return
-		}
-		var targets []sqlite.ActivityTarget
-		if e = json.Unmarshal([]byte(raw), &targets); e != nil {
-			s.acqErr(w, e)
-			return
-		}
-		for _, t := range targets {
-			if t.ID == id && t.GenerationKey == dl.GenerationKey {
-				events = append(events, event{time.UnixMilli(at).UTC().Format(time.RFC3339), action, t.Message})
-			}
-		}
+	for _, h := range dl.Handoff {
+		events = append(events, event{time.UnixMilli(h.At).UTC().Format(time.RFC3339Nano), strings.ReplaceAll(h.Step, "_", " "), h.Detail})
 	}
-	if e = rows.Err(); e != nil {
+	rows, e := s.deps.Store.R.QueryContext(r.Context(), `SELECT at,step,message FROM activity_action_events WHERE download_id=? AND generation_key=? ORDER BY at,id`, id, dl.GenerationKey)
+	if e != nil {
 		s.acqErr(w, e)
 		return
 	}
+	for rows.Next() {
+		var at int64
+		var step, message string
+		if e = rows.Scan(&at, &step, &message); e != nil {
+			_ = rows.Close()
+			s.acqErr(w, e)
+			return
+		}
+		events = append(events, event{time.UnixMilli(at).UTC().Format(time.RFC3339Nano), step, message})
+	}
+	e = rows.Err()
+	_ = rows.Close()
+	if e != nil {
+		s.acqErr(w, e)
+		return
+	}
+	// Publication and notification observations retain their own source times.
+	// They are explicitly labelled as recorded state, not invented event spans.
+	rows, e = s.deps.Store.R.QueryContext(r.Context(), `SELECT updated_at,'publication',state||CASE WHEN error!='' THEN ': '||error ELSE '' END FROM publications WHERE download_id=? UNION ALL SELECT n.updated_at,'Cinema update',n.status||CASE WHEN n.last_error!='' THEN ': '||n.last_error ELSE '' END FROM notifier_deliveries n WHERE n.download_id=? ORDER BY 1`, id, id)
+	if e != nil {
+		s.acqErr(w, e)
+		return
+	}
+	for rows.Next() {
+		var at int64
+		var step, message string
+		if e = rows.Scan(&at, &step, &message); e != nil {
+			_ = rows.Close()
+			s.acqErr(w, e)
+			return
+		}
+		events = append(events, event{time.UnixMilli(at).UTC().Format(time.RFC3339Nano), step + " observation", message})
+	}
+	e = rows.Err()
+	_ = rows.Close()
+	if e != nil {
+		s.acqErr(w, e)
+		return
+	}
+	sort.SliceStable(events, func(i, j int) bool {
+		a, _ := time.Parse(time.RFC3339Nano, events[i].At)
+		b, _ := time.Parse(time.RFC3339Nano, events[j].At)
+		return a.Before(b)
+	})
 	info, e := s.deps.Acquisition.ActivityActions(r.Context(), dl)
 	if e != nil {
 		s.acqErr(w, e)

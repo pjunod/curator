@@ -1566,13 +1566,16 @@ func (s *Service) grab(ctx context.Context, req GrabRequest, manual bool) (int64
 		if e != nil {
 			return id, e
 		}
-		if deleted, e := s.db.DownloadDeletionRequested(ctx, origin, original.GenerationKey); e != nil {
+		generation := original.GenerationKey
+		if captured, ok := ctx.Value(replacementGrabOwnerKey{}).(replacementGrabOrigin); ok {
+			generation = captured.Generation
+		}
+		if e = s.db.RecordReplacementOrigin(ctx, origin, generation, inserted.ID, inserted.GenerationKey); e != nil {
+			_ = s.db.RejectDownloadSubmission(ctx, inserted.ID, inserted.GenerationKey, inserted.Transfer, e.Error())
 			return id, e
-		} else if deleted {
-			_ = s.db.RejectDownloadSubmission(ctx, inserted.ID, inserted.GenerationKey, inserted.Transfer, "parent attempt deleted before replacement admission")
-			return id, fmt.Errorf("originating job deletion requested")
 		}
 	}
+
 	unlockDownload := s.lockDownload(id)
 	defer unlockDownload()
 	fresh, freshErr := s.db.GetDownload(ctx, id)
@@ -2253,18 +2256,24 @@ func (s *Service) RemoveDownload(ctx context.Context, id int64, fromClient bool)
 // blocklisted; the plan is asked to stop in the same write). A Runner row is
 // never parked.
 func (s *Service) cancelRunnerDownload(ctx context.Context, id int64, cfg ports.ClientConfig, client ports.DownloadClient, fromClient bool) error {
+	unlock := s.lockDownload(id)
+	defer unlock()
 	dl, err := s.db.GetDownload(ctx, id)
 	if err != nil {
 		return err
 	}
-	if fromClient {
-		a, err := s.ActivityActions(ctx, dl)
+	if fromClient && dl.Handle != "" && (dl.RunnerOutcome == "" || dl.Provisional) {
+		if cancel, ok := client.(ports.QueueCanceller); ok {
+			err = cancel.CancelQueued(ctx, ports.Handle(dl.Handle))
+		} else {
+			err = client.Remove(ctx, ports.Handle(dl.Handle), false)
+		}
 		if err != nil {
 			return err
 		}
-		_, err = s.db.CreateActivityOperation(ctx, "legacy-delete-"+dl.GenerationKey, "delete", map[string]any{"download": id, "generation": dl.GenerationKey}, []sqlite.ActivityTarget{{ActivityIdentity: a.Identity}})
-		return err
 	}
+	// Legacy removal grants queue/view removal only. The real Runner terminal
+	// arrives through facts; physical disposal has its own explicit command.
 	_, err = s.db.W.ExecContext(ctx, `UPDATE downloads SET activity_dismissed=1,updated_at=? WHERE id=? AND generation_key=?`, time.Now().UnixMilli(), id, dl.GenerationKey)
 	return err
 }

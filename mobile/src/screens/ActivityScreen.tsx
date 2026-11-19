@@ -1,8 +1,8 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Alert, Modal, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native'
 import { randomUUID } from 'expo-crypto'
 import {
-  activityStorageKey, identityKey, loadActivityIds, saveActivityIds,
+  activityFileScope, activityStorageKey, identityKey, loadActivityIds, saveActivityIds,
   type ActivityActionKind, type ActivityIdentity, type ActivityItem, type ActivityOperation,
   type ActivityRequest, type ActivitySelection, type ActivityTargets, type ActivityView,
 } from '../activityActions'
@@ -12,6 +12,7 @@ import { queueBadge } from '../queueState'
 import { AppScreen, Badge, Button, Chip, Header, InlineError, LoadingState, MessageState, Panel, Wordmark } from '../components/UI'
 import { useTheme } from '../theme'
 import { useResource } from '../useResource'
+import { ImportFileSheet } from './ImportFileSheet'
 
 const VIEWS = [['progress', 'In progress'], ['attention', 'Needs attention'], ['history', 'History']] as const
 const EMPTY_TITLES = { progress: 'Nothing in progress', attention: 'Nothing needs your attention', history: 'No retained history' }
@@ -32,7 +33,10 @@ type Draft = {
   retryOf?: string
 }
 
-type Dialog = { kind: 'draft'; draft: Draft } | { kind: 'operation'; id: string } | { kind: 'log'; item: ActivityItem }
+type Dialog =
+  | { kind: 'draft'; draft: Draft }
+  | { kind: 'operation'; id: string }
+  | { kind: 'log' | 'choose-files'; item: ActivityItem }
 
 type ObservedOperation = { data?: ActivityOperation; error?: string; missing?: boolean }
 
@@ -44,7 +48,7 @@ function operationStatus(operation: ActivityOperation) {
     : `${ACTION_TITLES[operation.action]} finished · ${operation.succeeded} succeeded · ${operation.blocked} blocked`
 }
 
-export function ActivityScreen({ client, onOpen }: { client: MonarrClient; onOpen: (id: number) => void }) {
+export function ActivityScreen({ client, onOpen }: { client: MonarrClient; onOpen: (id: number, options?: { assignFolder?: boolean }) => void }) {
   const theme = useTheme()
   const [view, setView] = useState<ActivityView>('progress')
   const [offset, setOffset] = useState(0)
@@ -279,8 +283,10 @@ export function ActivityScreen({ client, onOpen }: { client: MonarrClient; onOpe
           return <ActivityRow key={key} item={item} view={view} selected={selected}
             selectionDisabled={busy || selecting || (!!selection.snapshot && !inSnapshot)} busy={busy}
             onSelect={() => toggle(item, selected)} onOpen={() => onOpen(item.download.mediaItemId)}
+            onAssignFolder={() => onOpen(item.download.mediaItemId, { assignFolder: true })}
             onAction={action => {
-              if (item.identity) launch(action.kind, { targets: [item.identity] }, 1, action.label)
+              if (action.kind === 'choose_files') setDialog({ kind: 'choose-files', item })
+              else if (item.identity) launch(action.kind, { targets: [item.identity] }, 1, action.label)
             }}
             onOperation={showOperation} onReservation={() => reviewReservation(item)} onLog={() => setDialog({ kind: 'log', item })} />
         })}
@@ -290,7 +296,9 @@ export function ActivityScreen({ client, onOpen }: { client: MonarrClient; onOpe
           <Button compact secondary disabled={!activity.hasMore} label="Next" onPress={() => setOffset(offset + PAGE_SIZE)} />
         </View>}
       </ScrollView>
-      {dialog && <Modal visible animationType="slide" presentationStyle="fullScreen" onRequestClose={close}>
+      {dialog?.kind === 'choose-files' && <ActivityFilePicker client={client} item={dialog.item}
+        onClose={() => { close(); void refresh() }} />}
+      {dialog && dialog.kind !== 'choose-files' && <Modal visible animationType="slide" presentationStyle="fullScreen" onRequestClose={close}>
         <AppScreen forceTopInset>
           <Header title={dialog.kind === 'log' ? 'Job log' : dialog.kind === 'draft' ? dialog.draft.label : 'Activity action'}
             right={<Button compact secondary label="Close" disabled={submitting} onPress={close} />} />
@@ -338,7 +346,7 @@ export function ActivityScreen({ client, onOpen }: { client: MonarrClient; onOpe
   )
 }
 
-function ActivityRow({ item, view, selected, selectionDisabled, busy, onSelect, onOpen, onAction, onOperation, onReservation, onLog }: {
+function ActivityRow({ item, view, selected, selectionDisabled, busy, onSelect, onOpen, onAssignFolder, onAction, onOperation, onReservation, onLog }: {
   item: ActivityItem
   view: ActivityView
   selected: boolean
@@ -346,6 +354,7 @@ function ActivityRow({ item, view, selected, selectionDisabled, busy, onSelect, 
   busy: boolean
   onSelect: () => void
   onOpen: () => void
+  onAssignFolder: () => void
   onAction: (action: NonNullable<ActivityItem['actions']>[number]) => void
   onOperation: (id: string) => void
   onReservation: () => void
@@ -361,6 +370,9 @@ function ActivityRow({ item, view, selected, selectionDisabled, busy, onSelect, 
   const badge = queueBadge(download)
   const deletion = item.operation?.action === 'delete' ? item.operation : undefined
   const actions = item.actions ?? []
+  const assignFolder = download.mediaItemId > 0 && /assign.{0,30}(library )?folder|no library folder assigned/i.test(
+    [item.prerequisite, download.error].filter(Boolean).join(' '),
+  )
   const unavailable = actions.find(action => !action.enabled && action.reason)?.reason
   return <Panel style={styles.item}>
     <View style={styles.itemHead}>
@@ -387,13 +399,32 @@ function ActivityRow({ item, view, selected, selectionDisabled, busy, onSelect, 
     </>}
     {view === 'history' && <Text style={[styles.meta, { color: theme.muted }]}>{formatRelative(item.updatedAt)}</Text>}
     <View style={styles.actions}>
+      {view === 'attention' && assignFolder && <Button compact secondary label="Assign folder" onPress={onAssignFolder} />}
       {view === 'attention' && download.reservationActionable && <Button compact secondary disabled={busy} label="Review reservation" onPress={onReservation} />}
       {view !== 'history' && item.identity && actions.filter(action => !(deletion && action.kind === 'delete')).map(action =>
         <Button key={action.kind} compact secondary disabled={busy || !action.enabled} label={action.label} onPress={() => onAction(action)} />)}
       {view !== 'history' && deletion && <Button compact secondary label="Deletion status" onPress={() => onOperation(deletion.id)} />}
-      {view === 'history' && download.id > 0 && <Button compact secondary label="Job log" onPress={onLog} />}
+      {view === 'history' && download.id !== 0 && <Button compact secondary label="Job log" onPress={onLog} />}
     </View>
   </Panel>
+}
+
+function ActivityFilePicker({ client, item, onClose }: { client: MonarrClient; item: ActivityItem; onClose: () => void }) {
+  const id = item.download.mediaItemId
+  const scope = useMemo(() => activityFileScope(item), [item])
+  const library = useResource(() => id > 0 ? client.getLibraryItem(id) : Promise.resolve(null), [client, id])
+  if (library.data) return <ImportFileSheet client={client} item={library.data} scope={scope} onClose={onClose} />
+  return <Modal visible animationType="slide" presentationStyle="fullScreen" onRequestClose={onClose}>
+    <AppScreen forceTopInset>
+      <Header title="Choose files to import" right={<Button compact secondary label="Close" onPress={onClose} />} />
+      <View style={styles.content}>
+        {library.loading && <LoadingState label="Loading the library title…" />}
+        {library.error && <InlineError message={library.error} />}
+        {library.error && <Button compact secondary label="Try again" onPress={() => void library.refresh()} />}
+        {id <= 0 && <MessageState title="No library title is assigned to this job" />}
+      </View>
+    </AppScreen>
+  </Modal>
 }
 
 function JobLog({ client, item }: { client: MonarrClient; item: ActivityItem }) {

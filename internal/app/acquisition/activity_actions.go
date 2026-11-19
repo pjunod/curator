@@ -50,7 +50,7 @@ func (s *Service) ActivityActions(ctx context.Context, dl sqlite.Download) (Acti
 	}
 	if requested {
 		var ref ActivityOperationRef
-		if err := s.db.R.QueryRowContext(ctx, `SELECT o.id,o.action,json_extract(t.value,'$.state'),COALESCE(json_extract(t.value,'$.message'),'') FROM activity_operations o,json_each(o.targets) t WHERE json_extract(t.value,'$.id')=? AND json_extract(t.value,'$.generationKey')=? AND o.action='delete' ORDER BY o.created_at DESC LIMIT 1`, dl.ID, dl.GenerationKey).Scan(&ref.ID, &ref.Action, &ref.State, &ref.Message); err == nil {
+		if err := s.db.R.QueryRowContext(ctx, `SELECT o.id,o.action,t.state,COALESCE(json_extract(t.payload,'$.message'),'') FROM activity_operations o JOIN activity_operation_targets t ON t.operation_id=o.id WHERE t.download_id=? AND t.generation_key=? AND o.action='delete' ORDER BY o.created_at DESC LIMIT 1`, dl.ID, dl.GenerationKey).Scan(&ref.ID, &ref.Action, &ref.State, &ref.Message); err == nil {
 			out.Operation = &ref
 		}
 		if verified {
@@ -71,14 +71,55 @@ func (s *Service) ActivityActions(ctx context.Context, dl sqlite.Download) (Acti
 	}
 	var control ports.DownloadControl
 	if dl.RunnerControl != "" && json.Unmarshal([]byte(dl.RunnerControl), &control) == nil && control.Held() {
-		out.Reason = control.Message
-		out.Prerequisite = "Resolve the Runner hold, then retry."
-		if control.RetryPolicy == "resume_same_job" {
+		out.Reason = "Runner is waiting for an operator action."
+		out.Prerequisite = "Open the Runner job to resolve its recorded hold."
+		switch control.Cause {
+		case "capacity", "allocation":
+			out.Reason = "Runner could not allocate space for this download."
+			out.Prerequisite = "Free space on Runner's download drive, then retry."
+		case "quota":
+			out.Reason = "Runner reached its storage quota."
+			out.Prerequisite = "Increase or free the quota, then retry."
+		case "mount_unavailable", "storage_unavailable":
+			out.Reason = "Runner's download storage is unavailable."
+			out.Prerequisite = "Reconnect its original drive, then retry."
+		case "password_required":
+			out.Reason = "The archive needs a password."
+			out.Prerequisite = "Enter the password on this job in Runner, then retry."
+		case "missing_tool":
+			out.Reason = "Runner is missing a required processing tool."
+			out.Prerequisite = "Install the required tool shown on the Runner job, then retry."
+		}
+		if control.ManualPause {
+			out.Reason = "Paused in Runner."
+			out.Prerequisite = "Resume the job in Runner when you want it to continue."
+		}
+		if control.Version != 1 {
+			out.Reason = "This job uses an unsupported Runner control version."
+			out.Prerequisite = "Update Curator to understand this Runner version."
+		}
+		if control.Version == 1 && control.RetryPolicy == "resume_same_job" && !control.ManualPause {
 			out.Actions = append(out.Actions, ActivityAction{Kind: "retry", Label: "Retry", Enabled: true})
 		}
 		return out, nil
 	}
-	out.Reason = strings.TrimPrefix(dl.Error, "publication import_failed: ")
+	var choice bool
+	if e = s.db.R.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM publications p JOIN publication_files f ON f.publication_id=p.id WHERE p.download_id=? AND p.state!='removed' AND f.outcome='unresolved' AND f.reason='not selected for import; place or discard it in Resolve')`, dl.ID).Scan(&choice); e != nil {
+		return out, e
+	}
+	if choice {
+		out.Reason = "Some files were left out of the import you approved."
+		out.Prerequisite = "Choose the files and destination to import, or delete this job's remaining files."
+		out.Actions = append(out.Actions, ActivityAction{Kind: "choose_files", Label: "Choose files", Enabled: true})
+		return out, nil
+	}
+
+	out.Reason = ""
+	if dl.Error != "" {
+		out.Reason = "The import stopped before it finished."
+		out.Prerequisite = "Retry checks the recorded files. The job log contains the original error."
+	}
+
 	switch {
 	case strings.Contains(dl.Error, "no library folder"):
 		out.Reason = "No library folder is assigned."
@@ -100,7 +141,7 @@ func (s *Service) ActivityActions(ctx context.Context, dl sqlite.Download) (Acti
 	case out.Reason == "":
 		out.Reason = "This job stopped before import completed."
 	}
-	if dl.ImportPath != "" || dl.SavePath != "" {
+	if dl.State != "downloading" && dl.State != "grabbed" && dl.State != "submitting" && dl.State != "planned" && dl.State != "imported" && dl.State != "notified" && (dl.ImportPath != "" || dl.SavePath != "") {
 		out.Actions = append(out.Actions, ActivityAction{Kind: "retry", Label: "Retry", Enabled: true})
 	}
 	return out, nil
@@ -128,7 +169,7 @@ func (s *Service) handleActivityAction(ctx context.Context, job domain.Job) erro
 		}
 		t.State = "running"
 		t.Message = "Checking this job."
-		if e = s.db.SaveActivityOperation(ctx, &o); e != nil {
+		if e = s.db.SaveActivityTarget(ctx, &o, i); e != nil {
 			return e
 		}
 		dl, err := s.db.GetDownload(ctx, t.ID)
@@ -139,7 +180,10 @@ func (s *Service) handleActivityAction(ctx context.Context, job domain.Job) erro
 			if deleting, _, readErr := s.db.DownloadDeletionStatus(ctx, dl.ID, dl.GenerationKey); readErr != nil {
 				err = readErr
 			} else if o.Action == "delete" || (o.Action == "retry" && deleting) {
-				err = s.deleteActivityJob(ctx, o.ID, dl, t, &o)
+				t.DispositionRevision, err = s.db.DispositionRevision(ctx, dl.ID, dl.GenerationKey)
+				if err == nil {
+					err = s.deleteActivityJob(ctx, o.ID, dl, t, &o)
+				}
 			} else {
 				err = s.retryActivityJob(ctx, dl, o.Action, t.Epoch)
 			}
@@ -152,7 +196,7 @@ func (s *Service) handleActivityAction(ctx context.Context, job domain.Job) erro
 			} else {
 				t.Message = "Retry accepted. Follow its progress in Activity."
 			}
-		case errors.Is(err, errActivityPending):
+		case activityPending(err):
 			t.State = "pending"
 			t.Message = err.Error()
 			pending = true
@@ -160,7 +204,12 @@ func (s *Service) handleActivityAction(ctx context.Context, job domain.Job) erro
 			t.State = "blocked"
 			t.Message = err.Error()
 		}
-		if e = s.db.SaveActivityOperation(ctx, &o); e != nil {
+		if t.DispositionRevision > 0 && t.State != "succeeded" {
+			if e = s.db.SetDispositionProgress(ctx, *t); e != nil {
+				return e
+			}
+		}
+		if e = s.db.SaveActivityTarget(ctx, &o, i); e != nil {
 			return e
 		}
 	}
@@ -179,6 +228,15 @@ func (s *Service) retryActivityJob(ctx context.Context, dl sqlite.Download, acti
 	}
 	if info.Identity.Epoch != epoch {
 		return fmt.Errorf("this import attempt changed; refresh and select it again")
+	}
+	allowed := false
+	for _, candidate := range info.Actions {
+		if candidate.Kind == action && candidate.Enabled {
+			allowed = true
+		}
+	}
+	if !allowed {
+		return fmt.Errorf("this action is no longer available for this job; refresh Activity")
 	}
 	requested, _, e := s.db.DownloadDeletionStatus(ctx, dl.ID, dl.GenerationKey)
 	if e != nil {
@@ -203,6 +261,60 @@ func (s *Service) retryActivityJob(ctx context.Context, dl sqlite.Download, acti
 }
 
 func (s *Service) deleteActivityJob(ctx context.Context, operation string, dl sqlite.Download, t *sqlite.ActivityTarget, o *sqlite.ActivityOperation) error {
+	visited, _ := ctx.Value(activityDispositionVisited{}).(map[string]bool)
+	if visited == nil {
+		visited = map[string]bool{}
+	}
+	if visited[dl.GenerationKey] {
+		return fmt.Errorf("linked replacement identities form a cycle; deletion stopped")
+	}
+	visited[dl.GenerationKey] = true
+	defer delete(visited, dl.GenerationKey)
+	ctx = context.WithValue(ctx, activityDispositionVisited{}, visited)
+
+	// Join derived admissions that had not become independent when Delete
+	// committed. Their canonical owner receipt lives on their own disposition.
+	children, err := s.db.R.QueryContext(ctx, `SELECT child_id,child_generation FROM replacement_admissions WHERE parent_id=? AND parent_generation=? AND phase='cancel_pending' ORDER BY child_id`, dl.ID, dl.GenerationKey)
+	if err != nil {
+		return err
+	}
+	var childIDs []sqlite.ActivityIdentity
+	for children.Next() {
+		var c sqlite.ActivityIdentity
+		if err = children.Scan(&c.ID, &c.GenerationKey); err != nil {
+			_ = children.Close()
+			return err
+		}
+		childIDs = append(childIDs, c)
+	}
+	err = children.Err()
+	_ = children.Close()
+	if err != nil {
+		return err
+	}
+	for _, identity := range childIDs {
+		child, e := s.db.GetDownload(ctx, identity.ID)
+		if e != nil {
+			return e
+		}
+		if child.GenerationKey != identity.GenerationKey {
+			return fmt.Errorf("linked replacement generation changed")
+		}
+		ct := sqlite.ActivityTarget{ActivityIdentity: identity}
+		ct.DispositionRevision, e = s.db.DispositionRevision(ctx, child.ID, child.GenerationKey)
+		if e != nil {
+			return e
+		}
+		if e = s.deleteActivityJob(ctx, operation, child, &ct, o); e != nil {
+			ct.State = "blocked"
+			ct.Message = e.Error()
+			if activityPending(e) {
+				ct.State = "pending"
+			}
+			_ = s.db.SetDispositionProgress(ctx, ct)
+			return e
+		}
+	}
 	// A cancellation signal is not writer exit. The canonical download lock is
 	// acquired below only after the real worker has returned and closed files.
 	if a, e := s.db.GetImportAttempt(ctx, dl.ID, dl.GenerationKey); e == nil && a.Outcome != "completed" {
@@ -227,6 +339,9 @@ func (s *Service) deleteActivityJob(ctx context.Context, operation string, dl sq
 		return readErr
 	}
 	dl = fresh
+	if dl.ClientID != 0 && dl.Transfer == "" && dl.SubmissionPhase != "rejected" {
+		return fmt.Errorf("this older job has no exact client transfer identity; its external files cannot be verified deleted")
+	}
 	if dl.ClientID != 0 && dl.Transfer != "" && dl.SubmissionPhase != "rejected" {
 		cfg, e := s.db.GetDownloadClient(ctx, dl.ClientID)
 		if e != nil {
@@ -244,6 +359,11 @@ func (s *Service) deleteActivityJob(ctx context.Context, operation string, dl sq
 			}
 			var request ports.RunnerDispositionRequest
 			var jobID string
+			var canonical string
+			if e = s.db.R.QueryRowContext(ctx, `SELECT owner_payload FROM download_dispositions WHERE download_id=? AND generation_key=?`, dl.ID, dl.GenerationKey).Scan(&canonical); e != nil {
+				return e
+			}
+			t.OwnerPayload = canonical
 			if t.OwnerPayload == "" {
 				adm, found, e := admission.GetRequestAdmission(ctx, dl.Transfer)
 				if e != nil {
@@ -258,14 +378,25 @@ func (s *Service) deleteActivityJob(ctx context.Context, operation string, dl sq
 				if (dl.Handle != "" && dl.Handle != adm.JobID) || (dl.RunnerInstanceID != "" && dl.RunnerInstanceID != adm.RunnerInstanceID) || (dl.RunnerAdmissionGeneration != "" && dl.RunnerAdmissionGeneration != adm.Generation) {
 					return fmt.Errorf("Runner job identity changed; deletion stopped")
 				}
-				request = ports.RunnerDispositionRequest{RequestID: operation + ":" + strconv.FormatInt(dl.ID, 10), Action: "delete", Transfer: dl.Transfer, RunnerInstanceID: adm.RunnerInstanceID, Generation: adm.Generation, SourceArtifactID: adm.SourceArtifactID, SourceGeneration: adm.SourceGeneration}
+				request = ports.RunnerDispositionRequest{RequestID: "curator-delete-" + dl.GenerationKey, Action: "delete", Transfer: dl.Transfer, RunnerInstanceID: adm.RunnerInstanceID, Generation: adm.Generation, SourceArtifactID: adm.SourceArtifactID, SourceGeneration: adm.SourceGeneration}
 				b, _ := json.Marshal(struct {
 					JobID   string                         `json:"jobId"`
 					Request ports.RunnerDispositionRequest `json:"request"`
 				}{adm.JobID, request})
 				t.OwnerPayload = string(b)
-				if e = s.db.SaveActivityOperation(ctx, o); e != nil {
+				if _, e = s.db.W.ExecContext(ctx, `UPDATE download_dispositions SET owner_payload=? WHERE download_id=? AND generation_key=? AND owner_payload=''`, t.OwnerPayload, dl.ID, dl.GenerationKey); e != nil {
 					return e
+				}
+				if e = s.db.R.QueryRowContext(ctx, `SELECT owner_payload FROM download_dispositions WHERE download_id=? AND generation_key=?`, dl.ID, dl.GenerationKey).Scan(&canonical); e != nil {
+					return e
+				}
+				if canonical != t.OwnerPayload {
+					return errors.Join(errActivityPending, fmt.Errorf("another operation bound this owner's request; retrying the canonical receipt"))
+				}
+				if index := activityTargetIndex(o, t.ID); index >= 0 {
+					if e = s.db.SaveActivityTarget(ctx, o, index); e != nil {
+						return e
+					}
 				}
 				jobID = adm.JobID
 			} else {
@@ -301,7 +432,9 @@ func (s *Service) deleteActivityJob(ctx context.Context, operation string, dl sq
 				}
 			}
 		} else if dl.Handle != "" {
-			return fmt.Errorf("this download client cannot verify job-file deletion; remove its data in the client, then retry")
+			if err := s.verifyExternalActivityAbsence(ctx, dl, client); err != nil {
+				return err
+			}
 		}
 	}
 	if e := s.reconcileActivityScratch(ctx, dl, true); e != nil {
@@ -322,30 +455,32 @@ func (s *Service) deleteActivityJob(ctx context.Context, operation string, dl sq
 		}
 		// The persisted Delete authorizes this generation's manifest entries only.
 		// Per-file cleanup still checks the live manifest, source and mount identity.
-		if _, e = s.cleanupManifest(pub, false); e != nil {
-			return e
+		if _, statErr := os.Lstat(pub.Path); errors.Is(statErr, os.ErrNotExist) {
+			_, e = s.cleanupPublicationLocked(withOperatorCleanup(ctx, "verifying prior job deletion"), pub.ID)
+			if e != nil {
+				return e
+			}
+			continue
+		} else if statErr != nil {
+			return statErr
 		}
-		files, e := s.db.ListPublicationFiles(ctx, pub.ID)
-		if e != nil {
-			return e
+		files, readErr := s.db.ListPublicationFiles(ctx, pub.ID)
+		if readErr != nil {
+			return readErr
 		}
-		for _, f := range files {
-			if f.Outcome == "pending" || f.Outcome == "unresolved" {
-				f.Outcome = "discarded"
-				f.DiscardReason = "rejected"
-				f.Reason = "deleted by operator"
-				if e = s.db.SetPublicationFileOutcome(ctx, f); e != nil {
-					return e
-				}
+		if len(files) == 0 || !allFilesRemoved(files) {
+			if e = s.reconcileDispositionPublication(ctx, dl, pub); e != nil {
+				return e
 			}
 		}
+
 		if _, e = s.db.ApprovePublicationCleanup(ctx, []int64{pub.ID}); e != nil {
 			return e
 		}
 		if _, e = s.db.W.ExecContext(ctx, `UPDATE publications SET state=CASE WHEN state IN ('discovered','importing') THEN 'import_failed' ELSE state END,cleanup_paused_at=0 WHERE id=?`, pub.ID); e != nil {
 			return e
 		}
-		result, e := s.cleanupPublicationLocked(withOperatorCleanup(ctx, "job deleted by operator"), pub.ID)
+		result, e := s.cleanupPublicationLocked(context.WithValue(withOperatorCleanup(ctx, "job deleted by operator"), activityDispositionContext{}, true), pub.ID)
 		if e != nil {
 			return e
 		}
@@ -361,7 +496,7 @@ func (s *Service) deleteActivityJob(ctx context.Context, operation string, dl sq
 	if dl.Protocol != "manual" && dl.ClientID != 0 && len(pubs) == 0 && (dl.ImportPath != "" || dl.SavePath != "") && dl.RunnerOutcome == ports.OutcomeCompleted {
 		return fmt.Errorf("the completed files have no verified publication manifest; reconnect Runner and retry discovery")
 	}
-	if e = s.db.VerifyDownloadDeletion(ctx, dl.ID, dl.GenerationKey); e != nil {
+	if e = s.db.VerifyDownloadDeletion(ctx, dl.ID, dl.GenerationKey, t.DispositionRevision); e != nil {
 		return errors.Join(errActivityPending, e)
 	}
 	return s.db.AddHistory(ctx, "job_deleted", dl.MediaItemID, dl.ReleaseTitle, map[string]any{"downloadId": dl.ID, "generation": dl.GenerationKey, "transfer": dl.Transfer, "operationId": operation, "message": "Job data removed; installed Library media preserved"})
@@ -370,7 +505,7 @@ func (s *Service) deleteActivityJob(ctx context.Context, operation string, dl sq
 func (s *Service) reconcileActivityScratch(ctx context.Context, dl sqlite.Download, deleting bool) error {
 	unlock, ok := s.tryLockDownload(dl.ID)
 	if !ok {
-		return fmt.Errorf("import is still stopping; retry after its writer exits")
+		return errors.Join(errActivityPending, fmt.Errorf("waiting for the import writer to exit"))
 	}
 	defer unlock()
 	stages, e := s.db.UnresolvedPlacementReferences(ctx)
@@ -390,23 +525,28 @@ func (s *Service) reconcileActivityScratch(ctx context.Context, dl sqlite.Downlo
 			continue
 		}
 		targetCtx, release := s.lockImportTarget(ctx, p.ItemID)
-		if p.State != "committed" {
-			if e = s.recoverActivityStageIdentity(targetCtx, &p); e != nil {
+		if p.State == "prepared" {
+			s.reconcilePlacement(context.WithValue(targetCtx, activityDispositionContext{}, true), p)
+			fresh, readErr := s.db.GetPlacement(targetCtx, p.ID)
+			if readErr != nil {
 				release()
-				return e
+				return readErr
 			}
+			p = fresh
 		}
 
-		if p.State == "committed" {
+		if p.State == "cleaned" || p.State == "rolled_back" {
+			e = nil
+		} else if p.State == "committed" {
 			e = s.cleanupPlacement(targetCtx, p)
 		} else if _, backupErr := os.Lstat(p.Backup); p.Backup != "" && !errors.Is(backupErr, os.ErrNotExist) {
 			// Existing placement reconciliation preserves/recovers the prior Library
 			// file. We never reinterpret a backup as disposable download scratch.
-			s.reconcilePlacement(targetCtx, p)
+			s.reconcilePlacement(context.WithValue(targetCtx, activityDispositionContext{}, true), p)
 			fresh, readErr := s.db.GetPlacement(targetCtx, p.ID)
 			if readErr != nil {
 				e = readErr
-			} else if fresh.State != "committed" && fresh.State != "rolled_back" {
+			} else if fresh.State != "committed" && fresh.State != "cleaned" && fresh.State != "rolled_back" {
 				e = s.restoreActivityPrior(targetCtx, p)
 				if e == nil {
 					if !s.removeCancelledSupersededScratch(targetCtx, p) {
@@ -416,10 +556,12 @@ func (s *Service) reconcileActivityScratch(ctx context.Context, dl sqlite.Downlo
 					}
 				}
 			}
+		} else if p.PublishedFileGeneration != "" {
+			e = fmt.Errorf("an installed file is waiting for its original placement metadata; retry reconciliation")
 		} else if s.removeCancelledSupersededScratch(targetCtx, p) {
 			_, e = s.db.W.ExecContext(targetCtx, `UPDATE import_placements SET state='rolled_back',data=json_set(data,'$.state','rolled_back'),updated_at=? WHERE id=? AND state IN ('prepared','retained')`, time.Now().UnixMilli(), p.ID)
 		} else {
-			e = fmt.Errorf("temporary file identity changed or its drive is unavailable; reconnect the original library drive and retry")
+			e = fmt.Errorf("temporary file identity is unproven or its original drive is unavailable; restore the original storage to retry")
 		}
 		if e == nil {
 			// Only a proven terminal placement can settle the revoked authorization.
@@ -445,7 +587,7 @@ func (s *Service) reconcileActivityScratch(ctx context.Context, dl sqlite.Downlo
 			if !errors.Is(e, os.ErrNotExist) {
 				return e
 			}
-			if e = s.checkStorageIdentity(ctx, stage.Stage); e != nil {
+			if e = s.verifyAbsentActivityStage(ctx, dl, stage); e != nil {
 				return e
 			}
 			_, e = s.db.W.ExecContext(ctx, `UPDATE import_attempt_stages SET state='released' WHERE download_id=? AND generation_key=? AND stage=?`, dl.ID, dl.GenerationKey, stage.Stage)
@@ -464,6 +606,57 @@ func (s *Service) reconcileActivityScratch(ctx context.Context, dl sqlite.Downlo
 				return err
 			}
 		}
+	}
+	return nil
+}
+
+func activityPending(err error) bool {
+	if errors.Is(err, errActivityPending) || errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	var status interface{ HTTPStatusCode() int }
+	if errors.As(err, &status) {
+		code := status.HTTPStatusCode()
+		return code >= 500 || code == 408 || code == 429
+	}
+	var temporary interface{ Temporary() bool }
+	return errors.As(err, &temporary) && temporary.Temporary()
+}
+
+func activityTargetIndex(o *sqlite.ActivityOperation, id int64) int {
+	for i, t := range o.Targets {
+		if t.ID == id {
+			return i
+		}
+	}
+	return -1
+}
+
+type activityDispositionVisited struct{}
+
+// A third-party adapter may lack an owner receipt. It can still prove an
+// operator's external removal on a pinned completed mount after its exact job
+// has left the client. No guessed path or remote numeric handle grants unlink.
+func (s *Service) verifyExternalActivityAbsence(ctx context.Context, dl sqlite.Download, client ports.DownloadClient) error {
+	statuses, err := client.Statuses(ctx)
+	if err != nil {
+		return err
+	}
+	if _, present := matchStatus(dl, statuses); present {
+		return fmt.Errorf("delete this job and its data in the download client, then retry deletion here")
+	}
+	path := dl.ImportPath
+	if path == "" {
+		path = dl.SavePath
+	}
+	if path == "" || !s.safePayloadPath(ctx, downloadRef{ID: dl.ID, ImportPath: path}) {
+		return fmt.Errorf("configure a verified completed-folder mapping for this client, then retry deletion")
+	}
+	if err = s.checkStorageIdentity(ctx, path); err != nil {
+		return err
+	}
+	if !payloadAbsent(path) {
+		return fmt.Errorf("remove this job's files in the download client, then retry deletion here")
 	}
 	return nil
 }

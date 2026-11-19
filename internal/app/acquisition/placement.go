@@ -1376,7 +1376,11 @@ func (s *Service) reconcilePlacement(ctx context.Context, p sqlite.Placement) {
 		release()
 		return
 	}
-	_, e := s.db.CommitPlacement(decisionCtx, p)
+	commit := s.db.CommitPlacement
+	if observed, _ := ctx.Value(activityDispositionContext{}).(bool); observed {
+		commit = s.db.CommitObservedPlacement
+	}
+	_, e := commit(decisionCtx, p)
 	release()
 	if e != nil {
 		s.log.Error("placement commit remains pending", "id", p.ID, "err", e)

@@ -78,6 +78,7 @@ test('history shows the outcome and a log correlated to that job', async ({ page
   await mockActivity(page, () => [
     { ...item(501, 'history'), state: 'failed', reason: 'Verification failed. Job files removed.' },
     { ...item(502, 'history'), reason: 'Added to your library.' },
+    { ...item(-88, 'history'), mediaItemId: 0, title: 'Older publication' },
   ])
   await page.route('**/api/v1/activity/jobs/501/log', route => route.fulfill({ json: {
     title: 'Import title 501', summary: 'Verification failed. Job files removed.',
@@ -85,6 +86,10 @@ test('history shows the outcome and a log correlated to that job', async ({ page
   } }))
   await page.route('**/api/v1/activity/jobs/502/log', route => route.fulfill({ json: {
     title: 'Import title 502', summary: 'Added to your library.', events: [],
+  } }))
+  await page.route('**/api/v1/activity/jobs/-88/log', route => route.fulfill({ json: {
+    title: 'Older publication', summary: 'Added to your library.',
+    events: [{ at: '2026-10-10T12:00:00Z', step: 'Import completed', message: 'A Library file was recorded.' }],
   } }))
   await page.goto('/activity#history')
   await expect(attempt(page, 501)).toContainText('Verification failed. Job files removed.')
@@ -96,4 +101,7 @@ test('history shows the outcome and a log correlated to that job', async ({ page
   await attempt(page, 502).getByRole('button', { name: 'Job log' }).click()
   await expect(dialog).toContainText('No detailed events remain for this job.')
   await expect(dialog).not.toContainText('Two download blocks')
+  await page.keyboard.press('Escape')
+  await attempt(page, -88).getByRole('button', { name: 'Job log' }).click()
+  await expect(dialog).toContainText('A Library file was recorded.')
 })

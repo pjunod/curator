@@ -230,6 +230,11 @@ func (d *DB) CommitPlacement(ctx context.Context, p Placement) (int64, error) {
 			return 0, err
 		}
 	}
+	if observed, ok := ctx.Value(observedPlacementCommit{}).(observedPlacementCommit); ok {
+		if observed.ID != p.ID || observed.Generation != p.PublishedFileGeneration || prepared.PublishedFileGeneration != observed.Generation {
+			return 0, ErrPlacementGenerationChanged
+		}
+	}
 	if p.ImportEpoch != nil {
 		publication, e := placementPublication(p)
 		if e != nil {
@@ -460,6 +465,26 @@ func (d *DB) CommitPlacement(ctx context.Context, p Placement) (int64, error) {
 		return 0, err
 	}
 	return fid, tx.Commit()
+}
+
+type observedPlacementCommit struct{ ID, Generation string }
+
+// CommitObservedPlacement records bytes already published under the original
+// grant. It grants no writer permission and cannot publish an old intention.
+// The placement coordinator proves and pins the installed object immediately
+// before this call while holding the download, title and storage authority.
+func (d *DB) CommitObservedPlacement(ctx context.Context, p Placement) (int64, error) {
+	if p.ID == "" || p.PublishedFileGeneration == "" || p.ImportEpoch == nil {
+		return 0, ErrPlacementGenerationChanged
+	}
+	recorded, e := d.GetPlacement(ctx, p.ID)
+	if e != nil {
+		return 0, e
+	}
+	if recorded.PublishedFileGeneration != p.PublishedFileGeneration || recorded.SourceGeneration != p.SourceGeneration || recorded.Target != p.Target {
+		return 0, ErrPlacementGenerationChanged
+	}
+	return d.CommitPlacement(context.WithValue(ctx, observedPlacementCommit{}, observedPlacementCommit{ID: p.ID, Generation: p.PublishedFileGeneration}), p)
 }
 
 func (d *DB) LibraryRevision(ctx context.Context) (int64, error) {

@@ -1992,6 +1992,17 @@ paths:
         "400":
           description: Invalid view, scope or pagination.
 
+  /system/storage-observations:
+    get:
+      operationId: getStorageObservations
+      summary: Read cached capacity and cleanup facts from each storage owner
+      responses:
+        "200":
+          description: Root-only observations with source times; missing measurements stay unknown.
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+
   /activity/selections:
     post:
       operationId: createActivitySelection

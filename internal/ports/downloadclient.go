@@ -134,6 +134,7 @@ type DownloadControl struct {
 	Lifecycle   string `json:"lifecycle"`
 	Cause       string `json:"cause"`
 	Stage       string `json:"stage"`
+	ManualPause bool   `json:"manual_pause,omitempty"`
 	RetryPolicy string `json:"retry_policy"`
 	Message     string `json:"message"`
 	Instance    string `json:"instance"`

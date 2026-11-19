@@ -176,17 +176,19 @@ func commitImportPublication(ctx context.Context, tx *sql.Tx, p ImportPublicatio
 	if _, err := guardImportAttempt(ctx, tx, p.ImportAttemptKey); err != nil {
 		return err
 	}
-	var source, target, payload, outcome string
-	if err := tx.QueryRowContext(ctx, `SELECT source,target,payload,outcome FROM import_publication_authorizations WHERE download_id=? AND generation_key=? AND attempt_epoch=? AND publication_id=?`, p.DownloadID, p.GenerationKey, p.Epoch, p.ID).Scan(&source, &target, &payload, &outcome); err != nil {
+	var source, target, payload, outcome, resolution string
+	if err := tx.QueryRowContext(ctx, `SELECT source,target,payload,outcome,resolution FROM import_publication_authorizations WHERE download_id=? AND generation_key=? AND attempt_epoch=? AND publication_id=?`, p.DownloadID, p.GenerationKey, p.Epoch, p.ID).Scan(&source, &target, &payload, &outcome, &resolution); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return ErrImportAttemptChanged
 		}
 		return err
 	}
-	if source != p.Source || target != p.Target || payload != p.Payload || (outcome != "pending" && outcome != "committed") {
+	observed, _ := ctx.Value(observedPlacementCommit{}).(observedPlacementCommit)
+	provedObservation := observed.ID == p.PlacementID && observed.Generation != "" && (resolution == "retained_for_review" || resolution == "operator_adopted")
+	if source != p.Source || target != p.Target || payload != p.Payload || (outcome != "pending" && outcome != "committed" && !(outcome == "reconciled" && provedObservation)) {
 		return ErrImportAttemptChanged
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE import_publication_authorizations SET outcome='committed',resolved_at=COALESCE(resolved_at,?) WHERE download_id=? AND generation_key=? AND attempt_epoch=? AND publication_id=? AND outcome IN ('pending','committed')`, time.Now().UnixMilli(), p.DownloadID, p.GenerationKey, p.Epoch, p.ID); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE import_publication_authorizations SET outcome='committed',resolution='',resolved_at=COALESCE(resolved_at,?) WHERE download_id=? AND generation_key=? AND attempt_epoch=? AND publication_id=? AND (outcome IN ('pending','committed') OR (? AND outcome='reconciled'))`, time.Now().UnixMilli(), p.DownloadID, p.GenerationKey, p.Epoch, p.ID, provedObservation); err != nil {
 		return err
 	}
 	return resolveImportFile(ctx, tx, p.ImportAttemptKey, p.Source, "committed", p.PlacementID)

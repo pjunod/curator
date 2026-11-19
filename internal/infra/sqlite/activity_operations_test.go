@@ -118,11 +118,15 @@ func TestActivityLatePublicationReopensOnlyItsDownloadGeneration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := db.VerifyDownloadDeletion(ctx, job.ID, job.GenerationKey); err != nil {
+	revision, err := db.DispositionRevision(ctx, job.ID, job.GenerationKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.VerifyDownloadDeletion(ctx, job.ID, job.GenerationKey, revision); err != nil {
 		t.Fatal(err)
 	}
 	operation.Targets[0].State = "succeeded"
-	if err := db.SaveActivityOperation(ctx, &operation); err != nil {
+	if err := db.SaveActivityTarget(ctx, &operation, 0); err != nil {
 		t.Fatal(err)
 	}
 	old, err := db.CreateActivityOperation(ctx, "stale-delete", "delete", previous, []ActivityTarget{{ActivityIdentity: previous}})
@@ -160,7 +164,7 @@ func TestActivityLatePublicationReopensOnlyItsDownloadGeneration(t *testing.T) {
 	}
 	// A worker holding the previous operation snapshot must not overwrite the
 	// reopened target if it resumes after the late publication transaction.
-	if err := db.SaveActivityOperation(ctx, &operation); err == nil {
+	if err := db.SaveActivityTarget(ctx, &operation, 0); err == nil {
 		t.Fatal("a stale worker overwrote the reopened deletion")
 	}
 	reopened, err := db.ActivityOperation(ctx, operation.ID)
@@ -184,4 +188,80 @@ func TestActivityLatePublicationReopensOnlyItsDownloadGeneration(t *testing.T) {
 	if _, err := db.ClaimJob(ctx, "activity-worker-2", nil, time.Minute); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("late publication queued an extra operation: %v", err)
 	}
+}
+
+func TestActivityBulkProgressCannotOverwriteNewDispositionRevision(t *testing.T) {
+	db, job, attempt := importControlFixture(t)
+	ctx := context.Background()
+	other, err := db.InsertDownloadRecord(ctx, Download{MediaItemID: job.MediaItemID, Protocol: "manual", State: "failed", ReleaseTitle: "second bulk member"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := ActivityIdentity{ID: job.ID, GenerationKey: job.GenerationKey, Epoch: strconv.FormatInt(attempt.Epoch, 10)}
+	second := ActivityIdentity{ID: other.ID, GenerationKey: other.GenerationKey, Epoch: "0"}
+	bulk, err := db.CreateActivityOperation(ctx, "old-bulk", "delete", []ActivityIdentity{first, second},
+		[]ActivityTarget{{ActivityIdentity: first}, {ActivityIdentity: second}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldRevision, err := db.DispositionRevision(ctx, first.ID, first.GenerationKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.VerifyDownloadDeletion(ctx, first.ID, first.GenerationKey, oldRevision); err != nil {
+		t.Fatal(err)
+	}
+	bulk.Targets[0].State = "succeeded"
+	bulk.Targets[0].DispositionRevision = oldRevision
+	if err := db.SaveActivityTarget(ctx, &bulk, 0); err != nil {
+		t.Fatal(err)
+	}
+
+	latest, err := db.CreateActivityOperation(ctx, "new-single", "delete", first, []ActivityTarget{{ActivityIdentity: first}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.W.ExecContext(ctx, `UPDATE activity_operations SET created_at=(SELECT created_at+1 FROM activity_operations WHERE id=?) WHERE id=?`, bulk.ID, latest.ID); err != nil {
+		t.Fatal(err)
+	}
+	late, err := db.InsertPublication(ctx, PublicationWrite{DownloadID: first.ID, Kind: "salvage", Generation: "late-revision", Path: "/completed/late-revision", Source: "none", Cohort: "live"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	newRevision, err := db.DispositionRevision(ctx, first.ID, first.GenerationKey)
+	if err != nil || newRevision <= oldRevision {
+		t.Fatalf("late publication did not advance the disposition revision: old=%d current=%d err=%v", oldRevision, newRevision, err)
+	}
+	bulk.Targets[1].State = "running"
+	if err := db.SaveActivityTarget(ctx, &bulk, 1); err != nil {
+		t.Fatal(err)
+	}
+	assertState := func(want string) {
+		t.Helper()
+		var state string
+		err := db.R.QueryRowContext(ctx, `SELECT state FROM download_dispositions WHERE download_id=? AND generation_key=?`, first.ID, first.GenerationKey).Scan(&state)
+		if err != nil || state != want {
+			t.Fatalf("old bulk member changed the canonical disposition: state=%q want=%q err=%v", state, want, err)
+		}
+	}
+	assertState("requested")
+	if err := db.SetPublicationState(ctx, late, "removed", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.VerifyDownloadDeletion(ctx, first.ID, first.GenerationKey, oldRevision); err == nil {
+		t.Fatal("an earlier worker verified the newer disposition")
+	}
+	if err := db.VerifyDownloadDeletion(ctx, first.ID, first.GenerationKey, newRevision); err != nil {
+		t.Fatal(err)
+	}
+	staleTarget := bulk.Targets[0]
+	staleTarget.State = "blocked"
+	if err := db.SetDispositionProgress(ctx, staleTarget); err != nil {
+		t.Fatal(err)
+	}
+	bulk.Targets[1].State = "blocked"
+	if err := db.SaveActivityTarget(ctx, &bulk, 1); err != nil {
+		t.Fatal(err)
+	}
+	assertState("verified")
 }

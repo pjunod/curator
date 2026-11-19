@@ -319,6 +319,18 @@ func TestEpisodeFailureGrabsEpisodeNotPack(t *testing.T) {
 	if n := f.count(`SELECT COUNT(*) FROM jobs WHERE kind=?`, SeasonSearchJobKind); n != 1 {
 		t.Fatalf("season planner jobs = %d, want one, for the episode with no single release", n)
 	}
+	job, err := f.db.LatestJob(f.ctx, SeasonSearchJobKind)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var checkpoint seasonCheckpoint
+	if err = json.Unmarshal([]byte(job.Payload), &checkpoint); err != nil {
+		t.Fatal(err)
+	}
+	wantOrigin := sqlite.SeasonReplacementOrigin{DownloadID: dl.ID, GenerationKey: dl.GenerationKey}
+	if checkpoint.ReplacementOrigin == nil || *checkpoint.ReplacementOrigin != wantOrigin {
+		t.Fatalf("replacement fallback origin = %+v, want %+v", checkpoint.ReplacementOrigin, wantOrigin)
+	}
 }
 
 // (d) A held row whose stored control is older than anything the terminal

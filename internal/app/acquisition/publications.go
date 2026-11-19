@@ -818,12 +818,23 @@ func (s *Service) completePublication(ctx context.Context, dl sqlite.Download, c
 		w.History = append(w.History, sqlite.HistoryWrite{Type: "import_hold_cleared", MediaItemID: dl.MediaItemID, ReleaseTitle: dl.ReleaseTitle,
 			Data: map[string]any{"publication": pub.Path, "held_since": pub.HeldSince.UnixMilli()}})
 	}
+	disposition, _ := ctx.Value(activityDispositionContext{}).(bool)
+	if disposition {
+		w.DownloadState = ""
+		w.DownloadError = ""
+		w.Handoff = nil
+		w.RegrabWantables = nil
+		w.History = []sqlite.HistoryWrite{{Type: "job_files_resolved", MediaItemID: dl.MediaItemID, ReleaseTitle: dl.ReleaseTitle, Data: map[string]any{"downloadId": dl.ID, "generation": dl.GenerationKey, "transfer": dl.Transfer, "publicationId": pub.ID, "placed": placed, "message": "Installed files preserved; remaining job files selected for deletion"}}}
+	}
 	if err := s.db.CompletePublicationImport(ctx, w); err != nil {
 		if errors.Is(err, sqlite.ErrPublicationMoved) {
 			s.log.Info("publication moved on before this import completed; nothing written", "publication", pub.ID)
 			return nil
 		}
 		return err
+	}
+	if disposition {
+		return nil
 	}
 	if w.State == "imported" {
 		// Only a completed publication decides the row: a salvage imports
@@ -1382,6 +1393,11 @@ func (s *Service) PlacePublicationFiles(ctx context.Context, downloadID, publica
 	dl, err := s.db.GetDownload(ctx, downloadID)
 	if err != nil {
 		return err
+	}
+	if deleted, e := s.db.DownloadDeletionRequested(ctx, dl.ID, dl.GenerationKey); e != nil {
+		return e
+	} else if deleted {
+		return fmt.Errorf("this job is being deleted; file placement is no longer available")
 	}
 	files, err := s.db.ListPublicationFiles(ctx, pub.ID)
 	if err != nil {

@@ -6,6 +6,7 @@ import (
 	"maps"
 	"net/http"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -127,10 +128,28 @@ func TestActivityActionReplayAndPrivateOwnerReceiptSurviveReopen(t *testing.T) {
 		t.Fatal(err)
 	}
 	const privateReceipt = "worker-only disposition request"
+	if _, err := e.db.W.ExecContext(ctx, `UPDATE download_dispositions SET owner_payload=? WHERE download_id=? AND generation_key=?`,
+		privateReceipt, current.ID, current.GenerationKey); err != nil {
+		t.Fatal(err)
+	}
+	current.Handoff = []sqlite.HandoffEntry{{At: 1000, Step: "copy_started", Detail: "Copy began."}}
+	if err := e.db.UpdateDownloadHandoff(ctx, current); err != nil {
+		t.Fatal(err)
+	}
+	stored.Targets[0].State = "running"
+	stored.Targets[0].Message = "Waiting for the writer."
+	if err := e.db.SaveActivityTarget(ctx, &stored, 0); err != nil {
+		t.Fatal(err)
+	}
 	stored.Targets[0].OwnerPayload = privateReceipt
 	stored.Targets[0].State = "blocked"
 	stored.Targets[0].Message = "Reconnect the download drive."
-	if err := e.db.SaveActivityOperation(ctx, &stored); err != nil {
+	if err := e.db.SaveActivityTarget(ctx, &stored, 0); err != nil {
+		t.Fatal(err)
+	}
+	// Adjacent source timestamps inside the same second must keep their order.
+	if _, err := e.db.W.ExecContext(ctx, `UPDATE activity_action_events SET at=CASE step WHEN 'running' THEN 1100 ELSE 1200 END
+		WHERE operation_id=? AND download_id=? AND step IN ('running','blocked')`, requestID, current.ID); err != nil {
 		t.Fatal(err)
 	}
 
@@ -154,8 +173,13 @@ func TestActivityActionReplayAndPrivateOwnerReceiptSurviveReopen(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if persisted.Targets[0].OwnerPayload != privateReceipt {
-		t.Fatal("the new store lost the writer's disposition receipt")
+	var canonical string
+	if err := reopened.R.QueryRowContext(ctx, `SELECT owner_payload FROM download_dispositions WHERE download_id=? AND generation_key=?`,
+		current.ID, current.GenerationKey).Scan(&canonical); err != nil || canonical != privateReceipt {
+		t.Fatalf("canonical owner request did not survive reopen: %v", err)
+	}
+	if len(persisted.Targets) != 2 || persisted.Targets[0].OwnerPayload != privateReceipt {
+		t.Fatal("the new store lost the writer's operation projection")
 	}
 
 	checkResult := func(response *httptestRecorder, status int) {
@@ -174,6 +198,25 @@ func TestActivityActionReplayAndPrivateOwnerReceiptSurviveReopen(t *testing.T) {
 	checkResult(&httptestRecorder{do(t, handler, http.MethodPost, "/api/v1/activity/actions", body)}, http.StatusAccepted)
 	conflict := strings.Replace(body, `"delete"`, `"retry"`, 1)
 	(&httptestRecorder{do(t, handler, http.MethodPost, "/api/v1/activity/actions", conflict)}).expect(t, http.StatusConflict)
+
+	var log struct {
+		Events []struct{ Message string } `json:"events"`
+	}
+	jobLog := &httptestRecorder{do(t, handler, http.MethodGet, fmt.Sprintf("/api/v1/activity/jobs/%d/log", current.ID), "")}
+	jobLog.expect(t, http.StatusOK).into(t, &log)
+	var messages []string
+	for _, event := range log.Events {
+		switch event.Message {
+		case "Copy began.", "Waiting for the writer.", "Reconnect the download drive.":
+			messages = append(messages, event.Message)
+		}
+	}
+	if !slices.Equal(messages, []string{"Copy began.", "Waiting for the writer.", "Reconnect the download drive."}) {
+		t.Fatalf("job log lost an earlier transition or changed its causal order: %v", messages)
+	}
+	if strings.Contains(jobLog.Body.String(), privateReceipt) {
+		t.Fatal("job log exposed the private owner request")
+	}
 
 	var workers int
 	if err := reopened.R.QueryRowContext(ctx, `SELECT COUNT(*) FROM jobs WHERE kind=? AND dedupe_key=?`, sqlite.ActivityActionJobKind, "activity:"+requestID).Scan(&workers); err != nil || workers != 1 {

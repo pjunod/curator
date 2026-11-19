@@ -19,6 +19,7 @@ type ActivityIdentity struct {
 	Epoch         string `json:"epoch"`
 }
 type ActivityTarget struct {
+	DispositionRevision int64 `json:"dispositionRevision,omitempty"`
 	ActivityIdentity
 	Title   string `json:"title"`
 	State   string `json:"state"`
@@ -158,6 +159,15 @@ func (d *DB) CreateActivityOperation(ctx context.Context, id, action string, pay
 	if _, e = tx.ExecContext(ctx, `INSERT INTO activity_operations VALUES(?,?,?,?,?,?)`, id, fingerprint, action, string(b), now, now); e != nil {
 		return ActivityOperation{}, e
 	}
+	for _, t := range targets {
+		b, e := json.Marshal(t)
+		if e != nil {
+			return ActivityOperation{}, e
+		}
+		if _, e = tx.ExecContext(ctx, `INSERT INTO activity_operation_targets VALUES(?,?,?,?,?)`, id, t.ID, t.GenerationKey, t.State, string(b)); e != nil {
+			return ActivityOperation{}, e
+		}
+	}
 	jobPayload, _ := json.Marshal(map[string]string{"id": id})
 	if _, e = tx.ExecContext(ctx, `INSERT INTO jobs(kind,payload,priority,run_after,max_attempts,dedupe_key,created_at,updated_at) VALUES(?,?,10,?,1000000,?,?,?)`, ActivityActionJobKind, string(jobPayload), now, "activity:"+id, now, now); e != nil {
 		return ActivityOperation{}, e
@@ -168,29 +178,49 @@ func (d *DB) CreateActivityOperation(ctx context.Context, id, action string, pay
 	return d.ActivityOperation(ctx, id)
 }
 func (d *DB) ActivityOperation(ctx context.Context, id string) (ActivityOperation, error) {
-	o := ActivityOperation{ID: id}
-	var b string
-	if e := d.R.QueryRowContext(ctx, `SELECT action,targets,updated_at FROM activity_operations WHERE id=?`, id).Scan(&o.Action, &b, &o.Version); e != nil {
+	o := ActivityOperation{ID: id, Targets: []ActivityTarget{}}
+	if e := d.R.QueryRowContext(ctx, `SELECT action,updated_at FROM activity_operations WHERE id=?`, id).Scan(&o.Action, &o.Version); e != nil {
 		return o, e
 	}
-	if e := json.Unmarshal([]byte(b), &o.Targets); e != nil {
+	rows, e := d.R.QueryContext(ctx, `SELECT payload FROM activity_operation_targets WHERE operation_id=? ORDER BY download_id`, id)
+	if e != nil {
+		return o, e
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var b string
+		var t ActivityTarget
+		if e = rows.Scan(&b); e != nil {
+			return o, e
+		}
+		if e = json.Unmarshal([]byte(b), &t); e != nil {
+			return o, e
+		}
+		o.Targets = append(o.Targets, t)
+	}
+	if e = rows.Err(); e != nil {
 		return o, e
 	}
 	o.Summarize()
 	return o, nil
 }
+
+// SaveActivityTarget touches only the active member, so a large bulk request
+// cannot repeatedly rewrite its entire membership on the single writer lane.
+func (d *DB) SaveActivityTarget(ctx context.Context, o *ActivityOperation, index int) error {
+	return d.saveActivityTargets(ctx, o, []ActivityTarget{o.Targets[index]})
+}
 func (d *DB) SaveActivityOperation(ctx context.Context, o *ActivityOperation) error {
-	b, e := json.Marshal(o.Targets)
-	if e != nil {
-		return e
-	}
-	now := time.Now().UnixNano()
+	return d.saveActivityTargets(ctx, o, o.Targets)
+}
+func (d *DB) saveActivityTargets(ctx context.Context, o *ActivityOperation, targets []ActivityTarget) error {
 	tx, e := d.W.BeginTx(ctx, nil)
 	if e != nil {
 		return e
 	}
 	defer func() { _ = tx.Rollback() }()
-	res, e := tx.ExecContext(ctx, `UPDATE activity_operations SET targets=?,updated_at=? WHERE id=? AND updated_at=?`, string(b), now, o.ID, o.Version)
+	now := time.Now().UnixNano()
+	res, e := tx.ExecContext(ctx, `UPDATE activity_operations SET updated_at=? WHERE id=? AND updated_at=?`, now, o.ID, o.Version)
 	if e != nil {
 		return e
 	}
@@ -199,18 +229,29 @@ func (d *DB) SaveActivityOperation(ctx context.Context, o *ActivityOperation) er
 		return e
 	}
 	if n != 1 {
-		return fmt.Errorf("operation changed while reconciling; retrying from its durable snapshot")
+		return fmt.Errorf("operation changed while reconciling; retry from its durable snapshot")
 	}
-	if o.Action == "delete" || o.Action == "retry" {
-		for _, t := range o.Targets {
-			state := "requested"
-			if t.State == "blocked" {
-				state = "blocked"
-			}
-			if t.State == "succeeded" {
-				state = "verified"
-			}
-			if _, e = tx.ExecContext(ctx, `UPDATE download_dispositions SET state=?,message=? WHERE download_id=? AND generation_key=?`, state, t.Message, t.ID, t.GenerationKey); e != nil {
+	for _, t := range targets {
+		var old string
+		if e = tx.QueryRowContext(ctx, `SELECT payload FROM activity_operation_targets WHERE operation_id=? AND download_id=? AND generation_key=?`, o.ID, t.ID, t.GenerationKey).Scan(&old); e != nil {
+			return e
+		}
+		b, e := json.Marshal(t)
+		if e != nil {
+			return e
+		}
+		if string(b) == old {
+			continue
+		}
+		if _, e = tx.ExecContext(ctx, `UPDATE activity_operation_targets SET state=?,payload=? WHERE operation_id=? AND download_id=? AND generation_key=?`, t.State, string(b), o.ID, t.ID, t.GenerationKey); e != nil {
+			return e
+		}
+		var prior ActivityTarget
+		if e = json.Unmarshal([]byte(old), &prior); e != nil {
+			return e
+		}
+		if prior.State != t.State || prior.Message != t.Message {
+			if _, e = tx.ExecContext(ctx, `INSERT INTO activity_action_events(operation_id,download_id,generation_key,at,step,message) VALUES(?,?,?,?,?,?)`, o.ID, t.ID, t.GenerationKey, time.Now().UnixMilli(), t.State, t.Message); e != nil {
 				return e
 			}
 		}
@@ -234,8 +275,8 @@ func (d *DB) DownloadDeletionStatus(ctx context.Context, id int64, generation st
 	}
 	return err == nil, at > 0, err
 }
-func (d *DB) VerifyDownloadDeletion(ctx context.Context, id int64, generation string) error {
-	res, e := d.W.ExecContext(ctx, `UPDATE download_dispositions SET verified_at=?,state='verified' WHERE download_id=? AND generation_key=? AND NOT EXISTS(SELECT 1 FROM publications p WHERE p.download_id=download_dispositions.download_id AND p.state!='removed')`, time.Now().UnixMilli(), id, generation)
+func (d *DB) VerifyDownloadDeletion(ctx context.Context, id int64, generation string, revision int64) error {
+	res, e := d.W.ExecContext(ctx, `UPDATE download_dispositions SET verified_at=?,state='verified' WHERE download_id=? AND generation_key=? AND revision=? AND NOT EXISTS(SELECT 1 FROM publications p WHERE p.download_id=download_dispositions.download_id AND p.state!='removed')`, time.Now().UnixMilli(), id, generation, revision)
 	if e != nil {
 		return e
 	}
@@ -246,5 +287,20 @@ func (d *DB) VerifyDownloadDeletion(ctx context.Context, id int64, generation st
 	if n != 1 {
 		return fmt.Errorf("new publication arrived while deleting; cleanup is still pending")
 	}
-	return nil
+	_, e = d.W.ExecContext(ctx, `UPDATE downloads SET updated_at=? WHERE id=? AND generation_key=?`, time.Now().UnixMilli(), id, generation)
+	return e
+}
+
+func (d *DB) DispositionRevision(ctx context.Context, id int64, generation string) (int64, error) {
+	var revision int64
+	e := d.R.QueryRowContext(ctx, `SELECT revision FROM download_dispositions WHERE download_id=? AND generation_key=?`, id, generation).Scan(&revision)
+	return revision, e
+}
+func (d *DB) SetDispositionProgress(ctx context.Context, t ActivityTarget) error {
+	state := "requested"
+	if t.State == "blocked" {
+		state = "blocked"
+	}
+	_, e := d.W.ExecContext(ctx, `UPDATE download_dispositions SET state=?,message=? WHERE download_id=? AND generation_key=? AND revision=? AND verified_at=0`, state, t.Message, t.ID, t.GenerationKey, t.DispositionRevision)
+	return e
 }

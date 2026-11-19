@@ -41,8 +41,8 @@ test('storage comparison previews impact, waits for refresh and accepts exact re
   const observedIdentity = 'linux-v1\u0000ext4\u0000UUID=replacement-volume\u0000/'
   let accepted = false
   let submitted: Record<string, unknown> | undefined
-  const root = { path: '/completed/replacement', checkedAt: new Date().toISOString(), lastCompleteAt: new Date().toISOString(), storageIdentity: expectedIdentity, observedStorageIdentity: observedIdentity, error: 'Expected storage changed: original volume; observed replacement volume', entries: [], bytes: 0 }
-  await page.route('**/api/v1/downloads/inventory', route => route.fulfill({ json: { roots: [{ ...root, ...(accepted ? { storageIdentity: observedIdentity, error: '' } : {}) }], bytes: 0, attention: 0 } }))
+  const root = { owner: 'Curator', role: 'downloads', status: 'unavailable', path: '/completed/replacement', observedAt: new Date().toISOString(), storageIdentity: expectedIdentity, observedStorageIdentity: observedIdentity, error: 'Expected storage changed: original volume; observed replacement volume' }
+  await page.route('**/api/v1/system/storage-observations', route => route.fulfill({ json: { roots: [{ ...root, ...(accepted ? { storageIdentity: observedIdentity, error: '' } : {}) }], cleanup: {} } }))
   let previews = 0
   let releasePreview: (() => void) | undefined
   await page.route('**/api/v1/downloads/inventory/storage-change/preview', async route => {

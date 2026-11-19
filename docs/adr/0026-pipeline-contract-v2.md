@@ -356,8 +356,11 @@ restart, and publications left in Resolve for their subtitles and `.nfo`s.
 37. **Delete is durable intent for an exact attempt.** Curator binds the
     request to the download generation and import epoch. Accepting it fences
     new work on that attempt. Runner disposition binds the transfer token,
-    instance, admission generation and applicable artifact identity. Curator
-    preserves the actual terminal fact and records verified deletion after
+    instance, admission generation and applicable artifact identity. One canonical
+    owner request per generation survives repeated commands and worker restarts.
+    Scheduling fences follow the affected acquisition lineage. A late
+    publication reopens cleanup for its own generation and cannot reopen
+    the job for import. Curator preserves the actual terminal fact and records verified deletion after
     the owner and Curator cleanup obligations settle. A pending or blocked
     action retains its reason and supports reconciliation.
 38. **Historical cleanup requires recorded authority.** This extends the M4
@@ -369,7 +372,9 @@ restart, and publications left in Resolve for their subtitles and `.nfo`s.
     and receipts remain readable. Imported Library files, manual-import
     originals, and unrelated files remain outside the action's authority.
 39. **Selections and actions live on the server.** Bulk Activity selections
-    freeze the attempts and their identities. Durable workers report each
-    accepted, pending or blocked action. Historical transfer and import facts
-    stay available for History and job logs. Committed placement and Cinema
-    notification continue through the existing outbox.
+    freeze the attempts and their identities. The operation stores each target
+    independently, so updates preserve results for other targets. Durable
+    workers report accepted, pending or blocked actions. History reads
+    immutable job events. Storage reads root-level observations for capacity
+    and cleanup status. Committed placement and Cinema notification continue
+    through the existing outbox.

@@ -9,10 +9,19 @@ test('Storage shows measured capacity, last cleanup run and download root config
     { id: 1, path: '/media/library', kind: 'movie', accessible: true, freeBytes: 24 * 1024 ** 3, totalBytes: 80 * 1024 ** 3 },
     { id: 2, path: '/media/books', kind: 'book', accessible: false, freeBytes: 0 },
   ] }))
-  await page.route('**/api/v1/downloads/inventory', route => route.fulfill({ json: {
-    bytes: 1000, attention: 1,
-    roots: [{ path: '/media/completed', checkedAt: at, lastCompleteAt: at, error: 'Could not reach the download drive.',
-      entries: [{ path: '/media/completed/unrecognized.rar', bytes: 1000 }] }],
+  let fullInventoryReads = 0
+  await page.route('**/api/v1/downloads/inventory', route => {
+    fullInventoryReads++
+    return route.fulfill({ json: { roots: [] } })
+  })
+  await page.route('**/api/v1/system/storage-observations', route => route.fulfill({ json: {
+    cleanup: { logicalBytesRemoved: 2 * 1024 ** 3, filesRemoved: 3, lastRemovalAt: at },
+    roots: [
+      { owner: 'Curator', role: 'downloads', path: '/media/completed', observedAt: at,
+        status: 'unavailable', error: 'Could not reach the download drive.' },
+      { owner: 'Runner', name: 'Living room', role: 'processing', path: '/runner/processing', observedAt: at,
+        status: 'available', freeBytes: 0, totalBytes: 10 * 1024 ** 3 },
+    ],
   } }))
   await page.route('**/api/v1/system/tasks', route => route.fulfill({ json: [
     { name: 'downloads.cleanup', intervalSeconds: 300, lastRunAt: at, lastError: 'Could not reach the download drive.', running: false },
@@ -26,8 +35,11 @@ test('Storage shows measured capacity, last cleanup run and download root config
   await expect(downloads).toContainText('/media/completed')
   await expect(downloads).toContainText('Could not reach the download drive.')
   await expect(downloads).toContainText('Available space unknown')
-  await expect(downloads).not.toContainText('unrecognized.rar')
+  await expect(downloads.getByText('Runner · Living room · processing', { exact: false })).toBeVisible()
+  await expect(downloads).toContainText('0 B free of 10.0 GB')
+  expect(fullInventoryReads).toBe(0)
   await expect(page.getByRole('region', { name: 'Automatic cleanup' })).toContainText('Cleanup reported an error')
+  await expect(page.locator('#storage')).toContainText('3 files · 2.0 GB in logical file sizes')
   await expect(page.locator('#storage')).not.toContainText('reclaimed')
   await page.getByRole('link', { name: 'Manage storage folders' }).click()
   await expect(page.getByLabel('Download storage folders', { exact: true })).toBeVisible()

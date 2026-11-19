@@ -19,16 +19,17 @@ var ErrAcquisitionSnapshotChanged = errors.New("acquisition snapshot changed")
 
 // AcquisitionPlan has public bounded decision facts, never transport URLs.
 type AcquisitionPlan struct {
-	ID                  int64           `json:"id"`
-	MediaItemID         int64           `json:"mediaItemId"`
-	CopyID              int64           `json:"copyId"`
-	Season              int             `json:"season"`
-	State               string          `json:"state"`
-	Revision            int64           `json:"revision"`
-	PolicyVersion       int             `json:"policyVersion"`
-	SnapshotFingerprint string          `json:"snapshotFingerprint"`
-	Decision            json.RawMessage `json:"decision"`
-	AddedAt             time.Time       `json:"addedAt"`
+	ID                  int64                    `json:"id"`
+	MediaItemID         int64                    `json:"mediaItemId"`
+	CopyID              int64                    `json:"copyId"`
+	Season              int                      `json:"season"`
+	State               string                   `json:"state"`
+	Revision            int64                    `json:"revision"`
+	PolicyVersion       int                      `json:"policyVersion"`
+	SnapshotFingerprint string                   `json:"snapshotFingerprint"`
+	Decision            json.RawMessage          `json:"decision"`
+	AddedAt             time.Time                `json:"addedAt"`
+	ReplacementOrigin   *SeasonReplacementOrigin `json:"-"`
 }
 
 // Admission requires a library/configuration revision read before discovery.
@@ -39,6 +40,9 @@ func (d *DB) AdmitAcquisitionPlan(ctx context.Context, p AcquisitionPlan, revisi
 		return 0, err
 	}
 	defer func() { _ = tx.Rollback() }()
+	if err = checkSeasonReplacementOrigin(ctx, tx, p.ReplacementOrigin); err != nil {
+		return 0, err
+	}
 	var current int64
 	if err = tx.QueryRowContext(ctx, `SELECT revision FROM lifecycle_library_revision WHERE id=1`).Scan(&current); err != nil {
 		return 0, err
@@ -47,7 +51,12 @@ func (d *DB) AdmitAcquisitionPlan(ctx context.Context, p AcquisitionPlan, revisi
 		return 0, ErrAcquisitionSnapshotChanged
 	}
 	now := time.Now().UnixMilli()
-	res, err := tx.ExecContext(ctx, `INSERT INTO acquisition_plans(media_item_id,copy_id,season,state,snapshot_fingerprint,decision,added_at,updated_at) VALUES(?,?,?,'admitted',?,?,?,?)`, p.MediaItemID, p.CopyID, p.Season, p.SnapshotFingerprint, string(p.Decision), now, now)
+	var origin SeasonReplacementOrigin
+	if p.ReplacementOrigin != nil {
+		origin = *p.ReplacementOrigin
+	}
+	res, err := tx.ExecContext(ctx, `INSERT INTO acquisition_plans(media_item_id,copy_id,season,state,snapshot_fingerprint,decision,added_at,updated_at,replacement_origin_id,replacement_origin_generation)
+		VALUES(?,?,?,'admitted',?,?,?,?,?,?)`, p.MediaItemID, p.CopyID, p.Season, p.SnapshotFingerprint, string(p.Decision), now, now, origin.DownloadID, origin.GenerationKey)
 	if err != nil {
 		return 0, err
 	}
@@ -121,7 +130,12 @@ func (d *DB) GetAcquisitionPlan(ctx context.Context, id int64) (AcquisitionPlan,
 	var p AcquisitionPlan
 	var raw string
 	var added int64
-	err := d.R.QueryRowContext(ctx, `SELECT id,media_item_id,copy_id,season,state,revision,policy_version,snapshot_fingerprint,decision,added_at FROM acquisition_plans WHERE id=?`, id).Scan(&p.ID, &p.MediaItemID, &p.CopyID, &p.Season, &p.State, &p.Revision, &p.PolicyVersion, &p.SnapshotFingerprint, &raw, &added)
+	var origin SeasonReplacementOrigin
+	err := d.R.QueryRowContext(ctx, `SELECT id,media_item_id,copy_id,season,state,revision,policy_version,snapshot_fingerprint,decision,added_at,replacement_origin_id,replacement_origin_generation FROM acquisition_plans WHERE id=?`, id).
+		Scan(&p.ID, &p.MediaItemID, &p.CopyID, &p.Season, &p.State, &p.Revision, &p.PolicyVersion, &p.SnapshotFingerprint, &raw, &added, &origin.DownloadID, &origin.GenerationKey)
+	if origin.DownloadID != 0 {
+		p.ReplacementOrigin = &origin
+	}
 	p.Decision = json.RawMessage(raw)
 	p.AddedAt = time.UnixMilli(added)
 	return p, err
@@ -176,12 +190,29 @@ func (d *DB) RecentFailedDownloads(ctx context.Context, since time.Time) ([]Down
 	return out, nil
 }
 func (d *DB) ClaimPlannedSubmission(ctx context.Context, id int64) (bool, error) {
-	res, err := d.W.ExecContext(ctx, `UPDATE downloads SET state='grabbed',submission_phase='submitting',updated_at=? WHERE id=? AND state='planned' AND submission_phase='pending' AND superseded=0 AND EXISTS(SELECT 1 FROM acquisition_plans WHERE id=downloads.plan_id AND state IN ('admitted','dispatching','active'))`, time.Now().UnixMilli(), id)
+	tx, err := d.W.BeginTx(ctx, nil)
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	now := time.Now().UnixMilli()
+	ready, err := claimReplacementPlanSubmission(ctx, tx, id, now)
+	if err != nil {
+		return false, err
+	}
+	if !ready {
+		return false, tx.Commit()
+	}
+	res, err := tx.ExecContext(ctx, `UPDATE downloads SET state='grabbed',submission_phase='submitting',updated_at=?
+		WHERE id=? AND state='planned' AND submission_phase='pending' AND superseded=0`, now, id)
 	if err != nil {
 		return false, err
 	}
 	n, err := res.RowsAffected()
-	return n == 1, err
+	if err != nil || n != 1 {
+		return false, err
+	}
+	return true, tx.Commit()
 }
 
 // SetPlannedSubmissionCapabilities pins the negotiated correlation semantics

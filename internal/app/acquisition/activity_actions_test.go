@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/pjunod/monarr/internal/domain"
+	"github.com/pjunod/monarr/internal/domain/quality"
 	"github.com/pjunod/monarr/internal/infra/sqlite"
 	"github.com/pjunod/monarr/internal/ports"
 )
@@ -29,12 +30,15 @@ func claimActivityAction(t *testing.T, db *sqlite.DB, requestID, kind string, ta
 
 func TestActivityActionsReconcileInterruptedScratch(t *testing.T) {
 	for _, tc := range []struct {
-		name, action   string
-		legacy, backup bool
+		name, action, prior string
+		legacy              bool
 	}{
-		{name: "retry an older stage", action: "retry", legacy: true},
+		{name: "retry an owned stage", action: "retry"},
 		{name: "delete an owned stage", action: "delete"},
-		{name: "retain a prior Library backup", action: "delete", backup: true},
+		{name: "preserve an older stage without object identity", action: "retry", legacy: true},
+		{name: "retain a prior Library backup", action: "delete", prior: "different-target"},
+		{name: "restore a prior Library backup", action: "delete", prior: "missing-target"},
+		{name: "resume the prior file link after interruption", action: "delete", prior: "linked-target"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			svc, db, itemID := setup(t, nil, &fakeClient{})
@@ -49,11 +53,22 @@ func TestActivityActionsReconcileInterruptedScratch(t *testing.T) {
 			temporary := writeFile(t, filepath.Join(parent, ".monarr-stage-"+placementID), sourceContents[:12])
 			backup := filepath.Join(parent, ".monarr-prior-"+placementID)
 			priorDigest := ""
-			if tc.backup {
+			if tc.prior != "" {
 				writeFile(t, backup, backupContents)
 				var err error
 				priorDigest, _, err = fileDigest(ctx, backup)
 				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			switch tc.prior {
+			case "missing-target", "linked-target":
+				if err := os.Remove(target); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if tc.prior == "linked-target" {
+				if err := os.Link(backup, target); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -121,10 +136,25 @@ func TestActivityActionsReconcileInterruptedScratch(t *testing.T) {
 					t.Fatalf("%q has %q, want %q: %v", path, body, expected, err)
 				}
 			}
-			assertContents(target, libraryContents)
+			if tc.prior == "missing-target" || tc.prior == "linked-target" {
+				assertContents(target, backupContents)
+				if _, err := os.Lstat(backup); !errors.Is(err, os.ErrNotExist) {
+					t.Fatalf("settled backup name remained: %v", err)
+				}
+			} else {
+				assertContents(target, libraryContents)
+			}
 			assertContents(source, sourceContents)
 
-			if tc.backup {
+			if tc.legacy {
+				assertContents(temporary, sourceContents[:12])
+				if operation.Blocked != 1 || operation.Succeeded != 0 || len(svc.importCh) != 0 {
+					t.Fatalf("file contents alone granted custody of the legacy stage: %+v", operation)
+				}
+				return
+			}
+
+			if tc.prior == "different-target" {
 				assertContents(backup, backupContents)
 				assertContents(temporary, sourceContents[:12])
 				if operation.Blocked != 1 || operation.Succeeded != 0 {
@@ -176,7 +206,7 @@ type activityDispositionRunner struct {
 func (f *activityDispositionRunner) DisposeJob(_ context.Context, jobID string, req ports.RunnerDispositionRequest) (ports.RunnerDisposition, error) {
 	f.calls = append(f.calls, activityDispositionCall{jobID: jobID, request: req})
 	state := "pending"
-	if len(f.calls) > 1 {
+	if len(f.calls) > 2 {
 		state = "verified"
 	}
 	return ports.RunnerDisposition{
@@ -228,22 +258,30 @@ func TestActivityDeleteReplaysExactRunnerIdentityAndPreservesTerminal(t *testing
 			if err != nil || replay.ID != job.ID || replay.LeaseOwner != "restarted-worker" {
 				t.Fatalf("operation was lost across the worker restart: %+v err=%v", replay, err)
 			}
-			if err := fresh.handleActivityAction(f.ctx, replay); err != nil {
+			if err := fresh.handleActivityAction(f.ctx, replay); !errors.Is(err, errActivityPending) {
+				t.Fatalf("owner still has work after restart: %v", err)
+			}
+
+			// A second user action has a different operation ID. The remote
+			// writer must still receive the exact same disposition command.
+			const secondID = "second-user-delete"
+			second := claimActivityAction(t, f.db, secondID, "delete", sqlite.ActivityIdentity{ID: dl.ID, GenerationKey: dl.GenerationKey, Epoch: "0"})
+			if err := fresh.handleActivityAction(f.ctx, second); err != nil {
 				t.Fatal(err)
 			}
 			want := activityDispositionCall{jobID: dl.Handle, request: ports.RunnerDispositionRequest{
-				RequestID: operationID + ":" + strconv.FormatInt(dl.ID, 10), Action: "delete", Transfer: dl.Transfer,
+				RequestID: "curator-delete-" + dl.GenerationKey, Action: "delete", Transfer: dl.Transfer,
 				RunnerInstanceID: admission.RunnerInstanceID, Generation: admission.Generation,
 				SourceArtifactID: admission.SourceArtifactID, SourceGeneration: admission.SourceGeneration,
 			}}
-			if len(owner.calls) != 2 || owner.calls[0] != want || owner.calls[1] != want {
+			if len(owner.calls) != 3 || owner.calls[0] != want || owner.calls[1] != want || owner.calls[2] != want {
 				t.Fatalf("nonidentical or unbound owner commands: %+v", owner.calls)
 			}
 			stored := f.row(dl.ID)
 			if stored.RunnerOutcome != tc.terminal || stored.State != tc.state {
 				t.Fatalf("delete changed the Runner terminal: got %s/%s, want %s/%s", stored.RunnerOutcome, stored.State, tc.terminal, tc.state)
 			}
-			completed, err := f.db.ActivityOperation(f.ctx, operationID)
+			completed, err := f.db.ActivityOperation(f.ctx, secondID)
 			if err != nil || completed.State != "completed" || completed.Succeeded != 1 {
 				t.Fatalf("verified owner did not complete deletion: %+v err=%v", completed, err)
 			}
@@ -292,5 +330,293 @@ func TestActivityLatePublicationRequeuesAsWorkerCompletes(t *testing.T) {
 	afterArrival, err := db.ActivityOperation(ctx, operationID)
 	if err != nil || len(afterArrival.Targets) != 1 || afterArrival.Targets[0].State != "pending" || afterArrival.State != "running" {
 		t.Fatalf("late publication did not reopen the pending target: %+v err=%v", afterArrival, err)
+	}
+}
+
+func TestActivityRetryKeepsWriterContentionPending(t *testing.T) {
+	svc, db, itemID := setup(t, nil, &fakeClient{})
+	ctx := context.Background()
+	source := writeFile(t, filepath.Join(t.TempDir(), "waiting.mkv"), "waiting source")
+	dl, err := db.CommitManualImportAdmission(ctx, sqlite.Download{
+		MediaItemID: itemID, Protocol: "manual", State: "failed", ReleaseTitle: "Busy import", ImportPath: source,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	const operationID = "retry-with-live-writer"
+	job := claimActivityAction(t, db, operationID, "retry", sqlite.ActivityIdentity{ID: dl.ID, GenerationKey: dl.GenerationKey, Epoch: "0"})
+	unlock := svc.lockDownload(dl.ID)
+	err = svc.handleActivityAction(ctx, job)
+	unlock()
+	if !errors.Is(err, errActivityPending) {
+		t.Fatalf("busy writer should leave a retry scheduled: %v", err)
+	}
+	pending, err := db.ActivityOperation(ctx, operationID)
+	if err != nil || pending.State != "running" || pending.Blocked != 0 || len(pending.Targets) != 1 || pending.Targets[0].State != "pending" {
+		t.Fatalf("writer contention became an operator blocker: %+v err=%v", pending, err)
+	}
+	if err := db.RetryJob(ctx, job.ID, errActivityPending.Error(), time.Now().Add(-time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	replay, err := db.ClaimJob(ctx, "retry-worker", nil, time.Minute)
+	if err != nil || replay.ID != job.ID {
+		t.Fatalf("pending operation did not remain claimable: %+v err=%v", replay, err)
+	}
+	svc.importCh = make(chan importJob, 1)
+	if err := svc.handleActivityAction(ctx, replay); err != nil {
+		t.Fatal(err)
+	}
+	done, err := db.ActivityOperation(ctx, operationID)
+	if err != nil || done.State != "completed" || done.Succeeded != 1 {
+		t.Fatalf("the pending retry did not proceed after writer exit: %+v err=%v", done, err)
+	}
+	select {
+	case queued := <-svc.importCh:
+		queued.executionCancel()
+	default:
+		t.Fatal("completed retry did not queue an importer")
+	}
+}
+
+func TestActivityDeleteSeedsUnseenManifestAndReplaysMountedAbsence(t *testing.T) {
+	for _, interrupted := range []bool{false, true} {
+		name := "previously unseen manifest"
+		if interrupted {
+			name = "removed directory awaiting final ledger write"
+		}
+		t.Run(name, func(t *testing.T) {
+			f := setupV2(t, nil)
+			dl, err := f.db.InsertDownloadRecord(f.ctx, sqlite.Download{
+				MediaItemID: f.item, State: "failed", Protocol: "manual", ReleaseTitle: "Unimported local publication",
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			pub := f.publish("unseen-publication", "unseen", map[string]string{epOne + ".mkv": "episode one", epTwo + ".mkv": "episode two"})
+			id, err := f.db.InsertPublication(f.ctx, sqlite.PublicationWrite{
+				DownloadID: dl.ID, Kind: "completed", Generation: pub.Generation, Path: pub.Path, Cohort: "live",
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if n := f.count(`SELECT COUNT(*) FROM publication_files WHERE publication_id=?`, id); n != 0 {
+				t.Fatalf("fixture seeded %d file rows", n)
+			}
+			outside := writeFile(t, filepath.Join(f.root, "neighbor.mkv"), "unrelated bytes")
+			if interrupted {
+				if _, err := f.db.W.ExecContext(f.ctx, `CREATE TRIGGER fail_final_publication_write BEFORE UPDATE OF state ON publications
+					WHEN NEW.state='removed' BEGIN SELECT RAISE(ABORT,'injected final ledger failure'); END`); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			identity := sqlite.ActivityIdentity{ID: dl.ID, GenerationKey: dl.GenerationKey, Epoch: "0"}
+			operationID := "delete-unseen-publication"
+			job := claimActivityAction(t, f.db, operationID, "delete", identity)
+			if err := f.svc.handleActivityAction(f.ctx, job); err != nil {
+				t.Fatal(err)
+			}
+			if interrupted {
+				state, err := f.db.ActivityOperation(f.ctx, operationID)
+				if err != nil || state.Blocked != 1 || exists(pub.Path) {
+					t.Fatalf("fixture missed the window after physical removal: %+v pathExists=%v err=%v", state, exists(pub.Path), err)
+				}
+				if requested, verified, err := f.db.DownloadDeletionStatus(f.ctx, dl.ID, dl.GenerationKey); err != nil || !requested || verified {
+					t.Fatalf("failed final write was reported as verified: requested=%v verified=%v err=%v", requested, verified, err)
+				}
+				if _, err := f.db.W.ExecContext(f.ctx, `DROP TRIGGER fail_final_publication_write`); err != nil {
+					t.Fatal(err)
+				}
+				if err := f.db.CompleteJob(f.ctx, job.ID); err != nil {
+					t.Fatal(err)
+				}
+				operationID = "retry-absent-publication"
+				retry := claimActivityAction(t, f.db, operationID, "retry", identity)
+				if err := f.svc.handleActivityAction(f.ctx, retry); err != nil {
+					t.Fatal(err)
+				}
+			}
+			done, err := f.db.ActivityOperation(f.ctx, operationID)
+			if err != nil || done.Succeeded != 1 || done.State != "completed" {
+				t.Fatalf("publication cleanup never verified: %+v err=%v", done, err)
+			}
+			stored, files := f.publicationFiles(pub.Path)
+			if stored.State != "removed" || len(files) != 2 || exists(pub.Path) {
+				t.Fatalf("manifest files were not retired exactly once: publication=%+v files=%+v", stored, files)
+			}
+			for _, file := range files {
+				if file.Outcome != "discarded" || file.RemovedAt.IsZero() {
+					t.Fatalf("a manifest file has no verified disposal: %+v", file)
+				}
+			}
+			if body, err := os.ReadFile(outside); err != nil || string(body) != "unrelated bytes" {
+				t.Fatalf("deletion crossed its publication scope: %q err=%v", body, err)
+			}
+		})
+	}
+}
+
+func TestActivityDeleteRecoversPartialPackAndCinemaOutboxTogether(t *testing.T) {
+	f := setupV2(t, nil)
+	notifierID, err := f.db.AddNotifier(f.ctx, ports.NotifierConfig{
+		Type: "plurx", Name: "Cinema", Enabled: true, OnImport: true, Settings: map[string]string{"url": "http://cinema"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstName, secondName := epOne+".mkv", epTwo+".mkv"
+	pub := f.publish("partly-placed-pack", "partial-pack", map[string]string{firstName: "episode that placed", secondName: "episode still downloading"})
+	dl, err := f.db.CommitManualImportAdmission(f.ctx, sqlite.Download{
+		MediaItemID: f.item, Protocol: "manual", State: "importing", ReleaseTitle: "Partly imported season", ImportPath: pub.Path,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	publicationID, err := f.db.InsertPublication(f.ctx, sqlite.PublicationWrite{
+		DownloadID: dl.ID, Kind: "completed", Generation: pub.Generation, Path: pub.Path, Cohort: "live",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.db.SetPublicationState(f.ctx, publicationID, "importing", ""); err != nil {
+		t.Fatal(err)
+	}
+	item, err := f.db.GetMediaItemFull(f.ctx, f.item)
+	if err != nil {
+		t.Fatal(err)
+	}
+	attempt, err := f.db.EnsureImportAttempt(f.ctx, dl.ID, dl.GenerationKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, second := filepath.Join(pub.Path, firstName), filepath.Join(pub.Path, secondName)
+	if err := f.db.SealImportAttempt(f.ctx, attempt.ImportAttemptKey,
+		[]sqlite.ImportAttemptFile{{Source: first, Kind: "media"}, {Source: second, Kind: "media"}}, false); err != nil {
+		t.Fatal(err)
+	}
+
+	// The importer committed its first file but stopped before the publication
+	// transaction recorded that outcome and its Cinema notification.
+	publishCtx := withAcceptedPublicationGeneration(withImportAttempt(f.ctx, attempt.ImportAttemptKey), pub.Generation)
+	destination := filepath.Join(item.Path, "Season 01", "Test Show - S01E01.mkv")
+	fileID, err := f.svc.commitPlacement(publishCtx, item, importScope{
+		Dest: item.Path, DownloadID: dl.ID, SourceGeneration: dl.GenerationKey, Release: dl.ReleaseTitle,
+	}, first, destination, quality.FromString("WEBDL-1080p"), []int64{item.Seasons[0].Episodes[0].ID}, false)
+	if err != nil || fileID == 0 {
+		t.Fatalf("stage committed episode: id=%d err=%v", fileID, err)
+	}
+	if n := f.count(`SELECT COUNT(*) FROM notifier_deliveries WHERE download_id=?`, dl.ID); n != 0 {
+		t.Fatalf("before aggregate recovery, got %d Cinema notifications", n)
+	}
+	if _, err := f.db.W.ExecContext(f.ctx, `CREATE TRIGGER fail_disposition_outbox BEFORE INSERT ON notifier_deliveries
+		WHEN NEW.event='import' BEGIN SELECT RAISE(ABORT,'injected Cinema outbox failure'); END`); err != nil {
+		t.Fatal(err)
+	}
+	identity := sqlite.ActivityIdentity{ID: dl.ID, GenerationKey: dl.GenerationKey, Epoch: strconv.FormatInt(attempt.Epoch, 10)}
+	const operationID = "delete-committed-partial-pack"
+	job := claimActivityAction(t, f.db, operationID, "delete", identity)
+	if err := f.svc.handleActivityAction(f.ctx, job); err != nil {
+		t.Fatal(err)
+	}
+	blocked, err := f.db.ActivityOperation(f.ctx, operationID)
+	if err != nil || blocked.Blocked != 1 {
+		t.Fatalf("fixture failed to interrupt aggregate recovery: %+v err=%v", blocked, err)
+	}
+	_, before := f.publicationFiles(pub.Path)
+	if before[firstName].Outcome == "placed" || before[secondName].Outcome == "discarded" || !exists(first) || !exists(second) {
+		t.Fatalf("failed outbox write advanced file outcomes or deletion: %+v", before)
+	}
+	if _, err := f.db.W.ExecContext(f.ctx, `DROP TRIGGER fail_disposition_outbox`); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.db.CompleteJob(f.ctx, job.ID); err != nil {
+		t.Fatal(err)
+	}
+	const retryID = "retry-partial-pack-deletion"
+	retry := claimActivityAction(t, f.db, retryID, "retry", identity)
+	if err := f.svc.handleActivityAction(f.ctx, retry); err != nil {
+		t.Fatal(err)
+	}
+	done, err := f.db.ActivityOperation(f.ctx, retryID)
+	if err != nil || done.State != "completed" || done.Succeeded != 1 {
+		t.Fatalf("partial pack cleanup did not finish: %+v err=%v", done, err)
+	}
+
+	stored, files := f.publicationFiles(pub.Path)
+	if stored.State != "removed" || files[firstName].Outcome != "placed" || files[firstName].LibraryPath != destination ||
+		files[secondName].Outcome != "discarded" || exists(pub.Path) {
+		t.Fatalf("partial placement or remaining file resolution was lost: publication=%+v files=%+v", stored, files)
+	}
+	if got, err := os.ReadFile(destination); err != nil || string(got) != "episode that placed" {
+		t.Fatalf("deletion changed the installed episode: %q err=%v", got, err)
+	}
+	if n := f.count(`SELECT COUNT(*) FROM media_files WHERE id=? AND path=?`, fileID, destination); n != 1 {
+		t.Fatal("the original Library file identity was lost")
+	}
+	if n := f.count(`SELECT COUNT(*) FROM notifier_deliveries WHERE download_id=? AND notifier_id=? AND publication_id=? AND event='import'`,
+		dl.ID, notifierID, publicationID); n != 1 {
+		t.Fatalf("expected one correlated Cinema notification for the committed episode, got %d", n)
+	}
+}
+
+func TestActivityDeleteAdoptsFirstInstallAfterInterruptedMetadata(t *testing.T) {
+	svc, db, itemID := setup(t, nil, &fakeClient{})
+	ctx := context.Background()
+	item, err := db.GetMediaItemFull(ctx, itemID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const installed = "the physically published episode"
+	source := writeFile(t, filepath.Join(t.TempDir(), "episode.mkv"), installed)
+	destination := filepath.Join(item.Path, "First install.mkv")
+	dl, err := db.CommitManualImportAdmission(ctx, sqlite.Download{
+		MediaItemID: itemID, Protocol: "manual", State: "importing", ReleaseTitle: "First install", ImportPath: source,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	attempt, err := db.EnsureImportAttempt(ctx, dl.ID, dl.GenerationKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.SealImportAttempt(ctx, attempt.ImportAttemptKey, []sqlite.ImportAttemptFile{{Source: source, Kind: "media"}}, false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.W.ExecContext(ctx, `CREATE TRIGGER fail_first_install_metadata BEFORE INSERT ON media_files
+		BEGIN SELECT RAISE(ABORT,'injected placement metadata fault'); END`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.commitPlacement(withImportAttempt(ctx, attempt.ImportAttemptKey), item, importScope{
+		DownloadID: dl.ID, SourceGeneration: dl.GenerationKey, Dest: item.Path, Release: dl.ReleaseTitle,
+	}, source, destination, quality.FromString("WEBDL-1080p"), []int64{item.Seasons[0].Episodes[0].ID}, false); err == nil {
+		t.Fatal("fixture failed to interrupt the first install after its rename")
+	}
+	if body, err := os.ReadFile(destination); err != nil || string(body) != installed {
+		t.Fatalf("fixture never published the verified Library file: %q err=%v", body, err)
+	}
+	prepared, err := db.UnresolvedPlacementReferences(ctx)
+	if err != nil || len(prepared) != 1 || prepared[0].State != "prepared" || prepared[0].PublishedFileGeneration == "" {
+		t.Fatalf("fixture lost the pre-commit journal: %+v err=%v", prepared, err)
+	}
+	if _, err := db.W.ExecContext(ctx, `DROP TRIGGER fail_first_install_metadata`); err != nil {
+		t.Fatal(err)
+	}
+	const operationID = "delete-after-first-install"
+	job := claimActivityAction(t, db, operationID, "delete", sqlite.ActivityIdentity{
+		ID: dl.ID, GenerationKey: dl.GenerationKey, Epoch: strconv.FormatInt(attempt.Epoch, 10),
+	})
+	if err := svc.handleActivityAction(ctx, job); err != nil {
+		t.Fatal(err)
+	}
+	done, err := db.ActivityOperation(ctx, operationID)
+	if err != nil || done.State != "completed" || done.Succeeded != 1 {
+		t.Fatalf("delete did not settle the previously installed file: %+v err=%v", done, err)
+	}
+	files, err := db.ListFilesForItem(ctx, itemID)
+	if err != nil || len(files) != 1 || files[0].Path != destination {
+		t.Fatalf("Library lost its committed metadata: %+v err=%v", files, err)
+	}
+	if body, err := os.ReadFile(destination); err != nil || string(body) != installed {
+		t.Fatalf("deletion changed an installed Library file: %q err=%v", body, err)
 	}
 }

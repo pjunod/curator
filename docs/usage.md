@@ -1014,8 +1014,8 @@ newly observed history row cannot silently authorize deletion.
 ### Completed folders — accounting survives an empty queue
 
 System → Storage shows the last observed capacity and accessibility of Library
-and download folders. Capacity comes from the volume, and is unavailable when
-there is no valid observation. A hard-linked file can remain on the volume
+and download folders. Capacity comes from an observation of the root volume and is unavailable
+when there is no valid measurement. A hard-linked file can remain on the volume
 after its download path is removed, so job cleanup does not promise that a
 given number of bytes will become free.
 

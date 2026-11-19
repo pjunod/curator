@@ -1056,6 +1056,18 @@ func (d *DB) CompletePublicationImport(ctx context.Context, w PublicationImportW
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
+	var disposing bool
+	if w.DownloadID != 0 {
+		if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM download_dispositions x JOIN downloads d ON d.id=x.download_id AND d.generation_key=x.generation_key WHERE x.download_id=?)`, w.DownloadID).Scan(&disposing); err != nil {
+			return err
+		}
+	}
+	if disposing {
+		w.DownloadState = ""
+		w.DownloadError = ""
+		w.Handoff = nil
+		w.RegrabWantables = nil
+	}
 	now := time.Now().UnixMilli()
 	for _, f := range w.Files {
 		if _, err := tx.ExecContext(ctx, `INSERT INTO publication_files (publication_id, path, bytes, sha256, wantable_id, outcome, discard_reason, library_path, placed_sha256, reason, updated_at)

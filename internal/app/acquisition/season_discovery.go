@@ -3,6 +3,7 @@ package acquisition
 import (
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -50,8 +51,9 @@ type seasonCheckpoint struct {
 	Manual bool `json:"manual,omitempty"`
 	// A generation distinguishes a fresh button press from the manual epoch
 	// this worker is consuming. It prevents a checkpoint from erasing a request.
-	ManualGeneration   int64 `json:"manualGeneration,omitempty"`
-	BackgroundPriority int64 `json:"backgroundPriority,omitempty"`
+	ManualGeneration   int64                           `json:"manualGeneration,omitempty"`
+	ReplacementOrigin  *sqlite.SeasonReplacementOrigin `json:"replacementOrigin,omitempty"`
+	BackgroundPriority int64                           `json:"backgroundPriority,omitempty"`
 	// ReplanGeneration counts failed grabs that asked this season to be
 	// compared again. A queued comparison parked for its next discovery
 	// epoch is made due at once, and one already running reruns when it
@@ -77,6 +79,16 @@ type seasonCheckpoint struct {
 
 func seasonJobKey(item, copy int64, season int) string {
 	return fmt.Sprintf("season:%d:%d:%d", item, copy, season)
+}
+
+// A comparison independently queued for this season retains its own
+// authority. Never give a failed attempt ownership of that existing job.
+func (p seasonCheckpoint) jobKey() string {
+	key := seasonJobKey(p.ItemID, p.CopyID, p.Season)
+	if p.ReplacementOrigin == nil {
+		return key
+	}
+	return fmt.Sprintf("%s:replacement:%d:%s", key, p.ReplacementOrigin.DownloadID, p.ReplacementOrigin.GenerationKey)
 }
 
 // seasonCooldown spaces out unattended repeats of a comparison that completed
@@ -108,8 +120,18 @@ func (s *Service) enqueueSeason(ctx context.Context, item, copy int64, season in
 // enqueueSeasonStatus queues a season comparison and says whether it did, so
 // a caller answering a person never reports "queued" for a request it dropped.
 func (s *Service) enqueueSeasonStatus(ctx context.Context, item, copy int64, season int, trigger string, missing bool) (string, error) {
-	manual := manualSearch(ctx)
-	p := seasonCheckpoint{Version: 1, ItemID: item, CopyID: copy, Season: season, Trigger: trigger, Manual: manual}
+	return s.enqueueSeasonComparison(ctx, seasonCheckpoint{
+		Version: 1, ItemID: item, CopyID: copy, Season: season, Trigger: trigger, Manual: manualSearch(ctx),
+	}, missing)
+}
+
+func (s *Service) enqueueSeasonComparison(ctx context.Context, p seasonCheckpoint, missing bool) (string, error) {
+	if err := s.db.CheckSeasonReplacementOrigin(ctx, p.ReplacementOrigin); errors.Is(err, sqlite.ErrParentDispositionRequested) {
+		return seasonNothingToDo, nil
+	} else if err != nil {
+		return seasonNothingToDo, err
+	}
+	key := p.jobKey()
 	_, pack, profile, targets, _, e := s.seasonSnapshot(ctx, p)
 	if e != nil {
 		return seasonNothingToDo, e
@@ -119,7 +141,7 @@ func (s *Service) enqueueSeasonStatus(ctx context.Context, item, copy int64, sea
 	}
 	p.Fingerprint = discoveryFingerprint(pack, profile, targets)
 	var previous string
-	if e = s.db.R.QueryRowContext(ctx, `SELECT payload FROM jobs WHERE kind=? AND dedupe_key=? AND state='done' ORDER BY id DESC LIMIT 1`, SeasonSearchJobKind, seasonJobKey(item, copy, season)).Scan(&previous); e == nil {
+	if e = s.db.R.QueryRowContext(ctx, `SELECT payload FROM jobs WHERE kind=? AND dedupe_key=? AND state='done' ORDER BY id DESC LIMIT 1`, SeasonSearchJobKind, key).Scan(&previous); e == nil {
 		var old seasonCheckpoint
 		if json.Unmarshal([]byte(previous), &old) == nil && old.Fingerprint == p.Fingerprint {
 			// The week-long cooldown stops unattended passes repeating a
@@ -128,9 +150,9 @@ func (s *Service) enqueueSeasonStatus(ctx context.Context, item, copy int64, sea
 			// to them; only their own request, completed minutes ago, does.
 			// A failed grab is new evidence, not a repeat: the release the
 			// last comparison chose is now blocklisted.
-			if trigger != "rss_improvement" && trigger != seasonTriggerFailedAcquisition && !old.CooldownUntil.IsZero() {
+			if p.Trigger != "rss_improvement" && p.Trigger != seasonTriggerFailedAcquisition && !old.CooldownUntil.IsZero() {
 				until := old.CooldownUntil
-				if manual {
+				if p.Manual {
 					until = time.Time{}
 					if old.Manual {
 						until = old.CooldownUntil.Add(manualSeasonCooldown - seasonCooldown)
@@ -148,13 +170,18 @@ func (s *Service) enqueueSeasonStatus(ctx context.Context, item, copy int64, sea
 		priority = 50
 	}
 	p.BackgroundPriority = priority
-	if manual {
+	if p.Manual {
 		priority = domain.JobPriorityInteractive
 		p.ManualGeneration = 1
 	}
 	raw, _ := json.Marshal(p)
-	_, err := s.db.EnqueueJob(ctx, domain.Job{Kind: SeasonSearchJobKind, Payload: string(raw), DedupeKey: seasonJobKey(item, copy, season), Priority: priority, MaxAttempts: 3})
-	if errors.Is(err, sqlite.ErrDuplicateJob) && !manual && trigger == seasonTriggerFailedAcquisition {
+	job := domain.Job{Kind: SeasonSearchJobKind, Payload: string(raw), DedupeKey: key, Priority: priority, MaxAttempts: 3}
+	_, err := s.db.EnqueueJob(ctx, job)
+	// The write-side queue fence can revoke authority after the read above.
+	if p.ReplacementOrigin != nil && errors.Is(err, sql.ErrNoRows) {
+		return seasonNothingToDo, nil
+	}
+	if errors.Is(err, sqlite.ErrDuplicateJob) && !p.Manual && p.Trigger == seasonTriggerFailedAcquisition {
 		// The season already has a comparison queued or running. Merging
 		// into it silently kept a comparison parked for its next discovery
 		// epoch (up to a day) parked: the replacement waited behind nothing.
@@ -163,14 +190,17 @@ func (s *Service) enqueueSeasonStatus(ctx context.Context, item, copy int64, sea
                 '$.replanGeneration',COALESCE(json_extract(payload,'$.replanGeneration'),0)+1),
                 priority=min(priority,?), run_after=min(run_after,?), updated_at=?
                 WHERE kind=? AND dedupe_key=? AND state IN ('queued','leased')`,
-			priority, now, now, SeasonSearchJobKind, seasonJobKey(item, copy, season))
+			priority, now, now, SeasonSearchJobKind, key)
 		if e != nil {
 			return seasonQueued, e
 		}
 		if n, e := res.RowsAffected(); e == nil && n == 0 {
 			// The comparison finished between the insert and this update:
 			// nothing holds the key any more, so queue the request itself.
-			_, err = s.db.EnqueueJob(ctx, domain.Job{Kind: SeasonSearchJobKind, Payload: string(raw), DedupeKey: seasonJobKey(item, copy, season), Priority: priority, MaxAttempts: 3})
+			_, err = s.db.EnqueueJob(ctx, job)
+			if p.ReplacementOrigin != nil && errors.Is(err, sql.ErrNoRows) {
+				return seasonNothingToDo, nil
+			}
 			if errors.Is(err, sqlite.ErrDuplicateJob) {
 				err = nil
 			}
@@ -179,7 +209,7 @@ func (s *Service) enqueueSeasonStatus(ctx context.Context, item, copy int64, sea
 		return seasonQueued, nil
 	}
 	if errors.Is(err, sqlite.ErrDuplicateJob) {
-		if manual {
+		if p.Manual {
 			// The season is already queued, typically parked until the
 			// automatic allowance frees up. Promote that job instead of
 			// dropping the request: mark it manual and make it due now. A
@@ -193,7 +223,7 @@ func (s *Service) enqueueSeasonStatus(ctx context.Context, item, copy int64, sea
                 '$.backgroundPriority',COALESCE(json_extract(payload,'$.backgroundPriority'),?)),
                 priority=?, run_after=min(run_after,?), updated_at=?
                 WHERE kind=? AND dedupe_key=? AND state IN ('queued','leased')`,
-				p.BackgroundPriority, domain.JobPriorityInteractive, now, now, SeasonSearchJobKind, seasonJobKey(item, copy, season))
+				p.BackgroundPriority, domain.JobPriorityInteractive, now, now, SeasonSearchJobKind, key)
 			return seasonQueued, err
 		}
 		return seasonQueued, nil
@@ -372,6 +402,11 @@ func (s *Service) handleSeasonSearch(ctx context.Context, j domain.Job) error {
 	var started seasonCheckpoint
 	_ = json.Unmarshal([]byte(j.Payload), &started)
 	err := s.runSeasonSearch(ctx, j)
+	if errors.Is(err, sqlite.ErrParentDispositionRequested) {
+		// End this comparison even if another failed-grab request marked
+		// the lease for replanning while the origin was being deleted.
+		return nil
+	}
 	if errors.Is(err, sqlite.ErrAcquisitionSnapshotChanged) {
 		fresh, readErr := s.db.GetJob(ctx, j.ID)
 		if readErr != nil {
@@ -421,6 +456,12 @@ func (s *Service) runSeasonSearch(ctx context.Context, j domain.Job) error {
 	}
 	if p.Version != 1 || p.ItemID == 0 {
 		return fmt.Errorf("invalid season checkpoint")
+	}
+	if err := s.db.CheckSeasonReplacementOrigin(ctx, p.ReplacementOrigin); err != nil {
+		return err
+	}
+	if p.ReplacementOrigin != nil {
+		ctx = context.WithValue(ctx, replacementGrabOwnerKey{}, p.ReplacementOrigin.DownloadID)
 	}
 	item, pack, profile, targets, allowPacks, err := s.seasonSnapshot(ctx, p)
 	if err != nil {
@@ -473,7 +514,15 @@ func (s *Service) runSeasonSearch(ctx context.Context, j domain.Job) error {
 		if p.Manual {
 			class = ` AND COALESCE(json_extract(payload,'$.manual'),0)=1`
 		}
-		err = s.db.R.QueryRowContext(ctx, `SELECT count(*) FROM jobs WHERE kind=? AND id!=? AND state IN ('queued','leased') AND COALESCE(json_extract(payload,'$.started'),'0001-01-01T00:00:00Z')!='0001-01-01T00:00:00Z'`+class, SeasonSearchJobKind, j.ID).Scan(&open)
+		err = s.db.R.QueryRowContext(ctx, `SELECT count(*) FROM jobs WHERE kind=? AND id!=? AND state IN ('queued','leased')
+			AND COALESCE(json_extract(payload,'$.started'),'0001-01-01T00:00:00Z')!='0001-01-01T00:00:00Z'
+			AND (json_type(payload,'$.replacementOrigin') IS NULL OR EXISTS (
+				SELECT 1 FROM downloads origin
+				WHERE origin.id=json_extract(jobs.payload,'$.replacementOrigin.downloadId')
+					AND origin.generation_key=json_extract(jobs.payload,'$.replacementOrigin.generationKey')
+					AND NOT EXISTS (SELECT 1 FROM download_dispositions x
+						WHERE x.download_id=origin.id AND x.generation_key=origin.generation_key)
+			))`+class, SeasonSearchJobKind, j.ID).Scan(&open)
 		if err != nil {
 			return err
 		}
@@ -1056,7 +1105,7 @@ func (s *Service) admitSeasonCandidates(ctx context.Context, p seasonCheckpoint,
 	var id int64
 	if err == nil {
 		raw, _ := json.Marshal(decisionFacts)
-		id, err = s.db.AdmitAcquisitionPlan(targetCtx, sqlite.AcquisitionPlan{MediaItemID: item.ID, CopyID: p.CopyID, Season: p.Season, SnapshotFingerprint: p.Fingerprint, Decision: raw}, p.Revision, intents)
+		id, err = s.db.AdmitAcquisitionPlan(targetCtx, sqlite.AcquisitionPlan{MediaItemID: item.ID, CopyID: p.CopyID, Season: p.Season, SnapshotFingerprint: p.Fingerprint, Decision: raw, ReplacementOrigin: p.ReplacementOrigin}, p.Revision, intents)
 	}
 	releaseTarget()
 	if err != nil {

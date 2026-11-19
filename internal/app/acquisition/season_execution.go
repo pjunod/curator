@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"slices"
 	"time"
@@ -49,6 +50,11 @@ func (s *Service) dispatchPlan(ctx context.Context, id int64) error {
 	}
 	if p.State != "admitted" && p.State != "dispatching" && p.State != "active" {
 		return nil
+	}
+	if err = s.db.CheckSeasonReplacementOrigin(ctx, p.ReplacementOrigin); errors.Is(err, sqlite.ErrParentDispositionRequested) {
+		return s.db.CloseRevokedSeasonPlanIntents(ctx, id)
+	} else if err != nil {
+		return err
 	}
 	rows, err := s.db.PlanDownloads(ctx, id)
 	if err != nil {
@@ -377,8 +383,9 @@ func (s *Service) settleSeasonPlan(ctx context.Context, p sqlite.AcquisitionPlan
 	if state == "cancelled" {
 		return tx.Commit()
 	}
-	checkpoint, _ := json.Marshal(seasonCheckpoint{Version: 1, ItemID: p.MediaItemID, CopyID: p.CopyID, Season: p.Season, Trigger: "plan_settlement"})
-	if _, err = tx.ExecContext(ctx, `INSERT OR IGNORE INTO jobs(kind,payload,priority,run_after,dedupe_key,created_at,updated_at) VALUES(?,?,50,?,?,?,?)`, SeasonSearchJobKind, string(checkpoint), now, seasonJobKey(p.MediaItemID, p.CopyID, p.Season), now, now); err != nil {
+	successor := seasonCheckpoint{Version: 1, ItemID: p.MediaItemID, CopyID: p.CopyID, Season: p.Season, Trigger: "plan_settlement", ReplacementOrigin: p.ReplacementOrigin}
+	checkpoint, _ := json.Marshal(successor)
+	if _, err = tx.ExecContext(ctx, `INSERT OR IGNORE INTO jobs(kind,payload,priority,run_after,dedupe_key,created_at,updated_at) VALUES(?,?,50,?,?,?,?)`, SeasonSearchJobKind, string(checkpoint), now, successor.jobKey(), now, now); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -460,6 +467,7 @@ func (s *Service) releaseUncertainRisk(ctx context.Context, dl sqlite.Download, 
 	if time.Since(ob.LastInventory) > 5*time.Minute {
 		return fmt.Errorf("final inventory stale")
 	}
+	origin := &sqlite.SeasonReplacementOrigin{DownloadID: dl.ID, GenerationKey: dl.GenerationKey}
 	tx, err := s.db.W.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -468,7 +476,8 @@ func (s *Service) releaseUncertainRisk(ctx context.Context, dl sqlite.Download, 
 	ob.DuplicateRisk = true
 	raw, _ := json.Marshal(ob)
 	now := time.Now().UnixMilli()
-	result, err := tx.ExecContext(ctx, `UPDATE downloads SET superseded=1,parked_at=0,parked_reason='retry_with_duplicate_risk',reserved_episodes='[]',wantables='[]',observation=?,error='Possible duplicate: uncertain original submission retried after seven days of complete successful inventories',updated_at=? WHERE id=? AND superseded=0 AND submission_phase IN ('submitting','uncertain')`, string(raw), now, dl.ID)
+	result, err := tx.ExecContext(ctx, `UPDATE downloads SET superseded=1,parked_at=0,parked_reason='retry_with_duplicate_risk',reserved_episodes='[]',wantables='[]',observation=?,error='Possible duplicate: uncertain original submission retried after seven days of complete successful inventories',updated_at=? WHERE id=? AND generation_key=? AND superseded=0 AND submission_phase IN ('submitting','uncertain')
+		AND NOT EXISTS (SELECT 1 FROM download_dispositions x WHERE x.download_id=downloads.id AND x.generation_key=downloads.generation_key)`, string(raw), now, dl.ID, dl.GenerationKey)
 	if err != nil {
 		return err
 	}
@@ -476,8 +485,9 @@ func (s *Service) releaseUncertainRisk(ctx context.Context, dl sqlite.Download, 
 	if err != nil || n == 0 {
 		return err
 	}
-	p, _ := json.Marshal(seasonCheckpoint{Version: 1, ItemID: dl.MediaItemID, CopyID: dl.CopyID, Season: dl.Season, Trigger: "retry_with_duplicate_risk", OriginalDownloadID: dl.ID})
-	if _, err = tx.ExecContext(ctx, `INSERT OR IGNORE INTO jobs(kind,payload,priority,run_after,dedupe_key,created_at,updated_at) VALUES(?,?,50,?,?,?,?)`, SeasonSearchJobKind, string(p), now, seasonJobKey(dl.MediaItemID, dl.CopyID, dl.Season), now, now); err != nil {
+	successor := seasonCheckpoint{Version: 1, ItemID: dl.MediaItemID, CopyID: dl.CopyID, Season: dl.Season, Trigger: "retry_with_duplicate_risk", OriginalDownloadID: dl.ID, ReplacementOrigin: origin}
+	p, _ := json.Marshal(successor)
+	if _, err = tx.ExecContext(ctx, `INSERT OR IGNORE INTO jobs(kind,payload,priority,run_after,dedupe_key,created_at,updated_at) VALUES(?,?,50,?,?,?,?)`, SeasonSearchJobKind, string(p), now, successor.jobKey(), now, now); err != nil {
 		return err
 	}
 	warning, _ := json.Marshal(map[string]any{"originalDownloadId": dl.ID, "evidenceSince": ob.AbsenceSince, "warning": "Possible duplicate: absence is not proof of nonacceptance"})

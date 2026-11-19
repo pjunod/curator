@@ -114,6 +114,10 @@ func (s *Server) writeActivityPage(w http.ResponseWriter, r *http.Request, page 
 				s.acqErr(w, err)
 				return
 			}
+			if info.Identity.GenerationKey != entry.GenerationKey || info.Identity.Epoch != entry.Epoch {
+				writeError(w, http.StatusConflict, "Activity changed while loading; refresh this view")
+				return
+			}
 			result.Identity = &apigen.ActivityIdentity{Id: info.Identity.ID, GenerationKey: info.Identity.GenerationKey, Epoch: info.Identity.Epoch}
 			result.Reason = &info.Reason
 			result.Prerequisite = &info.Prerequisite
