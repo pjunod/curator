@@ -651,7 +651,7 @@ export interface StatusOffload {
 }
 // Offload (ADR 0028): free the space, keep the title.
 export type OffloadScope = 'item' | 'season' | 'episode'
-export type OffloadState = 'deleting' | 'waiting' | 'retrying' | 'stopping' | 'complete' | 'cancelled' | 'failed'
+export type OffloadState = 'queued' | 'needs_review' | 'deleting' | 'waiting' | 'retrying' | 'stopping' | 'complete' | 'cancelled' | 'failed'
 export interface OffloadRequest { scope: OffloadScope; season?: number; episodeId?: number; requestId?: string; fingerprint?: string }
 export interface OffloadFile { path: string; kind: 'media' | 'sidecar'; bytes: number; shared?: boolean; episodes?: string[] }
 export interface OffloadPreview {
@@ -678,6 +678,8 @@ export interface OffloadOperation {
   state: OffloadState
   itemId: number
   scope: OffloadScope
+  season?: number
+  episodeId?: number
   label?: string
   filesTotal: number
   filesDone: number

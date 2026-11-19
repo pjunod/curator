@@ -213,8 +213,10 @@ export class MonarrClient {
   confirmItemInCinema = (id: number, episodeId?: number): Promise<{ queued: number }> =>
     this.send('POST', `/library/${id}/status/confirm${episodeId ? `?episode=${episodeId}` : ''}`)
   getWantedSearches = (): Promise<{ items: WantedSearchRun[] }> => this.get('/wanted/searches')
-  createWantedSearch = (scope: WantedSearchScope): Promise<WantedSearchRun> =>
-    this.send('POST', '/wanted/searches', scope)
+  createWantedSearch = (scope: WantedSearchScope): Promise<WantedSearchRun> => {
+    const requestId = `wanted-${Date.now()}-${Math.random().toString(36).slice(2)}`
+    return this.send('POST', '/wanted/searches', { ...scope, requestId })
+  }
   cancelWantedSearch = (runId: string): Promise<WantedSearchRun> =>
     this.send('POST', `/wanted/searches/${encodeURIComponent(runId)}/cancel`)
   searchWantable = (wantableId: string): Promise<WantedSearchRun> =>
@@ -237,6 +239,7 @@ export class MonarrClient {
   previewOffload = (itemId: number, req: OffloadRequest): Promise<OffloadPreview> => this.send('POST', `/library/${itemId}/offload/preview`, req)
   startOffload = (itemId: number, req: OffloadRequest): Promise<OffloadOperation> => this.send('POST', `/library/${itemId}/offload`, req)
   getLibraryOffload = async (itemId: number): Promise<OffloadOperation | null> => (await this.get<OffloadOperation | undefined>(`/library/${itemId}/offload`)) ?? null
+  listLibraryOffloads = (itemId: number): Promise<OffloadOperation[]> => this.get(`/library/${itemId}/offload/operations`)
   getOffload = (operationId: string): Promise<OffloadOperation> => this.get(`/offload/${encodeURIComponent(operationId)}`)
   cancelOffload = (operationId: string): Promise<void> => this.send('POST', `/offload/${encodeURIComponent(operationId)}/cancel`)
   dismissOffload = (operationId: string): Promise<void> => this.send('POST', `/offload/${encodeURIComponent(operationId)}/dismiss`)

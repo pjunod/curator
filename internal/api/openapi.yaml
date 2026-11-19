@@ -3118,7 +3118,7 @@ paths:
             schema: { $ref: "#/components/schemas/RematchRequest" }
       responses:
         "202":
-          description: The operation, started (or the one this requestId already started).
+          description: The accepted operation, or the operation this requestId already refers to.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/RematchOperation" }
@@ -3250,14 +3250,10 @@ paths:
           description: No open or recent operation for this item.
     post:
       operationId: startOffload
-      summary: Execute a previewed Offload (idempotent by requestId)
+      summary: Queue a previewed Offload (idempotent by requestId)
       description: >
-        Takes the title's lease and its per-copy reservations, refuses a stale
-        preview (409 `stale`) or work in flight (409 `offload_blocked`), then
-        in one transaction records the scope and the file list, marks it
-        offloaded and writes Cinema's sub-deliveries; the deletes follow in
-        the background and survive a restart. Follow it with GET
-        /offload/{operationId}.
+        Persists the reviewed scope and files. Workers execute in title order
+        after revalidation. Follow its progress with GET /offload/{operationId}.
       parameters:
         - { name: id, in: path, required: true, schema: { type: integer, format: int64 } }
       requestBody:
@@ -3278,13 +3274,27 @@ paths:
               schema: { $ref: "#/components/schemas/Error" }
         "409":
           description: >
-            `stale` (preview again), `offload_blocked` (work in flight, or the
-            share is not mounted; the body carries `blocked`),
-            `request_conflict` (requestId reused) or `busy` (the title is being
-            imported). 503 `maintenance` while a deployment drain pauses new work.
+            `stale` (preview again), `offload_blocked` (the library share is
+            unreadable), or `request_conflict` (requestId reused).
+            503 `maintenance` while a deployment drain pauses new work.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/OffloadConflict" }
+
+  /library/{id}/offload/operations:
+    get:
+      operationId: listLibraryOffloads
+      summary: List open and recent Offloads of this title
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer, format: int64 } }
+      responses:
+        "200":
+          description: Current and recent undismissed Offload operations, oldest first.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/OffloadOperation" }
 
   /library/{id}/reacquire:
     post:
@@ -4268,6 +4278,15 @@ paths:
                   $ref: "#/components/schemas/WantedItem"
 
   /wanted/searches:
+    get:
+      operationId: listWantedSearches
+      summary: List active and recently finished Wanted searches
+      responses:
+        "200":
+          description: Active searches and up to 50 recent finished searches.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WantedSearchRunsPage" }
     post:
       operationId: createWantedSearch
       summary: Search an exact server-owned Wanted scope in the durable queue
@@ -4294,10 +4313,10 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
         "409":
-          description: A different run owns the active slot.
+          description: The supplied request ID was reused with different inputs.
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/WantedSearchConflict" }
+              schema: { $ref: "#/components/schemas/Error" }
 
   /wanted/searches/{runId}:
     get:
@@ -6287,7 +6306,7 @@ components:
       required: [operationId, state, scope, label, headline, filesDone, filesTotal, bytesTotal, bytesFreed, ended, stoppable]
       properties:
         operationId: { type: string }
-        state: { type: string, enum: [deleting, waiting, retrying, stopping, complete, cancelled, failed] }
+        state: { type: string, enum: [queued, deleting, waiting, retrying, stopping, complete, cancelled, failed, needs_review] }
         scope: { type: string, enum: [item, season, episode] }
         label: { type: string }
         headline: { type: string }
@@ -7087,6 +7106,10 @@ components:
       required: [scope]
       additionalProperties: false
       properties:
+        requestId:
+          type: string
+          maxLength: 128
+          description: Replay the same submission while the accepted run is retained.
         scope:
           type: string
           enum: [all, reason, group, target]
@@ -7160,13 +7183,13 @@ components:
         limit: { type: integer }
         offset: { type: integer }
 
-    WantedSearchConflict:
+    WantedSearchRunsPage:
       type: object
-      required: [activeRunId, canCancel, message]
+      required: [items]
       properties:
-        activeRunId: { type: string }
-        canCancel: { type: boolean }
-        message: { type: string }
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/WantedSearchRun" }
 
     BlocklistEntry:
       type: object
@@ -8000,12 +8023,15 @@ components:
         requestId: { type: string }
         state:
           type: string
-          enum: [deleting, waiting, retrying, stopping, complete, cancelled, failed]
+          enum: [queued, deleting, waiting, retrying, stopping, complete, cancelled, failed, needs_review]
           description: >
+            queued = confirmed and waiting to execute; needs_review = the reviewed scope changed.
             waiting = the share is not mounted (nothing is marked deleted);
             retrying = an unlink failed (see failed); both resume by themselves.
         itemId: { type: integer, format: int64 }
         scope: { type: string, enum: [item, season, episode] }
+        season: { type: integer }
+        episodeId: { type: integer, format: int64 }
         label: { type: string }
         plan: { type: object, description: The stored request and preview. }
         result: { type: object }

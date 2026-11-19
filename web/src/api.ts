@@ -1388,7 +1388,7 @@ export type WantedSearchScope =
   | { scope: 'group'; mediaItemId: number; reason?: WantedReason }
   | { scope: 'target'; wantableId: string }
 
-export type WantedSearchRequest = WantedSearchScope & { targetDelayMs?: number }
+export type WantedSearchRequest = WantedSearchScope & { targetDelayMs?: number; requestId?: string }
 
 export interface WantedSearchRun {
   runId: string
@@ -2137,7 +2137,7 @@ export const dismissRematch = (operationId: string) => send<void>('POST', `/rema
 export const cancelRematch = (operationId: string) => send<void>('POST', `/rematch/${encodeURIComponent(operationId)}/cancel`)
 // Offload (ADR 0028): free the space, keep the title.
 export type OffloadScope = 'item' | 'season' | 'episode'
-export type OffloadState = 'deleting' | 'waiting' | 'retrying' | 'stopping' | 'complete' | 'cancelled' | 'failed'
+export type OffloadState = 'queued' | 'needs_review' | 'deleting' | 'waiting' | 'retrying' | 'stopping' | 'complete' | 'cancelled' | 'failed'
 export interface OffloadRequest {
   scope: OffloadScope
   season?: number
@@ -2174,6 +2174,8 @@ export interface OffloadOperation {
   state: OffloadState
   itemId: number
   scope: OffloadScope
+  season?: number
+  episodeId?: number
   label?: string
   filesTotal: number
   filesDone: number
@@ -2192,11 +2194,12 @@ export const startOffload = (itemId: number, req: OffloadRequest) =>
   send<OffloadOperation>('POST', `/library/${itemId}/offload`, req)
 /** The open (or newest undismissed) Offload for an item; null when there is none (204). */
 export const getLibraryOffload = (itemId: number) => send<OffloadOperation | undefined>('GET', `/library/${itemId}/offload`).then((op) => op ?? null)
+export const listLibraryOffloads = (itemId: number) => get<OffloadOperation[]>(`/library/${itemId}/offload/operations`)
 export const getOffload = (operationId: string) => get<OffloadOperation>(`/offload/${encodeURIComponent(operationId)}`)
 export const cancelOffload = (operationId: string) => send<void>('POST', `/offload/${encodeURIComponent(operationId)}/cancel`)
 export const dismissOffload = (operationId: string) => send<void>('POST', `/offload/${encodeURIComponent(operationId)}/dismiss`)
 export const reacquire = (itemId: number, req: OffloadRequest) => send<ReacquireResult>('POST', `/library/${itemId}/reacquire`, req)
-export const OFFLOAD_RUNNING = new Set<OffloadState>(['deleting', 'waiting', 'retrying', 'stopping'])
+export const OFFLOAD_RUNNING = new Set<OffloadState>(['queued', 'deleting', 'waiting', 'retrying', 'stopping'])
 
 // ---- item status panel (0.46.0) ----
 

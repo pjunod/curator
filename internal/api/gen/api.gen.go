@@ -823,13 +823,15 @@ func (e OffloadOperationScope) Valid() bool {
 
 // Defines values for OffloadOperationState.
 const (
-	OffloadOperationStateCancelled OffloadOperationState = "cancelled"
-	OffloadOperationStateComplete  OffloadOperationState = "complete"
-	OffloadOperationStateDeleting  OffloadOperationState = "deleting"
-	OffloadOperationStateFailed    OffloadOperationState = "failed"
-	OffloadOperationStateRetrying  OffloadOperationState = "retrying"
-	OffloadOperationStateStopping  OffloadOperationState = "stopping"
-	OffloadOperationStateWaiting   OffloadOperationState = "waiting"
+	OffloadOperationStateCancelled   OffloadOperationState = "cancelled"
+	OffloadOperationStateComplete    OffloadOperationState = "complete"
+	OffloadOperationStateDeleting    OffloadOperationState = "deleting"
+	OffloadOperationStateFailed      OffloadOperationState = "failed"
+	OffloadOperationStateNeedsReview OffloadOperationState = "needs_review"
+	OffloadOperationStateQueued      OffloadOperationState = "queued"
+	OffloadOperationStateRetrying    OffloadOperationState = "retrying"
+	OffloadOperationStateStopping    OffloadOperationState = "stopping"
+	OffloadOperationStateWaiting     OffloadOperationState = "waiting"
 )
 
 // Valid indicates whether the value is a known member of the OffloadOperationState enum.
@@ -842,6 +844,10 @@ func (e OffloadOperationState) Valid() bool {
 	case OffloadOperationStateDeleting:
 		return true
 	case OffloadOperationStateFailed:
+		return true
+	case OffloadOperationStateNeedsReview:
+		return true
+	case OffloadOperationStateQueued:
 		return true
 	case OffloadOperationStateRetrying:
 		return true
@@ -1546,13 +1552,15 @@ func (e StatusOffloadScope) Valid() bool {
 
 // Defines values for StatusOffloadState.
 const (
-	StatusOffloadStateCancelled StatusOffloadState = "cancelled"
-	StatusOffloadStateComplete  StatusOffloadState = "complete"
-	StatusOffloadStateDeleting  StatusOffloadState = "deleting"
-	StatusOffloadStateFailed    StatusOffloadState = "failed"
-	StatusOffloadStateRetrying  StatusOffloadState = "retrying"
-	StatusOffloadStateStopping  StatusOffloadState = "stopping"
-	StatusOffloadStateWaiting   StatusOffloadState = "waiting"
+	StatusOffloadStateCancelled   StatusOffloadState = "cancelled"
+	StatusOffloadStateComplete    StatusOffloadState = "complete"
+	StatusOffloadStateDeleting    StatusOffloadState = "deleting"
+	StatusOffloadStateFailed      StatusOffloadState = "failed"
+	StatusOffloadStateNeedsReview StatusOffloadState = "needs_review"
+	StatusOffloadStateQueued      StatusOffloadState = "queued"
+	StatusOffloadStateRetrying    StatusOffloadState = "retrying"
+	StatusOffloadStateStopping    StatusOffloadState = "stopping"
+	StatusOffloadStateWaiting     StatusOffloadState = "waiting"
 )
 
 // Valid indicates whether the value is a known member of the StatusOffloadState enum.
@@ -1565,6 +1573,10 @@ func (e StatusOffloadState) Valid() bool {
 	case StatusOffloadStateDeleting:
 		return true
 	case StatusOffloadStateFailed:
+		return true
+	case StatusOffloadStateNeedsReview:
+		return true
+	case StatusOffloadStateQueued:
 		return true
 	case StatusOffloadStateRetrying:
 		return true
@@ -3699,6 +3711,7 @@ type OffloadOperation struct {
 	} `json:"cinema,omitempty"`
 	CinemaLine  *string   `json:"cinemaLine,omitempty"`
 	CreatedAt   int64     `json:"createdAt"`
+	EpisodeId   *int64    `json:"episodeId,omitempty"`
 	Failed      *[]string `json:"failed,omitempty"`
 	FilesDone   int       `json:"filesDone"`
 	FilesTotal  int       `json:"filesTotal"`
@@ -3712,8 +3725,9 @@ type OffloadOperation struct {
 	RequestId string                  `json:"requestId"`
 	Result    *map[string]interface{} `json:"result,omitempty"`
 	Scope     OffloadOperationScope   `json:"scope"`
+	Season    *int                    `json:"season,omitempty"`
 
-	// State waiting = the share is not mounted (nothing is marked deleted); retrying = an unlink failed (see failed); both resume by themselves.
+	// State queued = confirmed and waiting to execute; needs_review = the reviewed scope changed. waiting = the share is not mounted (nothing is marked deleted); retrying = an unlink failed (see failed); both resume by themselves.
 	State     OffloadOperationState `json:"state"`
 	Stoppable bool                  `json:"stoppable"`
 	UpdatedAt int64                 `json:"updatedAt"`
@@ -3722,7 +3736,7 @@ type OffloadOperation struct {
 // OffloadOperationScope defines model for OffloadOperation.Scope.
 type OffloadOperationScope string
 
-// OffloadOperationState waiting = the share is not mounted (nothing is marked deleted); retrying = an unlink failed (see failed); both resume by themselves.
+// OffloadOperationState queued = confirmed and waiting to execute; needs_review = the reviewed scope changed. waiting = the share is not mounted (nothing is marked deleted); retrying = an unlink failed (see failed); both resume by themselves.
 type OffloadOperationState string
 
 // OffloadPreview defines model for OffloadPreview.
@@ -5166,20 +5180,16 @@ type WantedItemKind string
 // WantedItemReason defines model for WantedItem.Reason.
 type WantedItemReason string
 
-// WantedSearchConflict defines model for WantedSearchConflict.
-type WantedSearchConflict struct {
-	ActiveRunId string `json:"activeRunId"`
-	CanCancel   bool   `json:"canCancel"`
-	Message     string `json:"message"`
-}
-
 // WantedSearchRequest defines model for WantedSearchRequest.
 type WantedSearchRequest struct {
-	MediaItemId   *int64                     `json:"mediaItemId,omitempty"`
-	Reason        *WantedSearchRequestReason `json:"reason,omitempty"`
-	Scope         WantedSearchRequestScope   `json:"scope"`
-	TargetDelayMs *int                       `json:"targetDelayMs,omitempty"`
-	WantableId    *string                    `json:"wantableId,omitempty"`
+	MediaItemId *int64                     `json:"mediaItemId,omitempty"`
+	Reason      *WantedSearchRequestReason `json:"reason,omitempty"`
+
+	// RequestId Replay the same submission while the accepted run is retained.
+	RequestId     *string                  `json:"requestId,omitempty"`
+	Scope         WantedSearchRequestScope `json:"scope"`
+	TargetDelayMs *int                     `json:"targetDelayMs,omitempty"`
+	WantableId    *string                  `json:"wantableId,omitempty"`
 }
 
 // WantedSearchRequestReason defines model for WantedSearchRequest.Reason.
@@ -5240,6 +5250,11 @@ type WantedSearchRun struct {
 
 // WantedSearchRunStatus defines model for WantedSearchRun.Status.
 type WantedSearchRunStatus string
+
+// WantedSearchRunsPage defines model for WantedSearchRunsPage.
+type WantedSearchRunsPage struct {
+	Items []WantedSearchRun `json:"items"`
+}
 
 // WantedSearchScope defines model for WantedSearchScope.
 type WantedSearchScope struct {
@@ -6294,9 +6309,12 @@ type ServerInterface interface {
 	// GetLibraryOffload The open Offload of this title
 	// (GET /library/{id}/offload)
 	GetLibraryOffload(w http.ResponseWriter, r *http.Request, id int64)
-	// StartOffload Execute a previewed Offload (idempotent by requestId)
+	// StartOffload Queue a previewed Offload (idempotent by requestId)
 	// (POST /library/{id}/offload)
 	StartOffload(w http.ResponseWriter, r *http.Request, id int64)
+	// ListLibraryOffloads List open and recent Offloads of this title
+	// (GET /library/{id}/offload/operations)
+	ListLibraryOffloads(w http.ResponseWriter, r *http.Request, id int64)
 	// PreviewOffload What an Offload would delete (ADR 0028); no side effects
 	// (POST /library/{id}/offload/preview)
 	PreviewOffload(w http.ResponseWriter, r *http.Request, id int64)
@@ -6534,6 +6552,9 @@ type ServerInterface interface {
 	// ListWanted Everything still wanted (missing or below cutoff)
 	// (GET /wanted)
 	ListWanted(w http.ResponseWriter, r *http.Request)
+	// ListWantedSearches List active and recently finished Wanted searches
+	// (GET /wanted/searches)
+	ListWantedSearches(w http.ResponseWriter, r *http.Request)
 	// CreateWantedSearch Search an exact server-owned Wanted scope in the durable queue
 	// (POST /wanted/searches)
 	CreateWantedSearch(w http.ResponseWriter, r *http.Request)
@@ -9508,6 +9529,32 @@ func (siw *ServerInterfaceWrapper) StartOffload(w http.ResponseWriter, r *http.R
 	handler.ServeHTTP(w, r)
 }
 
+// ListLibraryOffloads operation middleware
+func (siw *ServerInterfaceWrapper) ListLibraryOffloads(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListLibraryOffloads(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // PreviewOffload operation middleware
 func (siw *ServerInterfaceWrapper) PreviewOffload(w http.ResponseWriter, r *http.Request) {
 
@@ -11498,6 +11545,20 @@ func (siw *ServerInterfaceWrapper) ListWanted(w http.ResponseWriter, r *http.Req
 	handler.ServeHTTP(w, r)
 }
 
+// ListWantedSearches operation middleware
+func (siw *ServerInterfaceWrapper) ListWantedSearches(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListWantedSearches(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // CreateWantedSearch operation middleware
 func (siw *ServerInterfaceWrapper) CreateWantedSearch(w http.ResponseWriter, r *http.Request) {
 
@@ -11895,6 +11956,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/library/{id}/offload/preview", wrapper.PreviewOffload)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/library/{id}/offload", wrapper.GetLibraryOffload)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/library/{id}/offload", wrapper.StartOffload)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/library/{id}/offload/operations", wrapper.ListLibraryOffloads)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/library/{id}/reacquire", wrapper.ReacquireLibraryItem)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/offload/{operationId}", wrapper.GetOffload)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/offload/{operationId}/cancel", wrapper.CancelOffload)
@@ -11952,6 +12014,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/system/backups", wrapper.ListBackups)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/calendar", wrapper.GetCalendar)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/wanted", wrapper.ListWanted)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/wanted/searches", wrapper.ListWantedSearches)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/wanted/searches", wrapper.CreateWantedSearch)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/wanted/searches/{runId}", wrapper.GetWantedSearch)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/wanted/searches/{runId}/results", wrapper.ListWantedSearchResults)
