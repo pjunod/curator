@@ -545,13 +545,22 @@ func (s *Service) runSeasonSearch(ctx context.Context, j domain.Job) error {
 		}
 	}
 	for {
+		var deferredErr error
+		var nextRetry time.Time
+		deferScope := func(err error, at time.Time) {
+			if deferredErr == nil || at.Before(nextRetry) {
+				deferredErr, nextRetry = err, at
+			}
+		}
+		allowPartial := false
 		for i := range p.Scopes {
 			sc := &p.Scopes[i]
 			if sc.Complete || sc.Degraded {
 				continue
 			}
 			if time.Now().Before(sc.RetryAt) {
-				return &sqlite.BudgetDeferred{At: sc.RetryAt, Reason: "provider search deferred"}
+				deferScope(&sqlite.BudgetDeferred{At: sc.RetryAt, Reason: "provider search deferred"}, sc.RetryAt)
+				continue
 			}
 			var cfg ports.IndexerConfig
 			for _, c := range enabled {
@@ -583,10 +592,8 @@ func (s *Service) runSeasonSearch(ctx context.Context, j domain.Job) error {
 					var deferred interface{ DeferredUntil() time.Time }
 					var remote *ports.RemoteError
 					if errors.As(e, &deferred) {
-						if er := s.saveSeasonCheckpoint(ctx, j, p); er != nil {
-							return er
-						}
-						return e
+						deferScope(e, deferred.DeferredUntil())
+						continue
 					}
 					sc.Failures++
 					if sc.Failures >= 3 || terminalSearchError(e) {
@@ -603,7 +610,7 @@ func (s *Service) runSeasonSearch(ctx context.Context, j domain.Job) error {
 						return er
 					}
 					if !sc.Complete {
-						return &sqlite.BudgetDeferred{At: sc.RetryAt, Reason: "retrying capability scope"}
+						deferScope(&sqlite.BudgetDeferred{At: sc.RetryAt, Reason: "retrying capability scope"}, sc.RetryAt)
 					}
 					continue
 				}
@@ -646,24 +653,17 @@ func (s *Service) runSeasonSearch(ctx context.Context, j domain.Job) error {
 					var deferred interface{ DeferredUntil() time.Time }
 					var remote *ports.RemoteError
 					if errors.As(err, &deferred) {
-						if e := s.saveSeasonCheckpoint(ctx, j, p); e != nil {
-							return e
-						}
-						if p.IntrinsicPartial && p.Stage == "episodes" {
-							tally, e := s.admitSeasonCandidates(ctx, p, item, pack, profile, targets, false)
-							s.recordSearch(ctx, pack, seasonRecordTrigger(p), tally, e)
-							if e != nil {
-								return e
-							}
-						}
-						return err
+						deferScope(err, deferred.DeferredUntil())
+						allowPartial = true
+						break
 					}
 					if errors.As(err, &remote) && !remote.RetryAt.IsZero() {
 						sc.RetryAt = remote.RetryAt
 						if e := s.saveSeasonCheckpoint(ctx, j, p); e != nil {
 							return e
 						}
-						return &sqlite.BudgetDeferred{At: remote.RetryAt, Reason: "provider RetryAt"}
+						deferScope(&sqlite.BudgetDeferred{At: sc.RetryAt, Reason: "provider RetryAt"}, sc.RetryAt)
+						break
 					}
 					sc.Failures++
 					if sc.Failures >= 3 || terminalSearchError(err) {
@@ -677,7 +677,7 @@ func (s *Service) runSeasonSearch(ctx context.Context, j domain.Job) error {
 						return e
 					}
 					if !sc.Complete {
-						return &sqlite.BudgetDeferred{At: sc.RetryAt, Reason: "retrying incomplete provider scope"}
+						deferScope(&sqlite.BudgetDeferred{At: sc.RetryAt, Reason: "retrying incomplete provider scope"}, sc.RetryAt)
 					}
 					break
 				}
@@ -731,7 +731,20 @@ func (s *Service) runSeasonSearch(ctx context.Context, j domain.Job) error {
 					return ctx.Err()
 				}
 			}
-			sc.Complete = true
+			sc.Complete = sc.Complete || sc.Query == len(sc.Queries)
+		}
+		if deferredErr != nil {
+			if e := s.saveSeasonCheckpoint(ctx, j, p); e != nil {
+				return e
+			}
+			if allowPartial && p.IntrinsicPartial && p.Stage == "episodes" {
+				tally, e := s.admitSeasonCandidates(ctx, p, item, pack, profile, targets, false)
+				s.recordSearch(ctx, pack, seasonRecordTrigger(p), tally, e)
+				if e != nil {
+					return e
+				}
+			}
+			return deferredErr
 		}
 		if p.Stage != "season" {
 			break

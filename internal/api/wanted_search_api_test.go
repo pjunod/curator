@@ -10,7 +10,7 @@ import (
 	"github.com/pjunod/monarr/internal/ports"
 )
 
-func TestWantedSearchAPIValidatesScopeReusesIdenticalRunAndReportsConflict(t *testing.T) {
+func TestWantedSearchAPIValidatesScopeReusesIdenticalRunAndAcceptsIndependentRun(t *testing.T) {
 	e := newAPIEnv(t)
 	ctx := t.Context()
 	if _, err := e.db.CreateMediaItem(ctx, domain.MediaItem{
@@ -26,7 +26,7 @@ func TestWantedSearchAPIValidatesScopeReusesIdenticalRunAndReportsConflict(t *te
 		t.Fatal(err)
 	}
 
-	first := e.post(t, "/api/v1/wanted/searches", `{"scope":"all","targetDelayMs":0}`).expect(t, http.StatusAccepted)
+	first := e.post(t, "/api/v1/wanted/searches", `{"scope":"all","targetDelayMs":0,"requestId":"start-all"}`).expect(t, http.StatusAccepted)
 	var run apigen.WantedSearchRun
 	if err := json.Unmarshal(first.Body.Bytes(), &run); err != nil {
 		t.Fatal(err)
@@ -40,12 +40,24 @@ func TestWantedSearchAPIValidatesScopeReusesIdenticalRunAndReportsConflict(t *te
 	if reused.RunId != run.RunId {
 		t.Fatalf("identical submission created %q, want reuse %q", reused.RunId, run.RunId)
 	}
-	e.post(t, "/api/v1/wanted/searches", `{"scope":"reason","reason":"missing","targetDelayMs":0}`).expect(t, http.StatusConflict)
+	e.post(t, "/api/v1/wanted/searches", `{"scope":"all","targetDelayMs":0,"requestId":"join-all"}`).expect(t, http.StatusAccepted)
+	e.post(t, "/api/v1/wanted/searches", `{"scope":"reason","reason":"missing","targetDelayMs":0}`).expect(t, http.StatusAccepted)
+	e.post(t, "/api/v1/wanted/searches", `{"scope":"reason","reason":"missing","requestId":"start-all"}`).expect(t, http.StatusConflict)
 	e.post(t, "/api/v1/wanted/searches", `{"scope":"all","reason":"missing"}`).expect(t, http.StatusBadRequest)
 	e.post(t, "/api/v1/wanted/searches", `{"scope":"target","wantableId":"season:1:2"}`).expect(t, http.StatusBadRequest)
 	e.post(t, "/api/v1/wanted/searches", `{"scope":"all","surprise":true}`).expect(t, http.StatusBadRequest)
 
+	list := e.get(t, "/api/v1/wanted/searches").expect(t, http.StatusOK)
+	var runs apigen.WantedSearchRunsPage
+	if err := json.Unmarshal(list.Body.Bytes(), &runs); err != nil || len(runs.Items) != 2 {
+		t.Fatalf("list = %+v, %v; want both runs", runs, err)
+	}
+
 	e.get(t, "/api/v1/wanted/searches/"+run.RunId).expect(t, http.StatusOK)
 	e.post(t, "/api/v1/wanted/searches/"+run.RunId+"/cancel", "").expect(t, http.StatusAccepted)
 	e.post(t, "/api/v1/wanted/searches/"+run.RunId+"/cancel", "").expect(t, http.StatusOK)
+	replayed := e.post(t, "/api/v1/wanted/searches", `{"scope":"all","targetDelayMs":0,"requestId":"join-all"}`).expect(t, http.StatusAccepted)
+	if err := json.Unmarshal(replayed.Body.Bytes(), &reused); err != nil || reused.RunId != run.RunId || reused.Status != "cancelled" {
+		t.Fatalf("request replay = %+v, %v; want cancelled run %s", reused, err, run.RunId)
+	}
 }

@@ -41,6 +41,8 @@ import type {
   UpdateMediaCopyRequest,
   UpdateMediaItemRequest,
   WantedItem,
+  WantedSearchRun,
+  WantedSearchScope,
   ItemStatus,
 } from './types'
 
@@ -70,6 +72,8 @@ export class ApiError extends Error {
 }
 
 export class MonarrClient {
+  private readonly wantedSubmissions = new Map<string, { requestId: string; pending?: Promise<WantedSearchRun> }>()
+
   constructor(readonly connection: Connection) {}
 
   private async request<T>(path: string, init: RequestInit = {}, timeoutMs = 30_000): Promise<T> {
@@ -210,8 +214,38 @@ export class MonarrClient {
     this.get(`/library/${id}/status${season === undefined ? '' : `?season=${season}`}`)
   confirmItemInCinema = (id: number, episodeId?: number): Promise<{ queued: number }> =>
     this.send('POST', `/library/${id}/status/confirm${episodeId ? `?episode=${episodeId}` : ''}`)
-  searchWantable = (wantableId: string): Promise<{ scopeLabel: string }> =>
-    this.send('POST', '/wanted/searches', { scope: 'target', wantableId })
+  getWantedSearches = (): Promise<{ items: WantedSearchRun[] }> => this.get('/wanted/searches')
+  createWantedSearch = (scope: WantedSearchScope): Promise<WantedSearchRun> => {
+    const key = JSON.stringify([
+      scope.scope,
+      'reason' in scope ? scope.reason : null,
+      'mediaItemId' in scope ? scope.mediaItemId : null,
+      'wantableId' in scope ? scope.wantableId : null,
+    ])
+    const saved = this.wantedSubmissions.get(key)
+    if (saved?.pending) return saved.pending
+    const requestId = saved?.requestId ?? `wanted-${Date.now()}-${Math.random().toString(36).slice(2)}`
+    const pending = this.send<WantedSearchRun>('POST', '/wanted/searches', { ...scope, requestId })
+      .then((run) => {
+        if (!run?.runId) throw new Error('The server did not confirm the search. Try again to recover its status.')
+        this.wantedSubmissions.delete(key)
+        return run
+      })
+      .catch((error: unknown) => {
+        if (error instanceof ApiError && error.status >= 400 && error.status < 500 && error.status !== 408 && error.status !== 499) {
+          this.wantedSubmissions.delete(key)
+        } else {
+          this.wantedSubmissions.set(key, { requestId })
+        }
+        throw error
+      })
+    this.wantedSubmissions.set(key, { requestId, pending })
+    return pending
+  }
+  cancelWantedSearch = (runId: string): Promise<WantedSearchRun> =>
+    this.send('POST', `/wanted/searches/${encodeURIComponent(runId)}/cancel`)
+  searchWantable = (wantableId: string): Promise<WantedSearchRun> =>
+    this.createWantedSearch({ scope: 'target', wantableId })
   cancelDownload = (id: number): Promise<void> => this.send('DELETE', `/queue/${id}?fromClient=true&blocklist=true`)
   retryImport = (id: number): Promise<void> => this.send('POST', `/queue/${id}/import`)
   retryDelivery = (notifierId: number, deliveryId: number): Promise<void> =>
@@ -230,6 +264,7 @@ export class MonarrClient {
   previewOffload = (itemId: number, req: OffloadRequest): Promise<OffloadPreview> => this.send('POST', `/library/${itemId}/offload/preview`, req)
   startOffload = (itemId: number, req: OffloadRequest): Promise<OffloadOperation> => this.send('POST', `/library/${itemId}/offload`, req)
   getLibraryOffload = async (itemId: number): Promise<OffloadOperation | null> => (await this.get<OffloadOperation | undefined>(`/library/${itemId}/offload`)) ?? null
+  listLibraryOffloads = (itemId: number): Promise<OffloadOperation[]> => this.get(`/library/${itemId}/offload/operations`)
   getOffload = (operationId: string): Promise<OffloadOperation> => this.get(`/offload/${encodeURIComponent(operationId)}`)
   cancelOffload = (operationId: string): Promise<void> => this.send('POST', `/offload/${encodeURIComponent(operationId)}/cancel`)
   dismissOffload = (operationId: string): Promise<void> => this.send('POST', `/offload/${encodeURIComponent(operationId)}/dismiss`)

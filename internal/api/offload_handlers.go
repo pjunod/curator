@@ -165,3 +165,13 @@ func (s *Server) ReacquireLibraryItem(w http.ResponseWriter, r *http.Request, id
 	}
 	writeJSON(w, http.StatusOK, res)
 }
+
+// ListLibraryOffloads implements GET /library/{id}/offload/operations.
+func (s *Server) ListLibraryOffloads(w http.ResponseWriter, r *http.Request, id int64) {
+	ops, err := s.deps.Acquisition.ListOffloadsForItem(r.Context(), id)
+	if err != nil {
+		s.offloadErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, ops)
+}

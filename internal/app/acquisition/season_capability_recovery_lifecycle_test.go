@@ -145,3 +145,65 @@ func TestSeasonDiscoveryRecoversPersistedUnsupportedCapabilityScopeAfterRestart(
 		t.Fatalf("recovered complete evidence was not checkpointed: %+v", checkpoint)
 	}
 }
+
+func TestSeasonDiscoveryCheckpointsReadyProviderWhileAnotherWaits(t *testing.T) {
+	ctx := context.Background()
+	client := &fakeClient{}
+	svc, db, itemID := setup(t, nil, client)
+	providers, err := db.ListIndexers(ctx)
+	if err != nil || len(providers) != 1 {
+		t.Fatalf("initial indexer fixture=%+v err=%v", providers, err)
+	}
+	blocked := providers[0].ID
+	ready, err := db.AddIndexer(ctx, ports.IndexerConfig{
+		Name: "ready", URL: "http://ready", Protocol: "torrent", Enabled: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	retryAt := time.Now().Add(time.Hour).Truncate(time.Millisecond)
+	if err := db.SetIndexerRetryAt(ctx, blocked, retryAt); err != nil {
+		t.Fatal(err)
+	}
+	svc.newIndexer = func(cfg ports.IndexerConfig) ports.Indexer {
+		if cfg.ID != ready {
+			return fakeIndexer{}
+		}
+		return fakeIndexer{releases: []ports.Release{{
+			Title: "Test.Show.S01E01.1080p.WEB-DL-READY", DownloadURL: "ready-one",
+			Indexer: cfg.Name, IndexerID: cfg.ID, Protocol: "torrent", Size: 1000,
+		}}}
+	}
+
+	if err := svc.enqueueSeason(ctx, itemID, 0, 1, "test", true); err != nil {
+		t.Fatal(err)
+	}
+	job, err := db.ClaimJob(ctx, "provider-readiness", nil, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = svc.handleSeasonSearch(ctx, job)
+	var deferred *sqlite.BudgetDeferred
+	if !errors.As(err, &deferred) || !deferred.At.Equal(retryAt) {
+		t.Fatalf("season deferral = %v, want retry at %v", err, retryAt)
+	}
+	job, err = db.GetJob(ctx, job.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var checkpoint seasonCheckpoint
+	if err := json.Unmarshal([]byte(job.Payload), &checkpoint); err != nil {
+		t.Fatal(err)
+	}
+	completed := map[int64]bool{}
+	for _, scope := range checkpoint.Scopes {
+		completed[scope.IndexerID] = scope.Complete
+	}
+	if len(completed) != 2 || completed[blocked] || !completed[ready] ||
+		len(checkpoint.Releases) != 1 || checkpoint.Releases[0].IndexerID != ready {
+		t.Fatalf("ready provider results not checkpointed: %+v", checkpoint)
+	}
+	if checkpoint.Stage != "season" || len(client.added) != 0 {
+		t.Fatalf("incomplete season comparison advanced: stage=%s grabs=%v", checkpoint.Stage, client.added)
+	}
+}

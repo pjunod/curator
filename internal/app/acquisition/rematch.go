@@ -1270,8 +1270,8 @@ func (s *Service) startRematchWorker(ctx context.Context) {
 }
 
 // driveRematches starts every open operation this process is not already
-// driving. Titles busy with an import are waited for (and the operation says
-// so); the next pass tries again.
+// driving. Leave busy title pairs for the next pass so an independent pair
+// or a queued offload can start without waiting on them.
 func (s *Service) driveRematches(ctx context.Context) {
 	ops, err := s.db.OpenRematchOperations(ctx)
 	if err != nil {
@@ -1289,7 +1289,7 @@ func (s *Service) driveRematches(ctx context.Context) {
 		if err != nil {
 			return // paused for a drain: resumed after it
 		}
-		leaseCtx, release, err := s.lockImportTargets(workCtx, 2*time.Second, op.SourceItemID, op.TargetItemID)
+		leaseCtx, release, err := s.lockImportTargets(workCtx, 0, op.SourceItemID, op.TargetItemID)
 		if err != nil {
 			releaseWork()
 			// A move just started is still inside StartRematch's own lease

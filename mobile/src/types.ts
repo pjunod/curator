@@ -304,6 +304,24 @@ export interface WantedItem {
   copy: string
 }
 
+export type WantedSearchScope =
+  | { scope: 'all' }
+  | { scope: 'reason'; reason: 'missing' | 'upgrade' }
+  | { scope: 'group'; mediaItemId: number; reason?: 'missing' | 'upgrade' }
+  | { scope: 'target'; wantableId: string }
+
+export interface WantedSearchRun {
+  runId: string
+  scope: WantedSearchScope
+  scopeLabel: string
+  status: 'queued' | 'running' | 'completed' | 'failed' | 'interrupted' | 'cancelled'
+  cancelRequestedAt?: string
+  selected: number
+  processed: number
+  grabbed: number
+  error?: string
+}
+
 export interface MatchEvidence {
   version: number
   matched: boolean
@@ -633,7 +651,7 @@ export interface StatusOffload {
 }
 // Offload (ADR 0028): free the space, keep the title.
 export type OffloadScope = 'item' | 'season' | 'episode'
-export type OffloadState = 'deleting' | 'waiting' | 'retrying' | 'stopping' | 'complete' | 'cancelled' | 'failed'
+export type OffloadState = 'queued' | 'needs_review' | 'deleting' | 'waiting' | 'retrying' | 'stopping' | 'complete' | 'cancelled' | 'failed'
 export interface OffloadRequest { scope: OffloadScope; season?: number; episodeId?: number; requestId?: string; fingerprint?: string }
 export interface OffloadFile { path: string; kind: 'media' | 'sidecar'; bytes: number; shared?: boolean; episodes?: string[] }
 export interface OffloadPreview {
@@ -660,6 +678,8 @@ export interface OffloadOperation {
   state: OffloadState
   itemId: number
   scope: OffloadScope
+  season?: number
+  episodeId?: number
   label?: string
   filesTotal: number
   filesDone: number

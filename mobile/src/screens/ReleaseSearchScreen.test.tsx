@@ -153,17 +153,18 @@ describe('ReleaseSearchScreen', () => {
     expect(client.searchReleases).toHaveBeenCalledTimes(3)
   })
 
-  it('ignores a search that answers after the screen closed', async () => {
+  it('switches during a pending search and keeps late results with their own scope', async () => {
     const client = makeClient([])
     let resolveSearch: (value: unknown) => void = () => undefined
     client.searchReleases.mockImplementationOnce(() => new Promise((resolve) => { resolveSearch = resolve }))
     await act(async () => { renderer = create(<ReleaseSearchScreen client={client as unknown as MonarrClient} id={42} initialScope={{ season: 1 }} onBack={vi.fn()} />) })
-    expect(labelled('S2')[0]!.props.onPress).toBeUndefined()
-    const tree = renderer!
-    renderer = undefined
-    await act(async () => tree.unmount())
-    await act(async () => { resolveSearch({ candidates: [candidate({ title: 'Stale', candidateToken: 's' })], partial: false }) })
-    expect(client.searchReleases).toHaveBeenCalledOnce()
+    await press('S2')
+    expect(client.searchReleases).toHaveBeenLastCalledWith(42, { copyId: undefined, season: 2 })
+    await act(async () => { resolveSearch({ candidates: [candidate({ title: 'Season one release', candidateToken: 's' })], partial: false }) })
+    expect(text()).not.toContain('Season one release')
+    await press('S1')
+    expect(text()).toContain('Season one release')
+    expect(client.searchReleases).toHaveBeenCalledTimes(2)
   })
 
   it('searches a series copy on its season and names the copy', async () => {

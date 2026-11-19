@@ -1,12 +1,11 @@
 import { LibraryVolumeReview } from '../LibraryVolumeReview'
 import { ActionDialog, focusActionTrigger } from '../ActionDialog'
-import { useRef } from 'react'
 import { CompletedFolderSettings } from '../CompletedFolders'
 import { DiscoverySettings } from '../DiscoverySettings'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState, type MouseEvent } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useLocation } from '@tanstack/react-router'
-import type { RootKind } from '../api'
+import type { RootFolder, RootKind } from '../api'
 import {
   addRootFolder,
   deleteRootFolder,
@@ -96,14 +95,6 @@ export function SettingsPage() {
       void qc.invalidateQueries({ queryKey: ['rootfolders'] })
     },
   })
-  const retypeRoot = useMutation({
-    mutationFn: ({ id, kind }: { id: number; kind: RootKind }) => updateRootFolderKind(id, kind),
-    onSuccess: () => void qc.invalidateQueries({ queryKey: ['rootfolders'] }),
-  })
-  const delRoot = useMutation({
-    mutationFn: deleteRootFolder,
-    onSuccess: () => void qc.invalidateQueries({ queryKey: ['rootfolders'] }),
-  })
   const restore = useMutation({
     mutationFn: (path: string) => unignoreDir(path),
     onSuccess: () => {
@@ -131,11 +122,6 @@ export function SettingsPage() {
       void qc.invalidateQueries({ queryKey: ['library'] })
     },
   })
-  const autoAdopt = useMutation({
-    mutationFn: ({ id, on }: { id: number; on: boolean }) => setRootAutoAdopt(id, on),
-    onSuccess: () => void qc.invalidateQueries({ queryKey: ['rootfolders'] }),
-  })
-
   return (
     <>
       {volume!==null&&<ActionDialog title="Review library volume" returnFocus={volumeOpener} onClose={()=>setVolume(null)}><LibraryVolumeReview id={volume}/></ActionDialog>}
@@ -253,62 +239,12 @@ export function SettingsPage() {
             </tr>
           </thead>
           <tbody>
-            {roots.data?.map((rf) => (
-              <tr key={rf.id}>
-                <td className="mono">{rf.path}</td>
-                <td>
-                  <select
-                    value={rf.kind}
-                    disabled={retypeRoot.isPending}
-                    onChange={(e) =>
-                      retypeRoot.mutate({ id: rf.id, kind: e.target.value as RootKind })
-                    }
-                  >
-                    <option value="movie">Movies</option>
-                    <option value="series">TV series</option>
-                    <option value="book">Books</option>
-                    <option value="mixed">Mixed — ask</option>
-                  </select>
-                </td>
-                <td>
-                  {rf.kind === 'mixed' ? (
-                    <span className="muted" title="A mixed root always asks — set a kind first">
-                      always asks
-                    </span>
-                  ) : rf.autoAdopt ? (
-                    <>
-                      <span className="pill pill-ok">auto</span>{' '}
-                      <button
-                        className="link-btn"
-                        disabled={autoAdopt.isPending}
-                        title="Go back to proposing matches for review"
-                        onClick={() => autoAdopt.mutate({ id: rf.id, on: false })}
-                      >
-                        undo
-                      </button>
-                    </>
-                  ) : (
-                    <button
-                      disabled={autoAdopt.isPending}
-                      title="Let later scans adopt confident matches into this root without asking"
-                      onClick={() => autoAdopt.mutate({ id: rf.id, on: true })}
-                    >
-                      Confirm
-                    </button>
-                  )}
-                </td>
-                <td className="muted">{fmtBytes(rf.freeBytes)}</td>
-                <td>
-                  {rf.accessible ? (
-                    <span className="pill pill-ok">ok</span>
-                  ) : (
-                    <span className="pill pill-error">unreachable</span>
-                  )}
-                </td>
-                <td><button onClick={event=>{focusActionTrigger(event);volumeOpener.current=event.currentTarget;setVolume(rf.id)}}>Review volume</button>
-                  <button onClick={() => delRoot.mutate(rf.id)}>Remove</button>
-                </td>
-              </tr>
+            {roots.data?.map((root) => (
+              <RootFolderRow key={root.id} root={root} onReviewVolume={(event) => {
+                focusActionTrigger(event)
+                volumeOpener.current = event.currentTarget
+                setVolume(root.id)
+              }} />
             ))}
             {roots.data?.length === 0 && (
               <tr>
@@ -324,9 +260,6 @@ export function SettingsPage() {
             A folder set to <em>Mixed</em> has to ask what every unmatched folder is. Setting it
             to a single kind is what lets a scan match on its own.
           </p>
-        )}
-        {retypeRoot.isError && (
-          <div className="banner warning">{String((retypeRoot.error as Error).message)}</div>
         )}
         <div className="form-row">
           <PathInput value={newRoot} onChange={setNewRoot} />
@@ -473,5 +406,59 @@ export function SettingsPage() {
       </div>
       <div hidden={settingsTab !== 'connections'}><AcquisitionSettings /><NotifierSettings /></div>
     </>
+  )
+}
+
+function RootFolderRow({ root, onReviewVolume }: {
+  root: RootFolder
+  onReviewVolume: (event: MouseEvent<HTMLButtonElement>) => void
+}) {
+  const qc = useQueryClient()
+  const update = useMutation({
+    mutationFn: (write: () => Promise<unknown>) => write(),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['rootfolders'] }),
+  })
+
+  return (
+    <tr>
+      <td className="mono">{root.path}</td>
+      <td>
+        <select value={root.kind} aria-label={`What ${root.path} holds`} disabled={update.isPending}
+          onChange={(event) => {
+            const kind = event.target.value as RootKind
+            update.mutate(() => updateRootFolderKind(root.id, kind))
+          }}>
+          <option value="movie">Movies</option>
+          <option value="series">TV series</option>
+          <option value="book">Books</option>
+          <option value="mixed">Mixed — ask</option>
+        </select>
+      </td>
+      <td>
+        {root.kind === 'mixed' ? (
+          <span className="muted" title="A mixed root always asks — set a kind first">always asks</span>
+        ) : root.autoAdopt ? (
+          <>
+            <span className="pill pill-ok">auto</span>{' '}
+            <button className="link-btn" disabled={update.isPending} title="Go back to proposing matches for review"
+              onClick={() => update.mutate(() => setRootAutoAdopt(root.id, false))}>
+              undo
+            </button>
+          </>
+        ) : (
+          <button disabled={update.isPending} title="Let later scans adopt confident matches into this root without asking"
+            onClick={() => update.mutate(() => setRootAutoAdopt(root.id, true))}>
+            Confirm
+          </button>
+        )}
+      </td>
+      <td className="muted">{fmtBytes(root.freeBytes)}</td>
+      <td>{root.accessible ? <span className="pill pill-ok">ok</span> : <span className="pill pill-error">unreachable</span>}</td>
+      <td>
+        <button disabled={update.isPending} onClick={onReviewVolume}>Review volume</button>
+        <button disabled={update.isPending} onClick={() => update.mutate(() => deleteRootFolder(root.id))}>Remove</button>
+        {update.error && <div className="error-text" role="alert">{update.error.message}</div>}
+      </td>
+    </tr>
   )
 }

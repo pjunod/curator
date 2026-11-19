@@ -154,12 +154,13 @@ type Service struct {
 	rematchMu         sync.Mutex
 	rematchCancels    map[string]context.CancelFunc // operations this process is driving
 	rematchCtx        context.Context               // the importers' lifetime, once started
-	offloadCancels    map[string]context.CancelFunc // Offload operations this process is driving (guarded by rematchMu)
+	offloadVolumes    map[string][]string           // active Offloads and their volumes (guarded by rematchMu)
+	offloadDeferred   map[string]struct{}           // unfinished attempts until the next worker tick (guarded by rematchMu)
 	db                *sqlite.DB
 	bus               *bus.Bus
 	log               *slog.Logger
 	rssSweepMu        sync.Mutex
-	planDispatchMu    sync.Mutex
+	planDispatchLocks keyedLocks
 	seasonRetryCursor atomic.Int64
 	newIndexer        IndexerFactory
 	newClient         ClientFactory

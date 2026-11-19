@@ -3,19 +3,14 @@ package acquisition
 import (
 	"context"
 	"errors"
-	"sync"
 	"time"
 
 	"github.com/pjunod/monarr/internal/domain"
 	"github.com/pjunod/monarr/internal/ports"
 )
 
-var indexerRequestLocks sync.Map
+var indexerRequestLocks keyedLocks
 
-func requestLock(id int64) *sync.Mutex {
-	v, _ := indexerRequestLocks.LoadOrStore(id, &sync.Mutex{})
-	return v.(*sync.Mutex)
-}
 func (s *Service) budgetIndexer(cfg ports.IndexerConfig, bucket string, automatic bool) ports.Indexer {
 	return s.budgetIndexerStrict(cfg, bucket, automatic, automatic)
 }
@@ -30,13 +25,15 @@ func (s *Service) budgetIndexerStrict(cfg ports.IndexerConfig, bucket string, au
 		observer.SetRequestResult(func(ctx context.Context, err error) { s.rememberIndexerDelay(ctx, cfg.ID, err) })
 	}
 	gate := func(ctx context.Context) (func(), error) {
-		mu := requestLock(cfg.ID)
-		mu.Lock()
-		if err := s.db.ReserveIndexerRequest(ctx, cfg.ID, bucket, automatic, time.Now()); err != nil {
-			mu.Unlock()
+		release, err := indexerRequestLocks.lock(ctx, cfg.ID)
+		if err != nil {
 			return nil, err
 		}
-		return mu.Unlock, nil
+		if err := s.db.ReserveIndexerRequest(ctx, cfg.ID, bucket, automatic, time.Now()); err != nil {
+			release()
+			return nil, err
+		}
+		return release, nil
 	}
 	if installer, ok := raw.(ports.RequestGateInstaller); ok {
 		installer.SetRequestGate(gate)

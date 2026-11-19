@@ -167,7 +167,6 @@ function Readiness({ label, ok, detail }: { label: string; ok: boolean | null; d
 export function RecoveryImports() {
   const qc = useQueryClient()
   const jobs = useQuery({ queryKey: ['recovery-imports'], queryFn: getRecoveryImports, refetchInterval: 5000 })
-  const cancel = useMutation({ mutationFn: cancelRecoveryImport, onSuccess: () => { void qc.invalidateQueries({ queryKey: ['recovery-imports'] }) } })
   const settings = useQuery({ queryKey: ['recovery-settings'], queryFn: getRecoverySettings })
   const recoveries = useQuery({ queryKey: ['runner-recoveries'], queryFn: getRecoveries, refetchInterval: settings.data?.settings.enabled ? 15000 : false })
   const library = useQuery({ queryKey: ['library', 'all'], queryFn: () => getLibrary() })
@@ -302,10 +301,31 @@ export function RecoveryImports() {
         <td><code>{job.id.slice(0, 12)}</code></td>
         <td><span className={'pill ' + (job.state === 'imported' ? 'pill-ok' : job.error ? 'pill-error' : active ? 'pill-warning' : 'pill-neutral')}>{job.state}</span>{job.error && <div className="error-text">{job.error}</div>}</td>
         <td>{job.current_file ? <div><div className="recovery-path">{job.current_file}</div><div className="progress-track" aria-label="copy progress"><i style={{ width: (total ? Math.min(100, Math.round(done / total * 100)) : 0) + '%' }} /></div><div className="muted">{fmtBytes(done)} / {fmtBytes(total)}</div></div> : <span className="muted">—</span>}</td>
-        <td>{active && <button className="small" disabled={cancel.isPending} onClick={() => cancel.mutate(job.id)}>Cancel import</button>}</td>
+        <td>{active && <CancelRecoveryImportButton id={job.id} />}</td>
       </tr>
     })}</tbody></table>}
-    {cancel.error && <div className="banner warning" role="alert">{cancel.error.message}</div>}
     <p className="muted">Cancellation waits for the active file operation to stop. Files already committed to the library remain recorded; Runner retains the source for review.</p>
   </section>
+}
+
+function CancelRecoveryImportButton({ id }: { id: string }) {
+  const qc = useQueryClient()
+  const cancel = useMutation({
+    mutationFn: () => cancelRecoveryImport(id),
+    onSuccess: async () => {
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: ['recovery-imports'] }),
+        qc.invalidateQueries({ queryKey: ['recovery-import', id] }),
+      ])
+    },
+  })
+
+  return (
+    <>
+      <button className="small" disabled={cancel.isPending} onClick={() => cancel.mutate()}>
+        {cancel.isPending ? 'Cancelling…' : 'Cancel import'}
+      </button>
+      {cancel.error && <div className="error-text" role="alert">{cancel.error.message}</div>}
+    </>
+  )
 }
