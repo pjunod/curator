@@ -70,16 +70,16 @@ export function OffloadDialog({ itemId, title, request, initialOperation, onClos
     }
   }, [over, qc])
   const stop = useMutation({ mutationFn: () => cancelOffload(op!.operationId), onSuccess: () => void status.refetch() })
-  const [reviewing, setReviewing] = useState(false)
-  const operations = useQuery({ queryKey: ['library-offloads', itemId], queryFn: () => listLibraryOffloads(itemId), enabled: !operation && !reviewing, retry: false })
+  const [review, setReview] = useState(0)
+  const operations = useQuery({ queryKey: ['library-offloads', itemId], queryFn: () => listLibraryOffloads(itemId), enabled: !operation && review === 0, retry: false })
   useEffect(() => {
     const selected = operations.data?.find((entry) => OFFLOAD_RUNNING.has(entry.state) && matchesScope(entry, request))
-    if (selected && !operation && !reviewing) setOperation(selected)
-  }, [operations.data, operation, request, reviewing])
+    if (selected && !operation && review === 0) setOperation(selected)
+  }, [operations.data, operation, request, review])
 
   const p = preview.data
   const fingerprint = p?.fingerprint ?? ''
-  const requestId = useMemo(() => (fingerprint ? `offload-${itemId}-${fingerprint}-${Math.random().toString(36).slice(2, 10)}` : ''), [itemId, fingerprint])
+  const requestId = useMemo(() => (fingerprint ? `offload-${itemId}-${fingerprint}-${Math.random().toString(36).slice(2, 10)}` : ''), [itemId, fingerprint, review])
   const [sure, setSure] = useState(false)
 
   return (
@@ -87,7 +87,7 @@ export function OffloadDialog({ itemId, title, request, initialOperation, onClos
       {op ? (
         <OffloadProgress op={op} stopping={stop.isPending} onStop={() => stop.mutate()} stopError={stop.error as Error | null} onClose={onClose}
           onReview={() => {
-            setReviewing(true)
+            setReview((count) => count + 1)
             setSure(false)
             setOperation(null)
             void preview.refetch()

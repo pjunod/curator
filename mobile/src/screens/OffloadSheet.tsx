@@ -155,6 +155,7 @@ export function OffloadSheet({ client, itemId, label, request, initialOperation,
               <>
                 {op.state === 'needs_review' ? <Button secondary label="Refresh preview" onPress={() => {
                   setReviewing(true)
+                  requestIds.current.clear()
                   setSure(false)
                   setOp(null)
                   setNonce((n) => n + 1)
