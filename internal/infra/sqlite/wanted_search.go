@@ -10,9 +10,7 @@ import (
 	"github.com/pjunod/monarr/internal/domain"
 )
 
-// ErrWantedSearchActive means the database's single active-run slot is
-// occupied. The caller reads ActiveWantedSearch to distinguish idempotent
-// reuse from a conflicting scope.
+// ErrWantedSearchActive means an equivalent active run already exists.
 var ErrWantedSearchActive = errors.New("wanted search already active")
 
 // WantedSearchRun is the durable progress row. Times use time.Time at the
@@ -60,24 +58,31 @@ scope_label, status, created_at, started_at, finished_at, cancel_requested_at,
 target_delay_ms, selected, processed, searched, skipped, failed, grabbed,
 cursor, next_ready_at, job_id, error`
 
-// CreateWantedSearch atomically claims the active slot and snapshots targets.
+// CreateWantedSearch atomically claims the normalized scope and snapshots targets.
 func (d *DB) CreateWantedSearch(ctx context.Context, r WantedSearchRun, targets []WantedSearchTarget) error {
 	tx, err := d.W.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
-	_, err = tx.ExecContext(ctx, `INSERT INTO wanted_search_runs (
+	inserted, err := tx.ExecContext(ctx, `INSERT INTO wanted_search_runs (
         run_id, scope, reason, media_item_id, wantable_id, scope_label, status,
         created_at, target_delay_ms, selected, next_ready_at
-    ) VALUES (?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?)`,
+    ) VALUES (?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?)
+    ON CONFLICT (scope, reason, media_item_id, wantable_id, target_delay_ms)
+    WHERE status IN ('queued', 'running') AND cancel_requested_at = 0
+    DO NOTHING`,
 		r.RunID, r.Scope, r.Reason, r.MediaItemID, r.WantableID, r.ScopeLabel,
 		r.CreatedAt.UnixMilli(), r.TargetDelay.Milliseconds(), len(targets), r.CreatedAt.UnixMilli())
 	if err != nil {
-		if isConstraint(err) {
-			return ErrWantedSearchActive
-		}
 		return err
+	}
+	n, err := inserted.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrWantedSearchActive
 	}
 	for i, target := range targets {
 		if _, err := tx.ExecContext(ctx, `INSERT INTO wanted_search_targets
@@ -99,14 +104,38 @@ func (d *DB) GetWantedSearch(ctx context.Context, runID string) (WantedSearchRun
 	return r, err
 }
 
-func (d *DB) ActiveWantedSearch(ctx context.Context) (WantedSearchRun, error) {
+func (d *DB) MatchingWantedSearch(ctx context.Context, scope, reason string, itemID int64, wantableID string, delay time.Duration) (WantedSearchRun, error) {
 	row := d.R.QueryRowContext(ctx, `SELECT `+wantedRunColumns+` FROM wanted_search_runs
-        WHERE status IN ('queued', 'running') ORDER BY created_at LIMIT 1`)
+        WHERE status IN ('queued', 'running') AND cancel_requested_at = 0
+        AND scope = ? AND reason = ? AND media_item_id = ? AND wantable_id = ? AND target_delay_ms = ?`,
+		scope, reason, itemID, wantableID, delay.Milliseconds())
 	r, err := scanWantedRun(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return r, ErrNotFound
 	}
 	return r, err
+}
+
+// ListWantedSearches returns all active runs and the latest 50 completed runs.
+func (d *DB) ListWantedSearches(ctx context.Context) ([]WantedSearchRun, error) {
+	rows, err := d.R.QueryContext(ctx, `SELECT `+wantedRunColumns+` FROM wanted_search_runs
+        WHERE status IN ('queued', 'running') OR run_id IN (
+            SELECT run_id FROM wanted_search_runs WHERE status NOT IN ('queued', 'running')
+            ORDER BY created_at DESC, run_id DESC LIMIT 50
+        ) ORDER BY created_at DESC, run_id DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var out []WantedSearchRun
+	for rows.Next() {
+		r, err := scanWantedRun(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
 }
 
 func (d *DB) ListActiveWantedSearches(ctx context.Context) ([]WantedSearchRun, error) {

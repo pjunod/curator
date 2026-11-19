@@ -1281,11 +1281,7 @@ func (s *Server) CreateWantedSearch(w http.ResponseWriter, r *http.Request) {
 	}
 	run, err := s.deps.Acquisition.StartWantedSearch(r.Context(), req)
 	if err != nil {
-		var conflict *acquisition.WantedSearchConflict
 		switch {
-		case errors.As(err, &conflict):
-			writeJSON(w, http.StatusConflict, apigen.WantedSearchConflict{
-				ActiveRunId: conflict.ActiveRunID, CanCancel: true, Message: conflict.Message})
 		case errors.Is(err, acquisition.ErrInvalidWantedSearch):
 			writeError(w, http.StatusBadRequest, err.Error())
 		case errors.Is(err, acquisition.ErrNotFound):
@@ -1296,6 +1292,19 @@ func (s *Server) CreateWantedSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusAccepted, wantedSearchDTO(run))
+}
+
+func (s *Server) ListWantedSearches(w http.ResponseWriter, r *http.Request) {
+	runs, err := s.deps.Acquisition.WantedSearches(r.Context())
+	if err != nil {
+		s.acqErr(w, err)
+		return
+	}
+	items := make([]apigen.WantedSearchRun, 0, len(runs))
+	for _, run := range runs {
+		items = append(items, wantedSearchDTO(run))
+	}
+	writeJSON(w, http.StatusOK, apigen.WantedSearchRunsPage{Items: items})
 }
 
 func (s *Server) GetWantedSearch(w http.ResponseWriter, r *http.Request, runID apigen.WantedSearchRunId) {
