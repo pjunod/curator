@@ -2,6 +2,7 @@ package acquisition
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -643,5 +644,96 @@ func TestActivityDeletionMergesPendingCinemaFilesAcrossInterruptedPlacements(t *
 	slices.Sort(want)
 	if !slices.Equal(got, want) {
 		t.Fatalf("refresh replaced the pending first file instead of merging distinct expectations: got %v want %v", got, want)
+	}
+}
+
+func TestDigestlessLiveMarkerStillRequiresTheRecordedSourceHash(t *testing.T) {
+	f := setupV2(t, nil)
+	dl, err := f.db.InsertDownloadRecord(f.ctx, sqlite.Download{
+		MediaItemID: f.item, State: "failed", Protocol: "manual", ReleaseTitle: "Older finalized file ledger",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	const name = "episode.mkv"
+	const original, replacement = "original bytes", "replaced bytes"
+	pub := f.publish("older-publication", "older-generation", map[string]string{name: original})
+	source := filepath.Join(pub.Path, name)
+	marker := filepath.Join(pub.Path, ports.ManifestFileName)
+	recorded, err := os.ReadFile(marker)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, err := f.db.InsertPublication(f.ctx, sqlite.PublicationWrite{
+		DownloadID: dl.ID, Kind: "completed", Path: pub.Path, Generation: pub.Generation, Cohort: "live",
+		Source: "file", ManifestJSON: string(recorded),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	file := sqlite.PublicationFile{PublicationID: id, Path: name, Bytes: int64(len(original)), Outcome: "discarded", DiscardReason: "rejected"}
+	if err := f.db.SeedPublicationFiles(f.ctx, id, []sqlite.PublicationFile{file}); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.db.SetPublicationFileOutcome(f.ctx, file); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.db.SetPublicationState(f.ctx, id, "import_failed", ""); err != nil {
+		t.Fatal(err)
+	}
+	live, err := json.Marshal(ports.Manifest{Generation: pub.Generation, Files: []ports.ManifestFile{{Path: name, Bytes: file.Bytes}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(marker, live, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	foreign := writeFile(t, filepath.Join(f.root, "replacement.mkv"), replacement)
+	if err := os.Rename(foreign, source); err != nil {
+		t.Fatal(err)
+	}
+	const mismatch = "source bytes do not match the manifest digest"
+	checkPreserved := func() {
+		t.Helper()
+		publication, files := f.publicationFiles(pub.Path)
+		if publication.State == "removed" || !strings.Contains(publication.Error, mismatch) ||
+			!files[name].RemovedAt.IsZero() || publication.ManifestJSON != string(recorded) {
+			t.Fatalf("cleanup did not verify the source against the stronger durable manifest: publication=%+v file=%+v", publication, files[name])
+		}
+		if body, err := os.ReadFile(source); err != nil || string(body) != replacement {
+			t.Fatalf("cleanup changed a same-size replacement: %q err=%v", body, err)
+		}
+	}
+	if err := f.svc.sweepPublications(f.ctx); err != nil {
+		t.Fatal(err)
+	}
+	checkPreserved()
+
+	identity := sqlite.ActivityIdentity{ID: dl.ID, GenerationKey: dl.GenerationKey, Epoch: "0"}
+	const first = "delete-proven-digestless-marker"
+	work := claimActivityAction(t, f.db, first, "delete", identity)
+	if err := f.svc.handleActivityAction(f.ctx, work); err != nil {
+		t.Fatal(err)
+	}
+	blocked, err := f.db.ActivityOperation(f.ctx, first)
+	if err != nil || blocked.Blocked != 1 || len(blocked.Targets) != 1 || !strings.Contains(blocked.Targets[0].Message, mismatch) {
+		t.Fatalf("Delete did not preserve the unrelated replacement: %+v err=%v", blocked, err)
+	}
+	checkPreserved()
+	if err := f.db.CompleteJob(f.ctx, work.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.WriteFile(source, []byte(original), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	const recovery = "retry-proven-digestless-marker"
+	retry := claimActivityAction(t, f.db, recovery, "retry", identity)
+	if err := f.svc.handleActivityAction(f.ctx, retry); err != nil {
+		t.Fatal(err)
+	}
+	complete, err := f.db.ActivityOperation(f.ctx, recovery)
+	if err != nil || complete.Succeeded != 1 || exists(source) {
+		t.Fatalf("recorded source proof did not permit cleanup after restoring the bytes: %+v err=%v", complete, err)
 	}
 }

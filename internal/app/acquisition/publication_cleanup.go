@@ -446,11 +446,9 @@ func (s *Service) cleanupManifest(pub sqlite.Publication, allRemoved bool) (map[
 	default:
 		return nil, err
 	}
-	if err := verifyManifestShape(m, pub.Generation); err != nil {
+	m, err = verifiedRecordedPublicationManifest(pub, m, true)
+	if err != nil {
 		return nil, fmt.Errorf("publication manifest is invalid; nothing deleted: %w", err)
-	}
-	if err := verifyRecordedPublicationManifest(pub, m); err != nil {
-		return nil, err
 	}
 	if pub.Generation != "" && m.Generation != pub.Generation {
 		return nil, fmt.Errorf("the manifest names generation %q, not this publication's %q; nothing deleted", m.Generation, pub.Generation)

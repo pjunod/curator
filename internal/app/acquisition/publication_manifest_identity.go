@@ -10,17 +10,20 @@ import (
 
 // The first recorded manifest is evidence, not a mutable hint. Apply the same
 // check to import reconstruction and every destructive cleanup pass.
-func verifyRecordedPublicationManifest(pub sqlite.Publication, live ports.Manifest) error {
+func verifiedRecordedPublicationManifest(pub sqlite.Publication, live ports.Manifest, restoreMissingDigests bool) (ports.Manifest, error) {
+	if err := verifyManifestShape(live, pub.Generation); err != nil {
+		return live, fmt.Errorf("%w: %v", errManifestInvalid, err)
+	}
 	if pub.ManifestJSON == "" {
-		return nil
+		return live, nil
 	}
 	var recorded ports.Manifest
 	if err := json.Unmarshal([]byte(pub.ManifestJSON), &recorded); err != nil {
-		return fmt.Errorf("%w: recorded publication manifest is unreadable", errManifestInvalid)
+		return live, fmt.Errorf("%w: recorded publication manifest is unreadable", errManifestInvalid)
 	}
 	if len(recorded.Files) > 0 {
 		if err := verifyManifestShape(recorded, pub.Generation); err != nil {
-			return err
+			return live, fmt.Errorf("%w: %v", errManifestInvalid, err)
 		}
 	}
 	expected := recorded.Digest
@@ -28,20 +31,38 @@ func verifyRecordedPublicationManifest(pub sqlite.Publication, live ports.Manife
 		var err error
 		expected, err = ports.ManifestDigest(recorded.Files)
 		if err != nil {
-			return err
+			return live, err
 		}
 	}
 	if expected == "" {
-		return nil
+		return live, nil
+	}
+	// Cleanup can use an original recorded hash when an older writer omits
+	// it. Import stays strict: its same-volume placement fast path does not
+	// promise a fresh hash check, so omitted evidence cannot authorize import.
+	if restoreMissingDigests {
+		live.Files = append([]ports.ManifestFile(nil), live.Files...)
+		for i, file := range live.Files {
+			if file.SHA256 != "" {
+				continue
+			}
+			for _, before := range recorded.Files {
+				if before.Path == file.Path && before.Bytes == file.Bytes {
+					live.Files[i].SHA256 = before.SHA256
+					break
+				}
+			}
+		}
 	}
 	actual, err := ports.ManifestDigest(live.Files)
 	if err != nil {
-		return err
+		return live, err
 	}
 	if actual != expected {
-		return fmt.Errorf("%w: publication file list changed from its recorded seal", errManifestInvalid)
+		return live, fmt.Errorf("%w: publication file list changed from its recorded seal", errManifestInvalid)
 	}
-	return nil
+	live.Digest = actual
+	return live, nil
 }
 
 func recordedPublicationFileMatches(pub sqlite.Publication, file ports.ManifestFile) bool {

@@ -43,11 +43,9 @@ func (s *Service) publicationManifest(pub sqlite.Publication) (ports.Manifest, b
 			return m, false, fmt.Errorf("%w: %s is not a manifest: %v", errManifestInvalid, ports.ManifestFileName, err)
 		}
 		m.Source = "file"
-		if err := verifyRecordedPublicationManifest(pub, m); err != nil {
+		m, err = verifiedRecordedPublicationManifest(pub, m, false)
+		if err != nil {
 			return m, false, err
-		}
-		if err := verifyManifestShape(m, pub.Generation); err != nil {
-			return m, false, fmt.Errorf("%w: %v", errManifestInvalid, err)
 		}
 		return m, true, nil
 	case errors.Is(err, errManifestTooLarge):
