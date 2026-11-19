@@ -1011,6 +1011,10 @@ func TestArchivedPublicationKeepsMeasuredBytesInInventory(t *testing.T) {
 	path := filepath.Join(root, "episode")
 	writeCompleted(t, filepath.Join(path, "episode.mkv"), 15)
 	dl := insertImportable(t, db, item, path)
+	dl.State = "downloaded"
+	if err := db.UpdateDownloadHandoff(ctx, dl); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := db.InsertPublication(ctx, sqlite.PublicationWrite{DownloadID: dl.ID, Kind: "completed", Path: path, Generation: "delivery"}); err != nil {
 		t.Fatal(err)
 	}
@@ -1024,7 +1028,7 @@ func TestArchivedPublicationKeepsMeasuredBytesInInventory(t *testing.T) {
 		}
 		inv, err := svc.CompletedInventory(ctx)
 		if err != nil || inv.Attention != attention {
-			t.Fatalf("attention %d, %v", inv.Attention, err)
+			t.Fatalf("inventory %+v, %v", inv, err)
 		}
 		entry := inventoryRoot(t, svc, root).Entries[0]
 		if entry.Bytes != 15 || entry.Status != status || !entry.DeliveryManaged || entry.WholeDeletable || !entry.Receipts[0].Archived {
