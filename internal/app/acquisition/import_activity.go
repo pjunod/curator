@@ -117,6 +117,16 @@ func (s *Service) Activity(ctx context.Context, view, search string, importsOnly
 }
 
 func activityCategory(e sqlite.ImportActivityEntry, worker string) string {
+	if e.DeletionState == "verified" {
+		return "history"
+	}
+	if e.DeletionState == "blocked" {
+		return "attention"
+	}
+	if e.DeletionState != "" {
+		return "progress"
+	}
+
 	// Historical publication IDs are evidence, never mutable queue targets.
 	if e.ID < 0 {
 		return "history"

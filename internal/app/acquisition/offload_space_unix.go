@@ -40,3 +40,17 @@ func offloadLinkCount(path string) uint64 {
 	}
 	return 1
 }
+
+// completedCapacity observes the exact verified root; it never walks up to a
+// different filesystem if a mount disappears.
+func completedCapacity(path string) (*int64, *int64) {
+	var st syscall.Statfs_t
+	if err := syscall.Statfs(path, &st); err != nil {
+		return nil, nil
+	}
+	free, total := int64(st.Bavail)*int64(st.Bsize), int64(st.Blocks)*int64(st.Bsize) //nolint:unconvert // platform types differ
+	if free < 0 || total < 0 {
+		return nil, nil
+	}
+	return &free, &total
+}

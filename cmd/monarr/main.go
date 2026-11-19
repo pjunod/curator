@@ -566,6 +566,9 @@ func serve(ctx context.Context, cfg config.Config, log *slog.Logger, listener ne
 	if err := library.RegisterJobHandlers(lib, queue.Register); err != nil {
 		return err
 	}
+	if err := acquisition.RegisterActivityActionJobs(acq, queue.Register); err != nil {
+		return err
+	}
 	if err := acquisition.RegisterWantedSearchJobs(acq, queue.Register); err != nil {
 		return err
 	}

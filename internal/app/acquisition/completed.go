@@ -70,6 +70,8 @@ type CompletedFileSelection struct {
 }
 
 type CompletedRoot struct {
+	FreeBytes               *int64           `json:"freeBytes,omitempty"`
+	TotalBytes              *int64           `json:"totalBytes,omitempty"`
 	RootIdentity            string           `json:"rootIdentity"`
 	StorageIdentity         string           `json:"storageIdentity,omitempty"`
 	ObservedStorageIdentity string           `json:"observedStorageIdentity,omitempty"`
@@ -346,6 +348,7 @@ func (s *Service) scanCompletedLocked(ctx context.Context) error {
 			failures = append(failures, fmt.Errorf("%s: %s", path, root.Error))
 		} else {
 			root.LastCompleteAt = root.CheckedAt
+			root.FreeBytes, root.TotalBytes = completedCapacity(path)
 		}
 		raw, err := json.Marshal(root)
 		if err != nil {

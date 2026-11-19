@@ -1,0 +1,469 @@
+package acquisition
+
+import (
+	"context"
+	"database/sql"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/pjunod/monarr/internal/domain"
+	"github.com/pjunod/monarr/internal/infra/sqlite"
+	"github.com/pjunod/monarr/internal/ports"
+)
+
+type ActivityAction struct {
+	Kind    string `json:"kind"`
+	Label   string `json:"label"`
+	Enabled bool   `json:"enabled"`
+	Reason  string `json:"reason,omitempty"`
+}
+type ActivityOperationRef struct {
+	ID      string `json:"id"`
+	Action  string `json:"action"`
+	State   string `json:"state"`
+	Message string `json:"message"`
+}
+type ActivityActions struct {
+	Operation    *ActivityOperationRef   `json:"operation,omitempty"`
+	Identity     sqlite.ActivityIdentity `json:"identity"`
+	Reason       string                  `json:"reason"`
+	Prerequisite string                  `json:"prerequisite,omitempty"`
+	Actions      []ActivityAction        `json:"actions"`
+}
+
+func (s *Service) ActivityActions(ctx context.Context, dl sqlite.Download) (ActivityActions, error) {
+	out := ActivityActions{Identity: sqlite.ActivityIdentity{ID: dl.ID, GenerationKey: dl.GenerationKey, Epoch: "0"}, Actions: []ActivityAction{}}
+	a, e := s.db.GetImportAttempt(ctx, dl.ID, dl.GenerationKey)
+	if e == nil {
+		out.Identity.Epoch = strconv.FormatInt(a.Epoch, 10)
+	} else if !errors.Is(e, sql.ErrNoRows) {
+		return out, e
+	}
+	requested, verified, e := s.db.DownloadDeletionStatus(ctx, dl.ID, dl.GenerationKey)
+	if e != nil {
+		return out, e
+	}
+	if requested {
+		var ref ActivityOperationRef
+		if err := s.db.R.QueryRowContext(ctx, `SELECT o.id,o.action,json_extract(t.value,'$.state'),COALESCE(json_extract(t.value,'$.message'),'') FROM activity_operations o,json_each(o.targets) t WHERE json_extract(t.value,'$.id')=? AND json_extract(t.value,'$.generationKey')=? AND o.action='delete' ORDER BY o.created_at DESC LIMIT 1`, dl.ID, dl.GenerationKey).Scan(&ref.ID, &ref.Action, &ref.State, &ref.Message); err == nil {
+			out.Operation = &ref
+		}
+		if verified {
+			out.Reason = "Deleted. Downloaded and temporary job files removed."
+		} else {
+			out.Reason = "Deletion is waiting for cleanup to finish."
+			if out.Operation != nil && out.Operation.Message != "" {
+				out.Reason = out.Operation.Message
+			}
+			out.Actions = append(out.Actions, ActivityAction{Kind: "retry", Label: "Retry deletion", Enabled: true})
+		}
+		return out, nil
+	}
+	out.Actions = append(out.Actions, ActivityAction{Kind: "delete", Label: "Delete", Enabled: true})
+	if s.ImportRunning(dl.ID) {
+		out.Reason = "Import is running."
+		return out, nil
+	}
+	var control ports.DownloadControl
+	if dl.RunnerControl != "" && json.Unmarshal([]byte(dl.RunnerControl), &control) == nil && control.Held() {
+		out.Reason = control.Message
+		out.Prerequisite = "Resolve the Runner hold, then retry."
+		if control.RetryPolicy == "resume_same_job" {
+			out.Actions = append(out.Actions, ActivityAction{Kind: "retry", Label: "Retry", Enabled: true})
+		}
+		return out, nil
+	}
+	out.Reason = strings.TrimPrefix(dl.Error, "publication import_failed: ")
+	switch {
+	case strings.Contains(dl.Error, "no library folder"):
+		out.Reason = "No library folder is assigned."
+		out.Prerequisite = "Assign a library folder, then retry."
+	case dl.State == "awaiting_import":
+		out.Reason = "The download is ready and waiting for import approval."
+		out.Actions = append(out.Actions, ActivityAction{Kind: "approve", Label: "Approve import", Enabled: true})
+		return out, nil
+	case a.Outcome == "cancelled" || a.HeldStages > 0:
+		out.Reason = "Copy stopped before completion."
+		out.Prerequisite = "Retry checks the download and restarts the unfinished import."
+	case a.PendingPublications > 0 || a.RetainedPublications > 0:
+		out.Reason = "An interrupted import needs to finish reconciling its files."
+		out.Prerequisite = "Retry checks the recorded files before continuing."
+	case dl.State == "imported" || dl.State == "notified":
+		out.Reason = "Added to your library."
+	case dl.State == "downloading" || dl.State == "grabbed" || dl.State == "submitting" || dl.State == "planned":
+		out.Reason = "Download is in progress."
+	case out.Reason == "":
+		out.Reason = "This job stopped before import completed."
+	}
+	if dl.ImportPath != "" || dl.SavePath != "" {
+		out.Actions = append(out.Actions, ActivityAction{Kind: "retry", Label: "Retry", Enabled: true})
+	}
+	return out, nil
+}
+
+func RegisterActivityActionJobs[H ~func(context.Context, domain.Job) error](s *Service, register func(string, H) error) error {
+	return register(sqlite.ActivityActionJobKind, H(s.handleActivityAction))
+}
+func (s *Service) handleActivityAction(ctx context.Context, job domain.Job) error {
+	var payload struct {
+		ID string `json:"id"`
+	}
+	if e := json.Unmarshal([]byte(job.Payload), &payload); e != nil {
+		return e
+	}
+	o, e := s.db.ActivityOperation(ctx, payload.ID)
+	if e != nil {
+		return e
+	}
+	pending := false
+	for i := range o.Targets {
+		t := &o.Targets[i]
+		if t.State == "succeeded" || t.State == "blocked" {
+			continue
+		}
+		t.State = "running"
+		t.Message = "Checking this job."
+		if e = s.db.SaveActivityOperation(ctx, &o); e != nil {
+			return e
+		}
+		dl, err := s.db.GetDownload(ctx, t.ID)
+		if err == nil && dl.GenerationKey != t.GenerationKey {
+			err = fmt.Errorf("this job generation changed; refresh Activity")
+		}
+		if err == nil {
+			if deleting, _, readErr := s.db.DownloadDeletionStatus(ctx, dl.ID, dl.GenerationKey); readErr != nil {
+				err = readErr
+			} else if o.Action == "delete" || (o.Action == "retry" && deleting) {
+				err = s.deleteActivityJob(ctx, o.ID, dl, t, &o)
+			} else {
+				err = s.retryActivityJob(ctx, dl, o.Action, t.Epoch)
+			}
+		}
+		switch {
+		case err == nil:
+			t.State = "succeeded"
+			if o.Action == "delete" {
+				t.Message = "Job stopped. Downloaded and temporary files removed. Library media preserved."
+			} else {
+				t.Message = "Retry accepted. Follow its progress in Activity."
+			}
+		case errors.Is(err, errActivityPending):
+			t.State = "pending"
+			t.Message = err.Error()
+			pending = true
+		default:
+			t.State = "blocked"
+			t.Message = err.Error()
+		}
+		if e = s.db.SaveActivityOperation(ctx, &o); e != nil {
+			return e
+		}
+	}
+	if pending {
+		return errActivityPending
+	}
+	return nil
+}
+
+var errActivityPending = errors.New("waiting for the file owner to finish deletion")
+
+func (s *Service) retryActivityJob(ctx context.Context, dl sqlite.Download, action, epoch string) error {
+	info, e := s.ActivityActions(ctx, dl)
+	if e != nil {
+		return e
+	}
+	if info.Identity.Epoch != epoch {
+		return fmt.Errorf("this import attempt changed; refresh and select it again")
+	}
+	requested, _, e := s.db.DownloadDeletionStatus(ctx, dl.ID, dl.GenerationKey)
+	if e != nil {
+		return e
+	}
+	if requested {
+		return fmt.Errorf("deletion was requested; use Retry deletion")
+	}
+	if dl.State == "awaiting_import" && action != "approve" {
+		return fmt.Errorf("approve this import to continue")
+	}
+	var control ports.DownloadControl
+	if dl.RunnerControl != "" && json.Unmarshal([]byte(dl.RunnerControl), &control) == nil && control.Held() {
+		return s.ResumeHeldDownload(ctx, dl.ID)
+	}
+	// A retry reconciles scratch under the same download and title locks before
+	// opening the next import epoch. The filesystem proof stays in the service.
+	if e = s.reconcileActivityScratch(ctx, dl, false); e != nil {
+		return e
+	}
+	return s.ImportNow(ctx, dl.ID)
+}
+
+func (s *Service) deleteActivityJob(ctx context.Context, operation string, dl sqlite.Download, t *sqlite.ActivityTarget, o *sqlite.ActivityOperation) error {
+	// A cancellation signal is not writer exit. The canonical download lock is
+	// acquired below only after the real worker has returned and closed files.
+	if a, e := s.db.GetImportAttempt(ctx, dl.ID, dl.GenerationKey); e == nil && a.Outcome != "completed" {
+		_, e = s.CancelImportAttempt(ctx, dl.ID, &a.ImportAttemptKey)
+		if e != nil && !errors.Is(e, sqlite.ErrImportPublicationPending) {
+			return e
+		}
+	}
+	// Join final submission using the same lock as each client Add. All later
+	// submissions consult the durable intent, so the post-join identity is stable.
+	admissionUnlock := s.lockDownload(dl.ID)
+	fresh, readErr := s.db.GetDownload(ctx, dl.ID)
+	if readErr == nil && fresh.GenerationKey != dl.GenerationKey {
+		readErr = fmt.Errorf("this job generation changed")
+	}
+	if readErr == nil && (fresh.SubmissionPhase == "pending" || fresh.State == "planned") {
+		_, readErr = s.db.W.ExecContext(ctx, `UPDATE downloads SET submission_phase='rejected',superseded=1 WHERE id=? AND generation_key=? AND submission_phase='pending'`, fresh.ID, fresh.GenerationKey)
+		fresh.SubmissionPhase = "rejected"
+	}
+	admissionUnlock()
+	if readErr != nil {
+		return readErr
+	}
+	dl = fresh
+	if dl.ClientID != 0 && dl.Transfer != "" && dl.SubmissionPhase != "rejected" {
+		cfg, e := s.db.GetDownloadClient(ctx, dl.ClientID)
+		if e != nil {
+			return e
+		}
+		client := s.newClient(cfg)
+		if isRunnerClient(client) {
+			owner, ok := client.(ports.RunnerDispositionProtocol)
+			if !ok {
+				return fmt.Errorf("update Runner to support verified job deletion")
+			}
+			admission, ok := client.(ports.RequestAdmissionProtocol)
+			if !ok {
+				return fmt.Errorf("Runner cannot confirm this transfer identity")
+			}
+			var request ports.RunnerDispositionRequest
+			var jobID string
+			if t.OwnerPayload == "" {
+				adm, found, e := admission.GetRequestAdmission(ctx, dl.Transfer)
+				if e != nil {
+					return e
+				}
+				if !found {
+					if dl.SubmissionPhase == "uncertain" || dl.SubmissionPhase == "submitting" {
+						return errors.Join(errActivityPending, fmt.Errorf("waiting for Runner to settle this exact submission"))
+					}
+					return fmt.Errorf("Runner has no admission receipt for this transfer; restore its records before retrying deletion")
+				}
+				if (dl.Handle != "" && dl.Handle != adm.JobID) || (dl.RunnerInstanceID != "" && dl.RunnerInstanceID != adm.RunnerInstanceID) || (dl.RunnerAdmissionGeneration != "" && dl.RunnerAdmissionGeneration != adm.Generation) {
+					return fmt.Errorf("Runner job identity changed; deletion stopped")
+				}
+				request = ports.RunnerDispositionRequest{RequestID: operation + ":" + strconv.FormatInt(dl.ID, 10), Action: "delete", Transfer: dl.Transfer, RunnerInstanceID: adm.RunnerInstanceID, Generation: adm.Generation, SourceArtifactID: adm.SourceArtifactID, SourceGeneration: adm.SourceGeneration}
+				b, _ := json.Marshal(struct {
+					JobID   string                         `json:"jobId"`
+					Request ports.RunnerDispositionRequest `json:"request"`
+				}{adm.JobID, request})
+				t.OwnerPayload = string(b)
+				if e = s.db.SaveActivityOperation(ctx, o); e != nil {
+					return e
+				}
+				jobID = adm.JobID
+			} else {
+				var saved struct {
+					JobID   string                         `json:"jobId"`
+					Request ports.RunnerDispositionRequest `json:"request"`
+				}
+				if e = json.Unmarshal([]byte(t.OwnerPayload), &saved); e != nil {
+					return e
+				}
+				request = saved.Request
+				jobID = saved.JobID
+			}
+			result, e := owner.DisposeJob(ctx, jobID, request)
+			if e != nil {
+				return e
+			}
+			if result.State == "pending" {
+				return errActivityPending
+			}
+			if result.State != "verified" {
+				return fmt.Errorf("Runner could not finish deletion: %s", result.Reason)
+			}
+			// Feed the owner's actual terminal through the existing reducer. A
+			// completed/failed job remains completed/failed after artifact disposal.
+			if adm, found, e := admission.GetRequestAdmission(ctx, dl.Transfer); e != nil {
+				return e
+			} else if found {
+				for _, fact := range admissionFacts(adm) {
+					if e = s.observe(ctx, dl, cfg, fact); e != nil {
+						return e
+					}
+				}
+			}
+		} else if dl.Handle != "" {
+			return fmt.Errorf("this download client cannot verify job-file deletion; remove its data in the client, then retry")
+		}
+	}
+	if e := s.reconcileActivityScratch(ctx, dl, true); e != nil {
+		return e
+	}
+	unlock := s.lockDownload(dl.ID)
+	defer unlock()
+	pubs, e := s.db.ListPublicationsForDownload(ctx, dl.ID)
+	if e != nil {
+		return e
+	}
+	for _, pub := range pubs {
+		if pub.State == "removed" {
+			continue
+		}
+		if e = s.cleanupGate(ctx, pub); e != nil {
+			return e
+		}
+		// The persisted Delete authorizes this generation's manifest entries only.
+		// Per-file cleanup still checks the live manifest, source and mount identity.
+		if _, e = s.cleanupManifest(pub, false); e != nil {
+			return e
+		}
+		files, e := s.db.ListPublicationFiles(ctx, pub.ID)
+		if e != nil {
+			return e
+		}
+		for _, f := range files {
+			if f.Outcome == "pending" || f.Outcome == "unresolved" {
+				f.Outcome = "discarded"
+				f.DiscardReason = "rejected"
+				f.Reason = "deleted by operator"
+				if e = s.db.SetPublicationFileOutcome(ctx, f); e != nil {
+					return e
+				}
+			}
+		}
+		if _, e = s.db.ApprovePublicationCleanup(ctx, []int64{pub.ID}); e != nil {
+			return e
+		}
+		if _, e = s.db.W.ExecContext(ctx, `UPDATE publications SET state=CASE WHEN state IN ('discovered','importing') THEN 'import_failed' ELSE state END,cleanup_paused_at=0 WHERE id=?`, pub.ID); e != nil {
+			return e
+		}
+		result, e := s.cleanupPublicationLocked(withOperatorCleanup(ctx, "job deleted by operator"), pub.ID)
+		if e != nil {
+			return e
+		}
+		if result.Skipped != "" && result.Skipped != "already removed" {
+			return fmt.Errorf("cleanup stopped: %s", result.Skipped)
+		}
+		if len(result.Kept) > 0 {
+			return fmt.Errorf("cleanup could not verify every job file: %s", result.Kept[0])
+		}
+	}
+	// Manual imports grant read authority over their originals; deletion only
+	// owns Curator's scratch/publication. Originals are deliberately untouched.
+	if dl.Protocol != "manual" && dl.ClientID != 0 && len(pubs) == 0 && (dl.ImportPath != "" || dl.SavePath != "") && dl.RunnerOutcome == ports.OutcomeCompleted {
+		return fmt.Errorf("the completed files have no verified publication manifest; reconnect Runner and retry discovery")
+	}
+	if e = s.db.VerifyDownloadDeletion(ctx, dl.ID, dl.GenerationKey); e != nil {
+		return errors.Join(errActivityPending, e)
+	}
+	return s.db.AddHistory(ctx, "job_deleted", dl.MediaItemID, dl.ReleaseTitle, map[string]any{"downloadId": dl.ID, "generation": dl.GenerationKey, "transfer": dl.Transfer, "operationId": operation, "message": "Job data removed; installed Library media preserved"})
+}
+
+func (s *Service) reconcileActivityScratch(ctx context.Context, dl sqlite.Download, deleting bool) error {
+	unlock, ok := s.tryLockDownload(dl.ID)
+	if !ok {
+		return fmt.Errorf("import is still stopping; retry after its writer exits")
+	}
+	defer unlock()
+	stages, e := s.db.UnresolvedPlacementReferences(ctx)
+	if e != nil {
+		return e
+	}
+	for _, p := range stages {
+		if p.DownloadID != dl.ID || p.SourceGeneration != dl.GenerationKey {
+			continue
+		}
+		if p.ID == "" || p.ImportEpoch == nil {
+			continue
+		}
+		// Duplicate sidecar/stage references are checked against their actual
+		// placement once, never treated as a second physical allocation.
+		if strings.HasPrefix(p.ID, "placement:") {
+			continue
+		}
+		targetCtx, release := s.lockImportTarget(ctx, p.ItemID)
+		if p.State != "committed" {
+			if e = s.recoverActivityStageIdentity(targetCtx, &p); e != nil {
+				release()
+				return e
+			}
+		}
+
+		if p.State == "committed" {
+			e = s.cleanupPlacement(targetCtx, p)
+		} else if _, backupErr := os.Lstat(p.Backup); p.Backup != "" && !errors.Is(backupErr, os.ErrNotExist) {
+			// Existing placement reconciliation preserves/recovers the prior Library
+			// file. We never reinterpret a backup as disposable download scratch.
+			s.reconcilePlacement(targetCtx, p)
+			fresh, readErr := s.db.GetPlacement(targetCtx, p.ID)
+			if readErr != nil {
+				e = readErr
+			} else if fresh.State != "committed" && fresh.State != "rolled_back" {
+				e = s.restoreActivityPrior(targetCtx, p)
+				if e == nil {
+					if !s.removeCancelledSupersededScratch(targetCtx, p) {
+						e = fmt.Errorf("temporary file identity changed during prior-file recovery")
+					} else {
+						_, e = s.db.W.ExecContext(targetCtx, `UPDATE import_placements SET state='rolled_back',data=json_set(data,'$.state','rolled_back'),updated_at=? WHERE id=? AND state IN ('prepared','retained')`, time.Now().UnixMilli(), p.ID)
+					}
+				}
+			}
+		} else if s.removeCancelledSupersededScratch(targetCtx, p) {
+			_, e = s.db.W.ExecContext(targetCtx, `UPDATE import_placements SET state='rolled_back',data=json_set(data,'$.state','rolled_back'),updated_at=? WHERE id=? AND state IN ('prepared','retained')`, time.Now().UnixMilli(), p.ID)
+		} else {
+			e = fmt.Errorf("temporary file identity changed or its drive is unavailable; reconnect the original library drive and retry")
+		}
+		if e == nil {
+			// Only a proven terminal placement can settle the revoked authorization.
+			// A retry never reactivates the old grant.
+			_, e = s.db.W.ExecContext(targetCtx, `UPDATE import_publication_authorizations SET outcome='reconciled',resolution=CASE WHEN (SELECT state FROM import_placements WHERE id=placement_id) IN ('committed','cleaned') THEN 'operator_adopted' ELSE 'operator_disposed' END,resolved_at=? WHERE download_id=? AND generation_key=? AND placement_id=? AND (outcome='pending' OR resolution='retained_for_review') AND EXISTS(SELECT 1 FROM import_placements p WHERE p.id=placement_id AND p.state IN ('committed','cleaned','rolled_back'))`, time.Now().UnixMilli(), dl.ID, dl.GenerationKey, p.ID)
+		}
+		release()
+		if e != nil {
+			return e
+		}
+	}
+	// A journaled stage without a placement must be bound to its exact object.
+	// Older records lacking this evidence cannot authorize path-only deletion.
+	custody, e := s.db.ImportStageCustody(ctx, dl.ID, dl.GenerationKey)
+	if e != nil {
+		return e
+	}
+	for _, stage := range custody {
+		if strings.HasPrefix(stage.ID, "stagepath:") {
+			if _, e = os.Lstat(stage.Stage); e == nil {
+				return fmt.Errorf("an older temporary file lacks a recorded object identity; storage reconciliation is required")
+			}
+			if !errors.Is(e, os.ErrNotExist) {
+				return e
+			}
+			if e = s.checkStorageIdentity(ctx, stage.Stage); e != nil {
+				return e
+			}
+			_, e = s.db.W.ExecContext(ctx, `UPDATE import_attempt_stages SET state='released' WHERE download_id=? AND generation_key=? AND stage=?`, dl.ID, dl.GenerationKey, stage.Stage)
+			if e != nil {
+				return e
+			}
+		}
+	}
+	if a, err := s.db.GetImportAttempt(ctx, dl.ID, dl.GenerationKey); err == nil {
+		if a.PendingPublications > 0 || a.RetainedPublications > 0 || a.HeldStages > 0 {
+			return fmt.Errorf("an interrupted import still has unresolved file identity evidence; restore the original drive and retry reconciliation")
+		}
+		if a.Outcome == "pending" {
+			_, err = s.db.FinalizeImportCancellation(ctx, a.ImportAttemptKey)
+			if err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}

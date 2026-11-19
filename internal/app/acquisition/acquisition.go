@@ -877,6 +877,12 @@ func addToClient(ctx context.Context, c ports.DownloadClient, downloadURL, categ
 // Add response was lost; clients without that contract remain visibly
 // uncertain instead of receiving a possible duplicate.
 func (s *Service) retryAutomaticSubmission(ctx context.Context, dl sqlite.Download, cfg ports.ClientConfig) error {
+	if deleted, e := s.db.DownloadDeletionRequested(ctx, dl.ID, dl.GenerationKey); e != nil {
+		return e
+	} else if deleted {
+		return fmt.Errorf("job deletion requested")
+	}
+
 	if !automaticSubmissionRetryable(dl) || dl.Transfer == "" || dl.GenerationKey == "" {
 		return fmt.Errorf("automatic submission cannot be safely replayed")
 	}
@@ -1178,6 +1184,12 @@ func (s *Service) resumeManualRequest(ctx context.Context, id int64) (int64, err
 }
 
 func (s *Service) dispatchManualRequest(ctx context.Context, dl sqlite.Download, cfg ports.ClientConfig, client ports.DownloadClient, payload manualSubmissionPayload) (int64, error) {
+	if deleted, e := s.db.DownloadDeletionRequested(ctx, dl.ID, dl.GenerationKey); e != nil {
+		return dl.ID, e
+	} else if deleted {
+		return dl.ID, fmt.Errorf("job deletion requested")
+	}
+
 	if err := s.db.SetSubmissionPhase(ctx, dl.ID, "submitting"); err != nil {
 		return dl.ID, err
 	}
@@ -1549,11 +1561,29 @@ func (s *Service) grab(ctx context.Context, req GrabRequest, manual bool) (int64
 		dl.DeliveryExpected = inserted.DeliveryExpected
 		return s.resumeManualRequest(ctx, id)
 	}
+	if origin := replacementGrabOwner(ctx); origin > 0 {
+		original, e := s.db.GetDownload(ctx, origin)
+		if e != nil {
+			return id, e
+		}
+		if deleted, e := s.db.DownloadDeletionRequested(ctx, origin, original.GenerationKey); e != nil {
+			return id, e
+		} else if deleted {
+			_ = s.db.RejectDownloadSubmission(ctx, inserted.ID, inserted.GenerationKey, inserted.Transfer, "parent attempt deleted before replacement admission")
+			return id, fmt.Errorf("originating job deletion requested")
+		}
+	}
 	unlockDownload := s.lockDownload(id)
 	defer unlockDownload()
 	fresh, freshErr := s.db.GetDownload(ctx, id)
 	if freshErr != nil || fresh.GenerationKey != inserted.GenerationKey || fresh.Transfer != transfer || !automaticSubmissionPending(fresh) {
 		return id, fmt.Errorf("automatic submission was cancelled before client admission")
+	}
+	if deleted, e := s.db.DownloadDeletionRequested(ctx, fresh.ID, fresh.GenerationKey); e != nil {
+		return id, e
+	} else if deleted {
+		_ = s.db.RejectDownloadSubmission(ctx, fresh.ID, fresh.GenerationKey, fresh.Transfer, "deleted before admission")
+		return id, fmt.Errorf("job deletion requested")
 	}
 	inserted = fresh
 	s.advance(ctx, &dl, dl.State, 0, "", stepGrabbed, "sent to "+clientLabel(*cfg)+" as "+transfer)
@@ -2223,24 +2253,19 @@ func (s *Service) RemoveDownload(ctx context.Context, id int64, fromClient bool)
 // blocklisted; the plan is asked to stop in the same write). A Runner row is
 // never parked.
 func (s *Service) cancelRunnerDownload(ctx context.Context, id int64, cfg ports.ClientConfig, client ports.DownloadClient, fromClient bool) error {
-	unlock := s.lockDownload(id)
-	defer unlock()
 	dl, err := s.db.GetDownload(ctx, id)
 	if err != nil {
 		return err
 	}
-	if fromClient && dl.Handle != "" && (dl.RunnerOutcome == "" || dl.Provisional) {
-		if err := client.Remove(ctx, ports.Handle(dl.Handle), false); err != nil {
+	if fromClient {
+		a, err := s.ActivityActions(ctx, dl)
+		if err != nil {
 			return err
 		}
+		_, err = s.db.CreateActivityOperation(ctx, "legacy-delete-"+dl.GenerationKey, "delete", map[string]any{"download": id, "generation": dl.GenerationKey}, []sqlite.ActivityTarget{{ActivityIdentity: a.Identity}})
+		return err
 	}
-	if dl.RunnerOutcome == "" || dl.Provisional {
-		if _, err := s.recordTerminal(ctx, dl, cfg, ports.RunnerTerminal{Outcome: ports.OutcomeCancelled,
-			Message: "cancelled in Curator by the operator", Salvage: "none"}, "operator", 0, false); err != nil {
-			return err
-		}
-	}
-	_, err = s.db.W.ExecContext(ctx, `UPDATE downloads SET activity_dismissed=1, updated_at=? WHERE id=? AND generation_key=?`, time.Now().UnixMilli(), id, dl.GenerationKey)
+	_, err = s.db.W.ExecContext(ctx, `UPDATE downloads SET activity_dismissed=1,updated_at=? WHERE id=? AND generation_key=?`, time.Now().UnixMilli(), id, dl.GenerationKey)
 	return err
 }
 

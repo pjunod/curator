@@ -215,6 +215,11 @@ func (s *Service) dispatchPlannedDownload(ctx context.Context, plan sqlite.Acqui
 	fresh.RequestTokenIdempotent = requestTokenIdempotent
 	fresh.ExactTransferCorrelation = exactTransferCorrelation
 	s.advance(ctx, &fresh, "grabbed", 0, "", stepGrabbed, "submitting planned release as "+fresh.Transfer)
+	if deleted, e := s.db.DownloadDeletionRequested(ctx, fresh.ID, fresh.GenerationKey); e != nil {
+		return false, e
+	} else if deleted {
+		return false, nil
+	}
 	handle, err := addToClient(ctx, client, payload.URL, cfg.Category, fresh.ReleaseTitle, fresh.Transfer, payload.Priority, deliveryExpected, false)
 	if err != nil {
 		if permanentSubmissionRefusal(err) {

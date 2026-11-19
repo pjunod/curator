@@ -549,7 +549,9 @@ func (s *Service) cleanupPublicationFile(ctx context.Context, pub sqlite.Publica
 	if err := parent.Remove(name); err != nil {
 		return err
 	}
-	_ = syncRootDirectory(parent, ".")
+	if err := syncRootDirectory(parent, "."); err != nil {
+		return err
+	}
 	// The download lock held by every caller keeps Resolve from changing the
 	// outcome between the verification and this record.
 	return s.db.MarkPublicationFileRemoved(ctx, pub.ID, f.Path, f.Outcome)
@@ -701,7 +703,9 @@ func (s *Service) removeEmptyPublicationDirectory(ctx context.Context, pub sqlit
 		return false, err
 	}
 	if parent, err := os.OpenRoot(filepath.Dir(pub.Path)); err == nil {
-		_ = syncRootDirectory(parent, ".")
+		if err := syncRootDirectory(parent, "."); err != nil {
+			return err
+		}
 		_ = parent.Close()
 	}
 	return true, nil

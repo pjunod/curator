@@ -2261,6 +2261,21 @@ func (e PlurxWebhook200JSONResponseBodyState) Valid() bool {
 	}
 }
 
+// ActivityAction defines model for ActivityAction.
+type ActivityAction struct {
+	Enabled bool    `json:"enabled"`
+	Kind    string  `json:"kind"`
+	Label   string  `json:"label"`
+	Reason  *string `json:"reason,omitempty"`
+}
+
+// ActivityIdentity defines model for ActivityIdentity.
+type ActivityIdentity struct {
+	Epoch         string `json:"epoch"`
+	GenerationKey string `json:"generationKey"`
+	Id            int64  `json:"id"`
+}
+
 // AddAliasRequest defines model for AddAliasRequest.
 type AddAliasRequest struct {
 	Searchable *bool  `json:"searchable,omitempty"`
@@ -2558,15 +2573,21 @@ type CompletedReviewFile struct {
 
 // CompletedRoot defines model for CompletedRoot.
 type CompletedRoot struct {
-	Bytes                   int64            `json:"bytes"`
-	CheckedAt               time.Time        `json:"checkedAt"`
-	Entries                 []CompletedEntry `json:"entries"`
-	Error                   string           `json:"error"`
-	LastCompleteAt          time.Time        `json:"lastCompleteAt"`
-	ObservedStorageIdentity *string          `json:"observedStorageIdentity,omitempty"`
-	Path                    string           `json:"path"`
-	RootIdentity            string           `json:"rootIdentity"`
-	StorageIdentity         *string          `json:"storageIdentity,omitempty"`
+	Bytes     int64            `json:"bytes"`
+	CheckedAt time.Time        `json:"checkedAt"`
+	Entries   []CompletedEntry `json:"entries"`
+	Error     string           `json:"error"`
+
+	// FreeBytes Available bytes observed on the exact verified download root at checkedAt; omitted when unknown.
+	FreeBytes               *int64    `json:"freeBytes,omitempty"`
+	LastCompleteAt          time.Time `json:"lastCompleteAt"`
+	ObservedStorageIdentity *string   `json:"observedStorageIdentity,omitempty"`
+	Path                    string    `json:"path"`
+	RootIdentity            string    `json:"rootIdentity"`
+	StorageIdentity         *string   `json:"storageIdentity,omitempty"`
+
+	// TotalBytes Filesystem capacity; never summed across path aliases.
+	TotalBytes *int64 `json:"totalBytes,omitempty"`
 }
 
 // Connection defines model for Connection.
@@ -3017,14 +3038,24 @@ type IgnoredPath struct {
 
 // ImportActivityItem defines model for ImportActivityItem.
 type ImportActivityItem struct {
+	Actions     *[]ActivityAction          `json:"actions,omitempty"`
 	Category    ImportActivityItemCategory `json:"category"`
 	Destination string                     `json:"destination"`
 
 	// Download Negative IDs identify read-only unattributed historical publications, never queue mutation targets.
-	Download  QueueItem `json:"download"`
-	Kind      string    `json:"kind"`
-	Title     string    `json:"title"`
-	UpdatedAt time.Time `json:"updatedAt"`
+	Download  QueueItem         `json:"download"`
+	Identity  *ActivityIdentity `json:"identity,omitempty"`
+	Kind      string            `json:"kind"`
+	Operation *struct {
+		Action  string `json:"action"`
+		Id      string `json:"id"`
+		Message string `json:"message"`
+		State   string `json:"state"`
+	} `json:"operation,omitempty"`
+	Prerequisite *string   `json:"prerequisite,omitempty"`
+	Reason       *string   `json:"reason,omitempty"`
+	Title        string    `json:"title"`
+	UpdatedAt    time.Time `json:"updatedAt"`
 }
 
 // ImportActivityItemCategory defines model for ImportActivityItem.Category.
@@ -5273,6 +5304,12 @@ type ListActivityParamsView string
 // ListActivityParamsScope defines parameters for ListActivity.
 type ListActivityParamsScope string
 
+// CreateActivityActionJSONBody defines parameters for CreateActivityAction.
+type CreateActivityActionJSONBody map[string]interface{}
+
+// CreateActivitySelectionJSONBody defines parameters for CreateActivitySelection.
+type CreateActivitySelectionJSONBody map[string]interface{}
+
 // UpdateOwnAccountJSONBody defines parameters for UpdateOwnAccount.
 type UpdateOwnAccountJSONBody = map[string]interface{}
 
@@ -5710,6 +5747,12 @@ type ListWantedSearchResultsParams struct {
 // PlurxWebhook200JSONResponseBodyState defines parameters for PlurxWebhook.
 type PlurxWebhook200JSONResponseBodyState string
 
+// CreateActivityActionJSONRequestBody defines body for CreateActivityAction for application/json ContentType.
+type CreateActivityActionJSONRequestBody CreateActivityActionJSONBody
+
+// CreateActivitySelectionJSONRequestBody defines body for CreateActivitySelection for application/json ContentType.
+type CreateActivitySelectionJSONRequestBody CreateActivitySelectionJSONBody
+
 // UpdateOwnAccountJSONRequestBody defines body for UpdateOwnAccount for application/json ContentType.
 type UpdateOwnAccountJSONRequestBody = UpdateOwnAccountJSONBody
 
@@ -5934,6 +5977,18 @@ type ServerInterface interface {
 	// ListActivity Unified download and retained import activity
 	// (GET /activity)
 	ListActivity(w http.ResponseWriter, r *http.Request, params ListActivityParams)
+	// CreateActivityAction Persist an idempotent retry, approval or stop-and-delete operation
+	// (POST /activity/actions)
+	CreateActivityAction(w http.ResponseWriter, r *http.Request)
+	// GetActivityJobLog Read the correlated persistent lifecycle summary for one attempt
+	// (GET /activity/jobs/{id}/log)
+	GetActivityJobLog(w http.ResponseWriter, r *http.Request, id int64)
+	// GetActivityOperation Read durable progress and individual action results
+	// (GET /activity/operations/{id})
+	GetActivityOperation(w http.ResponseWriter, r *http.Request, id string)
+	// CreateActivitySelection Freeze matching attention identities across every page
+	// (POST /activity/selections)
+	CreateActivitySelection(w http.ResponseWriter, r *http.Request)
 	// UpdateOwnAccount Update the current local account after password confirmation
 	// (PUT /auth/account)
 	UpdateOwnAccount(w http.ResponseWriter, r *http.Request)
@@ -6636,6 +6691,86 @@ func (siw *ServerInterfaceWrapper) ListActivity(w http.ResponseWriter, r *http.R
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.ListActivity(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreateActivityAction operation middleware
+func (siw *ServerInterfaceWrapper) CreateActivityAction(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateActivityAction(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetActivityJobLog operation middleware
+func (siw *ServerInterfaceWrapper) GetActivityJobLog(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetActivityJobLog(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetActivityOperation operation middleware
+func (siw *ServerInterfaceWrapper) GetActivityOperation(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetActivityOperation(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreateActivitySelection operation middleware
+func (siw *ServerInterfaceWrapper) CreateActivitySelection(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateActivitySelection(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -11839,6 +11974,10 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/queue/failed", wrapper.ClearFailedQueue)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/history", wrapper.ListHistory)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/activity", wrapper.ListActivity)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/activity/selections", wrapper.CreateActivitySelection)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/activity/actions", wrapper.CreateActivityAction)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/activity/operations/{id}", wrapper.GetActivityOperation)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/activity/jobs/{id}/log", wrapper.GetActivityJobLog)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/imports", wrapper.ListImportActivity)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/queue/{id}", wrapper.RemoveQueueItem)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/queue/{id}", wrapper.GetQueueItem)

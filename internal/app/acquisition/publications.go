@@ -130,6 +130,10 @@ func (s *Service) enqueuePublicationImport(ctx context.Context, dl sqlite.Downlo
 }
 
 func (s *Service) enqueuePublicationImportApproved(ctx context.Context, dl sqlite.Download, cfg ports.ClientConfig, pubID int64, approved bool) bool {
+	if deleted, e := s.db.DownloadDeletionRequested(ctx, dl.ID, dl.GenerationKey); e != nil || deleted {
+		return false
+	}
+
 	if s.ImportRunning(dl.ID) {
 		return false
 	}

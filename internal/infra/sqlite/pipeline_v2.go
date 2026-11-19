@@ -1244,7 +1244,7 @@ func (d *DB) GetReplacementGrab(ctx context.Context, downloadID int64) (Replacem
 // ClaimReplacementGrab marks one attempt started, so a crash mid-grab is
 // visible as an attempt and a concurrent worker cannot take the same row.
 func (d *DB) ClaimReplacementGrab(ctx context.Context, downloadID int64, now time.Time) (bool, error) {
-	res, err := d.W.ExecContext(ctx, `UPDATE replacement_grabs SET attempted_at=?, attempts=attempts+1, next_at=? WHERE download_id=? AND result='' AND next_at<=?`,
+	res, err := d.W.ExecContext(ctx, `UPDATE replacement_grabs SET attempted_at=?, attempts=attempts+1, next_at=? WHERE download_id=? AND result='' AND next_at<=? AND NOT EXISTS(SELECT 1 FROM download_dispositions x JOIN downloads d ON d.id=x.download_id AND d.generation_key=x.generation_key WHERE x.download_id=replacement_grabs.download_id)`,
 		now.UnixMilli(), now.Add(time.Minute).UnixMilli(), downloadID, now.UnixMilli())
 	if err != nil {
 		return false, err

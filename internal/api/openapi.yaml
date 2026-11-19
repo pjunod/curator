@@ -1992,6 +1992,69 @@ paths:
         "400":
           description: Invalid view, scope or pagination.
 
+  /activity/selections:
+    post:
+      operationId: createActivitySelection
+      summary: Freeze matching attention identities across every page
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
+      responses:
+        "200":
+          description: Frozen identities, total and retryable count; expires after 24 hours.
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+  /activity/actions:
+    post:
+      operationId: createActivityAction
+      summary: Persist an idempotent retry, approval or stop-and-delete operation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
+      responses:
+        "202":
+          description: Durable per-target operation; id is requestId. Deletion never removes installed Library media.
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+        "409":
+          description: Changed attempt or request identity.
+  /activity/operations/{id}:
+    get:
+      operationId: getActivityOperation
+      summary: Read durable progress and individual action results
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Per-target results survive browser and daemon restart.
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+  /activity/jobs/{id}/log:
+    get:
+      operationId: getActivityJobLog
+      summary: Read the correlated persistent lifecycle summary for one attempt
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+      responses:
+        "200":
+          description: Recorded events with source times; absent facts are never inferred.
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+
   /imports:
     get:
       operationId: listImportActivity
@@ -7276,6 +7339,36 @@ components:
         kind: { type: string }
         destination: { type: string }
         updatedAt: { type: string, format: date-time }
+        operation:
+          type: object
+          required: [id, action, state, message]
+          properties:
+            id: { type: string }
+            action: { type: string }
+            state: { type: string }
+            message: { type: string }
+        identity: { $ref: '#/components/schemas/ActivityIdentity' }
+        reason: { type: string }
+        prerequisite: { type: string }
+        actions:
+          type: array
+          items: { $ref: '#/components/schemas/ActivityAction' }
+
+    ActivityIdentity:
+      type: object
+      required: [id, generationKey, epoch]
+      properties:
+        id: { type: integer, format: int64 }
+        generationKey: { type: string }
+        epoch: { type: string }
+    ActivityAction:
+      type: object
+      required: [kind, label, enabled]
+      properties:
+        kind: { type: string }
+        label: { type: string }
+        enabled: { type: boolean }
+        reason: { type: string }
 
     QueueItem:
       type: object
@@ -7499,6 +7592,8 @@ components:
       type: object
       required: [path, rootIdentity, checkedAt, lastCompleteAt, error, entries, bytes]
       properties:
+        freeBytes: { type: integer, format: int64, description: Available bytes observed on the exact verified download root at checkedAt; omitted when unknown. }
+        totalBytes: { type: integer, format: int64, description: Filesystem capacity; never summed across path aliases. }
         path: { type: string }
         checkedAt: { type: string, format: date-time }
         rootIdentity: { type: string }
