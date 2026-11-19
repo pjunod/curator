@@ -42,8 +42,11 @@ func clientFingerprint(cfg ports.ClientConfig) string {
 	return fmt.Sprintf("%x", sum)
 }
 func (s *Service) dispatchPlan(ctx context.Context, id int64) error {
-	s.planDispatchMu.Lock()
-	defer s.planDispatchMu.Unlock()
+	release, err := s.planDispatchLocks.lock(ctx, id)
+	if err != nil {
+		return err
+	}
+	defer release()
 	p, err := s.db.GetAcquisitionPlan(ctx, id)
 	if err != nil {
 		return err

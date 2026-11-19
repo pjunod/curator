@@ -232,14 +232,7 @@ func capabilityFatal(err error) bool {
 	return errors.As(err, &remote) && (remote.Category == ports.RemoteAuth || remote.Category == ports.RemoteRateLimit)
 }
 
-func (c *Client) call(ctx context.Context, params url.Values) ([]byte, error) {
-	body, err := c.wireCall(ctx, params)
-	if c.result != nil {
-		c.result(ctx, err)
-	}
-	return body, err
-}
-func (c *Client) wireCall(ctx context.Context, params url.Values) ([]byte, error) {
+func (c *Client) call(ctx context.Context, params url.Values) (_ []byte, result error) {
 	params.Set("apikey", c.cfg.APIKey)
 	full := strings.TrimRight(c.cfg.URL, "/") + "/api?" + params.Encode()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, full, nil)
@@ -252,6 +245,10 @@ func (c *Client) wireCall(ctx context.Context, params url.Values) ([]byte, error
 			return nil, e
 		}
 		defer release()
+	}
+	if c.result != nil {
+		// Publish Retry-After while the request gate still excludes the next caller.
+		defer func() { c.result(ctx, result) }()
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {

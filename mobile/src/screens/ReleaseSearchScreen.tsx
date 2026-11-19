@@ -17,6 +17,13 @@ import { useResource } from '../useResource'
 // phone detail page lists seasons, not episodes, so the season chips pick a
 // pack and the episode chips narrow to one episode; both re-run the search.
 
+type Preview = { result?: ReleaseSearchResponse; error?: string }
+type GrabNotice = { grabbed?: string; error?: string }
+
+function previewKey(scope: ReleaseSearchScope): string {
+  return `${scope.copyId ?? 0}:${scope.season ?? -1}:${scope.episode ?? -1}`
+}
+
 export function ReleaseSearchScreen({ client, id, initialScope, onBack }: { client: MonarrClient; id: number; initialScope: ReleaseSearchScope; onBack: () => void }) {
   const resource = useResource(() => client.getLibraryItem(id), [client, id])
   const back = <IconButton label="Back" glyph="‹" onPress={onBack} />
@@ -26,7 +33,7 @@ export function ReleaseSearchScreen({ client, id, initialScope, onBack }: { clie
   if (!resource.data) {
     return <AppScreen><Header title="Interactive search" left={back} /><MessageState title="Title unavailable" message={resource.error} retry={() => void resource.refresh()} /></AppScreen>
   }
-  return <ReleaseSearchBody client={client} item={resource.data} initialScope={initialScope} onBack={onBack} />
+  return <ReleaseSearchBody key={id} client={client} item={resource.data} initialScope={initialScope} onBack={onBack} />
 }
 
 function ReleaseSearchBody({
@@ -42,65 +49,44 @@ function ReleaseSearchBody({
 }) {
   const theme = useTheme()
   const [scope, setScope] = useState<ReleaseSearchScope>(initialScope)
-  const [result, setResult] = useState<ReleaseSearchResponse | null>(null)
-  const [error, setError] = useState('')
-  const [searching, setSearching] = useState(true)
+  const [previews, setPreviews] = useState<Record<string, Preview>>({})
   const [filter, setFilter] = useState<ReleaseFilter>('all')
   const [query, setQuery] = useState('')
-  const [grabbing, setGrabbing] = useState<string | null>(null)
-  const [grabError, setGrabError] = useState('')
-  const [grabbed, setGrabbed] = useState('')
-  // Keep one id per exact manual action so a timeout/retry replays the same
-  // admission. An explicit blacklist override is a different fingerprint
-  // and therefore gets its own durable request id.
+  const [pending, setPending] = useState<Set<string>>(new Set())
+  const [grabNotices, setGrabNotices] = useState<Record<string, GrabNotice>>({})
   const requestIds = useRef(new Map<string, string>())
-
-  // Searches take up to two minutes. A response belongs to the scope that
-  // asked for it: one that lands after the scope moved on, or after the
-  // screen closed, is dropped rather than written over the newer list.
-  const generation = useRef(0)
-  useEffect(() => () => { generation.current += 1 }, [])
-  const search = useCallback(async (target: ReleaseSearchScope) => {
-    const mine = ++generation.current
-    setSearching(true)
-    setError('')
-    setResult(null)
-    try {
-      const response = await client.searchReleases(item.id, target)
-      if (mine === generation.current) setResult(response)
-    } catch (cause) {
-      if (mine === generation.current) setError(cause instanceof Error ? cause.message : 'The search failed.')
-    } finally {
-      if (mine === generation.current) setSearching(false)
-    }
-  }, [client, item.id])
+  const activeGrabs = useRef(new Set<string>())
+  const activeSearches = useRef(new Set<string>())
+  const key = previewKey(scope)
+  const preview = previews[key]
+  const result = preview?.result
+  const searching = !preview && (item.kind !== 'series' || scope.season !== undefined)
+  const notice = grabNotices[key]
 
   useEffect(() => {
-    if (item.kind === 'series' && scope.season === undefined) {
-      // No season known yet: nothing to search, and the server would say so.
-      setSearching(false)
-      return
-    }
-    void search(scope)
-  }, [item.kind, search, scope])
-
-  const changeScope = (next: ReleaseSearchScope) => {
-    setGrabbed('')
-    setGrabError('')
-    setScope(next)
-  }
+    if (!searching || activeSearches.current.has(key)) return
+    activeSearches.current.add(key)
+    void client.searchReleases(item.id, scope).then(
+      (result) => setPreviews((current) => ({ ...current, [key]: { result } })),
+      (cause) => setPreviews((current) => ({
+        ...current,
+        [key]: { error: cause instanceof Error ? cause.message : 'The search failed.' },
+      })),
+    ).finally(() => activeSearches.current.delete(key))
+  }, [client, item.id, key, scope, searching])
 
   const grab = useCallback(async (candidate: ReleaseCandidate, downloadAnyway = false) => {
-    const key = candidateKey(candidate)
-    const action = `${item.id}:${scope.copyId ?? 0}:${scope.season ?? -1}:${scope.episode ?? 0}:${key}:${downloadAnyway}`
+    const rowKey = `${key}:${candidateKey(candidate)}`
+    if (activeGrabs.current.has(rowKey)) return
+    activeGrabs.current.add(rowKey)
+    const action = `${rowKey}:${downloadAnyway}`
     let requestId = requestIds.current.get(action)
     if (!requestId) {
       requestId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}-${Math.random().toString(36).slice(2)}`
       requestIds.current.set(action, requestId)
     }
-    setGrabbing(key)
-    setGrabError('')
-    setGrabbed('')
+    setPending(new Set(activeGrabs.current))
+    setGrabNotices((current) => ({ ...current, [key]: {} }))
     try {
       await client.grabRelease({
         mediaItemId: item.id,
@@ -120,7 +106,7 @@ function ReleaseSearchBody({
       // A completed Add is one request. A subsequent deliberate tap owns a
       // fresh request; failed or uncertain attempts retain their retry ID.
       requestIds.current.delete(action)
-      setGrabbed(grabbedMessage(candidate.title))
+      setGrabNotices((current) => ({ ...current, [key]: { grabbed: grabbedMessage(candidate.title) } }))
     } catch (cause) {
       if (cause instanceof ApiError && cause.code === 'blacklist_confirmation_required' && !downloadAnyway) {
         Alert.alert(
@@ -133,11 +119,15 @@ function ReleaseSearchBody({
         )
         return
       }
-      setGrabError(cause instanceof Error ? cause.message : 'Could not grab this release.')
+      setGrabNotices((current) => ({
+        ...current,
+        [key]: { error: cause instanceof Error ? cause.message : 'Could not grab this release.' },
+      }))
     } finally {
-      setGrabbing(null)
+      activeGrabs.current.delete(rowKey)
+      setPending(new Set(activeGrabs.current))
     }
-  }, [client, item.id, scope])
+  }, [client, item.id, key, scope])
 
   const confirmGrab = useCallback((candidate: ReleaseCandidate) => {
     if (candidate.blacklistReason) {
@@ -177,8 +167,8 @@ function ReleaseSearchBody({
   const label = scopeLabel(scope, copyName ?? item.kind) + (copyName && scope.season !== undefined ? ` · ${copyName}` : '')
 
   const renderRow = useCallback(({ item: candidate }: { item: ReleaseCandidate }) => (
-    <ReleaseRow candidate={candidate} busy={grabbing !== null} grabbing={grabbing === candidateKey(candidate)} onGrab={confirmGrab} />
-  ), [grabbing, confirmGrab])
+    <ReleaseRow candidate={candidate} grabbing={pending.has(`${key}:${candidateKey(candidate)}`)} onGrab={confirmGrab} />
+  ), [key, pending, confirmGrab])
 
   const header = (
     <View style={styles.headerBlock}>
@@ -194,7 +184,7 @@ function ReleaseSearchBody({
                 key={candidate.number}
                 label={candidate.number === 0 ? 'Specials' : `S${candidate.number}`}
                 selected={candidate.number === scope.season}
-                onPress={searching ? undefined : () => changeScope({ copyId: scope.copyId, season: candidate.number })}
+                onPress={() => setScope({ copyId: scope.copyId, season: candidate.number })}
               />
             ))}
           </View>
@@ -202,13 +192,13 @@ function ReleaseSearchBody({
             <>
               <Text style={[styles.scopeLabel, { color: theme.text }]}>Episode</Text>
               <View style={styles.chips}>
-                <Chip label="Whole pack" selected={scope.episode === undefined} onPress={searching ? undefined : () => changeScope({ copyId: scope.copyId, season: season.number })} />
+                <Chip label="Whole pack" selected={scope.episode === undefined} onPress={() => setScope({ copyId: scope.copyId, season: season.number })} />
                 {season.episodes.map((episode) => (
                   <Chip
                     key={episode.id}
                     label={`E${episode.episodeNumber}${episode.hasFile ? ' ✓' : ''}`}
                     selected={scope.episode === episode.episodeNumber}
-                    onPress={searching ? undefined : () => changeScope({ copyId: scope.copyId, season: season.number, episode: episode.episodeNumber })}
+                    onPress={() => setScope({ copyId: scope.copyId, season: season.number, episode: episode.episodeNumber })}
                   />
                 ))}
               </View>
@@ -221,9 +211,14 @@ function ReleaseSearchBody({
       {result?.partial ? (
         <Text style={[styles.banner, { color: theme.warning, borderColor: theme.warning }]}>Results are incomplete{result.reason ? `: ${result.reason}` : '.'}</Text>
       ) : null}
-      <InlineError message={error} />
-      <InlineError message={grabError} />
-      {grabbed ? <Text style={[styles.success, { color: theme.ok }]}>{grabbed}</Text> : null}
+      {preview?.error ? (
+        <>
+          <InlineError message={preview.error} />
+          <Button compact secondary label="Retry search" onPress={() => setPreviews(({ [key]: _failed, ...current }) => current)} />
+        </>
+      ) : null}
+      <InlineError message={notice?.error ?? ''} />
+      {notice?.grabbed ? <Text style={[styles.success, { color: theme.ok }]}>{notice.grabbed}</Text> : null}
 
       {!searching && result && all.length === 0 ? (
         <Text style={[styles.hint, { color: theme.muted }]}>No releases found on any enabled indexer.</Text>
@@ -266,7 +261,7 @@ function ReleaseSearchBody({
  * reason a search "found nothing useful" is one glance away without turning
  * every row into a paragraph.
  */
-export const ReleaseRow = memo(function ReleaseRow({ candidate, busy, grabbing, onGrab }: { candidate: ReleaseCandidate; busy: boolean; grabbing: boolean; onGrab: (candidate: ReleaseCandidate) => void }) {
+export const ReleaseRow = memo(function ReleaseRow({ candidate, grabbing, onGrab }: { candidate: ReleaseCandidate; grabbing: boolean; onGrab: (candidate: ReleaseCandidate) => void }) {
   const theme = useTheme()
   const [expanded, setExpanded] = useState(false)
   const [first, ...rest] = candidate.rejections
@@ -305,7 +300,7 @@ export const ReleaseRow = memo(function ReleaseRow({ candidate, busy, grabbing, 
           ))
         : null}
       <View style={styles.actions}>
-        <Button compact secondary={!candidate.accepted} label={grabbing ? 'Grabbing…' : candidate.accepted ? 'Grab' : 'Grab anyway'} disabled={busy} onPress={() => onGrab(candidate)} />
+        <Button compact secondary={!candidate.accepted} label={grabbing ? 'Grabbing…' : candidate.accepted ? 'Grab' : 'Grab anyway'} disabled={grabbing} onPress={() => onGrab(candidate)} />
       </View>
     </Panel>
   )

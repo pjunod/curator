@@ -2,6 +2,7 @@ package acquisition
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -274,19 +275,28 @@ func TestOffloadDoesNotTrustENOENTWhenTheTitleFolderIsNotListable(t *testing.T) 
 	f := newOffloadFixture(t)
 	ctx := context.Background()
 	m, video, _ := f.movieWithFiles(t)
-	stored := offloadStored{Roots: []string{f.root.Path}, Folder: m.Path}
-	file := sqlite.OffloadFile{Path: video, Kind: "media"}
+	req := OffloadRequest{ItemID: m.ID, Scope: "item", RequestID: "offload-absent"}
+	req.PlanFingerprint = f.preview(t, req).Fingerprint
+	op, err := f.stageActive(ctx, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stored offloadStored
+	if err := json.Unmarshal(op.Plan, &stored); err != nil {
+		t.Fatal(err)
+	}
+	file := sqlite.OffloadFile{Path: video, Kind: "media", FileID: fileIDOf(t, f, video)}
 	if err := os.Remove(video); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.svc.offloadDeleteFile(ctx, stored, file); err != nil {
+	if _, err := f.svc.offloadDeleteFile(ctx, op, stored, file); err != nil {
 		t.Fatalf("a missing file in a listable folder is gone: %v", err)
 	}
 	hidden := m.Path + ".away"
 	if err := os.Rename(m.Path, hidden); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.svc.offloadDeleteFile(ctx, stored, file); err == nil || !strings.Contains(err.Error(), "cannot tell whether") {
+	if _, err := f.svc.offloadDeleteFile(ctx, op, stored, file); err == nil {
 		t.Fatalf("ENOENT with an unlistable title folder must not count as deleted: %v", err)
 	}
 	_ = os.Rename(hidden, m.Path)

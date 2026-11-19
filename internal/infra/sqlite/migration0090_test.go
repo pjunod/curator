@@ -7,7 +7,7 @@ import (
 	"github.com/pressly/goose/v3"
 )
 
-func TestMigration0088RetiresOnlyLegacyUnsentReplacementWork(t *testing.T) {
+func TestMigration0090RetiresOnlyLegacyUnsentReplacementWork(t *testing.T) {
 	ctx := context.Background()
 	db, err := Open(t.TempDir())
 	if err != nil {
@@ -19,7 +19,7 @@ func TestMigration0088RetiresOnlyLegacyUnsentReplacementWork(t *testing.T) {
 	if err = goose.SetDialect("sqlite3"); err != nil {
 		t.Fatal(err)
 	}
-	if err = goose.UpToContext(ctx, db.W, "migrations", 87); err != nil {
+	if err = goose.UpToContext(ctx, db.W, "migrations", 89); err != nil {
 		t.Fatal(err)
 	}
 	for _, query := range []string{
@@ -44,7 +44,7 @@ func TestMigration0088RetiresOnlyLegacyUnsentReplacementWork(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err = goose.UpToContext(ctx, db.W, "migrations", 88); err != nil {
+	if err = goose.UpToContext(ctx, db.W, "migrations", 90); err != nil {
 		t.Fatal(err)
 	}
 	for _, check := range []struct {

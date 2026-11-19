@@ -780,13 +780,19 @@ type OffloadOperation struct {
 }
 
 type OffloadOperationFile struct {
+	OperationID   string
+	Path          string
+	Kind          string
+	FileID        int64
+	Size          int64
+	State         string
+	Error         string
+	UnlinkStarted int64
+}
+
+type OffloadRequestAlias struct {
+	RequestID   string
 	OperationID string
-	Path        string
-	Kind        string
-	FileID      int64
-	Size        int64
-	State       string
-	Error       string
 }
 
 type PipelineTiming struct {
@@ -1212,6 +1218,11 @@ type WantableAttempt struct {
 	DownloadID int64
 	DecidedAt  int64
 	DecidedBy  string
+}
+
+type WantedSearchRequest struct {
+	RequestID string
+	RunID     string
 }
 
 type WantedSearchRun struct {

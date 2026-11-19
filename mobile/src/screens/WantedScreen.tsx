@@ -1,49 +1,64 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { FlatList, StyleSheet, Text, View } from 'react-native'
 import type { MonarrClient } from '../api'
-import { describeAutoSearch } from '../autosearch'
 import { AppScreen, Badge, Button, Header, InlineError, LoadingState, MessageState, Panel, Wordmark } from '../components/UI'
 import { useTheme } from '../theme'
-import type { WantedItem } from '../types'
+import type { WantedItem, WantedSearchRun, WantedSearchScope } from '../types'
 import { useResource } from '../useResource'
 
 export function WantedScreen({ client, onOpen }: { client: MonarrClient; onOpen: (id: number) => void }) {
   const theme = useTheme()
   const resource = useResource(() => client.getWanted(), [client])
-  const [searchingAll, setSearchingAll] = useState(false)
-  const [searching, setSearching] = useState<Set<number>>(new Set())
+  const runs = useResource(() => client.getWantedSearches(), [client])
+  const [cancelling, setCancelling] = useState<Set<string>>(new Set())
   const [error, setError] = useState('')
-  const [message, setMessage] = useState('')
+  const previousRuns = useRef<WantedSearchRun[] | undefined>(undefined)
+  const active = runs.data?.items.some(isActiveRun)
 
-  const searchAll = async () => {
-    setSearchingAll(true)
+  useEffect(() => {
+    let stopped = false
+    let timeout: ReturnType<typeof setTimeout>
+    const schedule = () => {
+      timeout = setTimeout(async () => {
+        await runs.refresh()
+        if (!stopped) schedule()
+      }, active ? 1000 : 5000)
+    }
+    schedule()
+    return () => { stopped = true; clearTimeout(timeout) }
+  }, [active, runs.refresh])
+
+  useEffect(() => {
+    if (!runs.data) return
+    const previous = previousRuns.current
+    previousRuns.current = runs.data.items
+    if (!previous) return
+    const terminal = new Set(previous.filter((run) => !isActiveRun(run)).map((run) => run.runId))
+    if (runs.data.items.some((run) => !isActiveRun(run) && !terminal.has(run.runId))) {
+      void resource.refresh()
+    }
+  }, [resource.refresh, runs.data])
+
+  const search = async (scope: WantedSearchScope) => {
     setError('')
-    setMessage('')
     try {
-      await client.runTask('backlog.search')
-      setMessage('Backlog search started. It runs as unattended work on the automatic request allowance, so it may wait for capacity; grabs appear in Activity.')
+      await client.createWantedSearch(scope)
+      await runs.refresh()
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Could not start the backlog search.')
-    } finally {
-      setSearchingAll(false)
+      setError(cause instanceof Error ? cause.message : 'Could not start the search.')
     }
   }
 
-  const searchOne = async (id: number) => {
-    setSearching((current) => new Set(current).add(id))
+  const cancel = async (runId: string) => {
+    setCancelling((current) => new Set([...current, runId]))
     setError('')
-    setMessage('')
     try {
-      setMessage(describeAutoSearch(await client.autoSearchItem(id)))
-      void resource.refresh()
+      await client.cancelWantedSearch(runId)
+      await runs.refresh()
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Could not start the search.')
+      setError(cause instanceof Error ? cause.message : 'Could not cancel the search.')
     } finally {
-      setSearching((current) => {
-        const next = new Set(current)
-        next.delete(id)
-        return next
-      })
+      setCancelling((current) => new Set([...current].filter((id) => id !== runId)))
     }
   }
 
@@ -55,13 +70,25 @@ export function WantedScreen({ client, onOpen }: { client: MonarrClient; onOpen:
         keyExtractor={(item) => item.wantableId}
         contentContainerStyle={styles.content}
         refreshing={resource.refreshing}
-        onRefresh={() => void resource.refresh()}
+        onRefresh={() => { void resource.refresh(); void runs.refresh() }}
         ListHeaderComponent={
           <View style={styles.intro}>
             <Text style={[styles.explainer, { color: theme.muted }]}>Everything monitored that is missing or below its quality cutoff.</Text>
-            <Button label={searchingAll ? 'Starting…' : 'Search all now'} disabled={searchingAll} onPress={() => void searchAll()} />
-            <InlineError message={error || resource.error} />
-            {message ? <Text style={[styles.explainer, { color: theme.text }]}>{message}</Text> : null}
+            <Button label="Search all now" disabled={!resource.data?.length} onPress={() => void search({ scope: 'all' })} />
+            <InlineError message={error || resource.error || runs.error} />
+            {runs.data?.items.map((run) => (
+              <Panel key={run.runId} style={styles.row}>
+                <Text style={[styles.title, { color: theme.text }]}>{run.scopeLabel}</Text>
+                <Text style={[styles.detail, { color: theme.muted }]}>
+                  {run.status[0]!.toUpperCase() + run.status.slice(1)} · {run.processed} of {run.selected} processed · {run.grabbed} grabbed
+                </Text>
+                {run.error ? <InlineError message={run.error} /> : null}
+                {isActiveRun(run) ? (
+                  <Button compact secondary label={run.cancelRequestedAt ? 'Cancelling…' : 'Cancel'}
+                    disabled={cancelling.has(run.runId) || !!run.cancelRequestedAt} onPress={() => void cancel(run.runId)} />
+                ) : null}
+              </Panel>
+            ))}
           </View>
         }
         ListEmptyComponent={
@@ -77,12 +104,16 @@ export function WantedScreen({ client, onOpen }: { client: MonarrClient; onOpen:
                 <Badge label={item.missing ? 'Missing' : `Upgrade ${item.current}`} tone="warning" />
               </View>
               {item.copy ? <Badge label={item.copy} /> : null}
-              <Button compact secondary label={searching.has(item.mediaItemId) ? 'Searching…' : 'Search now'} disabled={searching.has(item.mediaItemId)} onPress={() => void searchOne(item.mediaItemId)} />
+              <Button compact secondary label="Search title" onPress={() => void search({ scope: 'group', mediaItemId: item.mediaItemId })} />
           </Panel>
         )}
       />
     </AppScreen>
   )
+}
+
+function isActiveRun(run: WantedSearchRun): boolean {
+  return run.status === 'queued' || run.status === 'running'
 }
 
 const styles = StyleSheet.create({

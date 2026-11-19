@@ -13,11 +13,12 @@ import type { OffloadOperation, OffloadPreview, OffloadRequest } from '../types'
  * and how much comes back before anything is deleted; progress and Stop stay
  * here until it is done. Same endpoints as web.
  */
-export function OffloadSheet({ client, itemId, label, request, onClose }: {
+export function OffloadSheet({ client, itemId, label, request, initialOperation, onClose }: {
   client: MonarrClient
   itemId: number
   label: string
   request: OffloadRequest
+  initialOperation?: OffloadOperation
   onClose: () => void
 }) {
   const theme = useTheme()
@@ -26,7 +27,7 @@ export function OffloadSheet({ client, itemId, label, request, onClose }: {
   const [sure, setSure] = useState(false)
   const [starting, setStarting] = useState(false)
   const [startError, setStartError] = useState('')
-  const [op, setOp] = useState<OffloadOperation | null>(null)
+  const [op, setOp] = useState<OffloadOperation | null>(initialOperation ?? null)
   const requestKey = JSON.stringify(request)
 
   useEffect(() => {
@@ -39,17 +40,27 @@ export function OffloadSheet({ client, itemId, label, request, onClose }: {
     return () => { live = false }
   }, [client, itemId, requestKey, op, nonce])
 
-  // An Offload already running for this title is followed, not previewed again.
+  const [reviewing, setReviewing] = useState(false)
   useEffect(() => {
+    if (initialOperation || reviewing) return
     let live = true
-    void client.getLibraryOffload(itemId).then((open) => { if (live && open && OFFLOAD_RUNNING.has(open.state)) setOp((cur) => cur ?? open) }).catch(() => undefined)
+    const scope: OffloadRequest = JSON.parse(requestKey)
+    void client.listLibraryOffloads(itemId).then((operations) => {
+      const selected = operations.find((entry) => OFFLOAD_RUNNING.has(entry.state) && entry.scope === scope.scope
+        && (entry.scope !== 'season' || entry.season === scope.season) && (entry.scope !== 'episode' || entry.episodeId === scope.episodeId))
+      if (live && selected) setOp((cur) => cur ?? selected)
+    }).catch(() => undefined)
     return () => { live = false }
-  }, [client, itemId])
+  }, [client, itemId, requestKey, initialOperation, reviewing])
+  const operationId = op?.operationId
+  const polling = op != null && OFFLOAD_RUNNING.has(op.state)
   useEffect(() => {
-    if (!op || !OFFLOAD_RUNNING.has(op.state)) return
-    const timer = setTimeout(() => { void client.getOffload(op.operationId).then(setOp).catch(() => undefined) }, 1000)
-    return () => clearTimeout(timer)
-  }, [client, op])
+    if (!operationId || !polling) return
+    let live = true
+    const poll = () => { void client.getOffload(operationId).then((status) => { if (live) setOp(status) }).catch(() => undefined) }
+    const timer = setInterval(poll, 1000)
+    return () => { live = false; clearInterval(timer) }
+  }, [client, operationId, polling])
 
   // One request id per preview, so a retried tap is the same request.
   const requestIds = useRef(new Map<string, string>())
@@ -89,7 +100,7 @@ export function OffloadSheet({ client, itemId, label, request, onClose }: {
     <Modal animationType="slide" presentationStyle="fullScreen" onRequestClose={onClose}>
       <SafeAreaProvider>
         <AppScreen forceTopInset>
-          <Header title={`Offload ${label}`} subtitle={op ? 'Deleting' : p ? 'Preview' : 'Working it out'} left={<IconButton label="Close" glyph="×" onPress={onClose} />} />
+          <Header title={`Offload ${label}`} subtitle={op ? 'Progress' : p ? 'Preview' : 'Working it out'} left={<IconButton label="Close" glyph="×" onPress={onClose} />} />
           <ScrollView style={styles.flex} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
             {op ? (
               <Panel style={styles.line}>
@@ -123,7 +134,9 @@ export function OffloadSheet({ client, itemId, label, request, onClose }: {
                     {p.blocked ? (
                       <>
                         <InlineError message={p.blocked.message} />
-                        <Button secondary compact label="Wait for it" onPress={() => setNonce((n) => n + 1)} />
+                        {p.blocked.reason === 'unmounted'
+                          ? <Button secondary compact label="Refresh preview" onPress={() => setNonce((n) => n + 1)} />
+                          : <Text style={{ color: theme.text }}>You can queue this Offload while it waits.</Text>}
                       </>
                     ) : null}
                     <View style={styles.row}>
@@ -140,11 +153,18 @@ export function OffloadSheet({ client, itemId, label, request, onClose }: {
           <SafeAreaView edges={{ bottom: 'maximum' }} style={[styles.footer, { borderColor: theme.border }]}>
             {op ? (
               <>
+                {op.state === 'needs_review' ? <Button secondary label="Refresh preview" onPress={() => {
+                  setReviewing(true)
+                  requestIds.current.clear()
+                  setSure(false)
+                  setOp(null)
+                  setNonce((n) => n + 1)
+                }} /> : null}
                 {op.stoppable ? <Button secondary label="Stop" onPress={() => void stop()} /> : null}
                 <Button label={running ? 'Close (keeps running)' : 'Done'} onPress={onClose} />
               </>
             ) : (
-              <Button label={starting ? 'Starting…' : 'Offload'} disabled={!p || !!p.blocked || !sure || starting || preview.loading}
+              <Button label={starting ? 'Queuing…' : 'Queue Offload'} disabled={!p || p.blocked?.reason === 'unmounted' || !sure || starting || preview.loading}
                 onPress={() => { if (p) void start(p) }} />
             )}
           </SafeAreaView>
@@ -162,3 +182,36 @@ const styles = StyleSheet.create({
   line: { gap: 6 },
   footer: { padding: 16, gap: 8, borderTopWidth: StyleSheet.hairlineWidth },
 })
+
+export function OffloadOperations({ client, itemId, sheetOpen, onOpen }: {
+  client: MonarrClient
+  itemId: number
+  sheetOpen: boolean
+  onOpen: (op: OffloadOperation) => void
+}) {
+  const theme = useTheme()
+  const [operations, setOperations] = useState<OffloadOperation[]>([])
+  const running = operations.some((op) => OFFLOAD_RUNNING.has(op.state))
+  useEffect(() => {
+    let live = true
+    const refresh = () => { void client.listLibraryOffloads(itemId).then((rows) => { if (live) setOperations(rows) }).catch(() => undefined) }
+    refresh()
+    const timer = running ? setInterval(refresh, 1000) : undefined
+    return () => { live = false; clearInterval(timer) }
+  }, [client, itemId, running, sheetOpen])
+  if (!operations.length) return null
+  return (
+    <Panel style={styles.line}>
+      <SectionTitle>Offload operations</SectionTitle>
+      {operations.map((op) => (
+        <View key={op.operationId} style={styles.row}>
+          <View style={styles.flex}>
+            <Text style={{ color: theme.text }}>{op.label}</Text>
+            <Text style={{ color: theme.muted }}>{offloadText(op)}</Text>
+          </View>
+          <Button compact secondary label={op.state === 'needs_review' ? 'Review' : 'Details'} onPress={() => onOpen(op)} />
+        </View>
+      ))}
+    </Panel>
+  )
+}

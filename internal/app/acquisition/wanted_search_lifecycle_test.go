@@ -9,6 +9,7 @@ import (
 
 	"github.com/pjunod/monarr/internal/domain"
 	"github.com/pjunod/monarr/internal/infra/sqlite"
+	"github.com/pjunod/monarr/internal/ports"
 )
 
 type wantedDBQueue struct{ db *sqlite.DB }
@@ -82,8 +83,8 @@ func TestWantedSearchRunDrainsEveryTargetBeyondBacklogCapOneJobAtATime(t *testin
 		if err != nil {
 			t.Fatal(err)
 		}
-		if job.Priority != domain.JobPriorityInteractive {
-			t.Fatalf("wanted continuation lost interactive priority: %+v", job)
+		if job.Priority != domain.JobPriorityInteractive+1 {
+			t.Fatalf("wanted continuation lost bulk priority: %+v", job)
 		}
 		if err := svc.handleWantedSearchChunk(ctx, job); err != nil {
 			t.Fatal(err)
@@ -98,6 +99,61 @@ func TestWantedSearchRunDrainsEveryTargetBeyondBacklogCapOneJobAtATime(t *testin
 	}
 	if jobsRun != run.Selected || run.Processed != run.Selected || run.Searched != run.Selected {
 		t.Fatalf("run = %+v jobs = %d; want exactly one job per target", run, jobsRun)
+	}
+}
+
+func TestOverlappingWantedRunsShareGrabAuthorityAndKeepIndependentResults(t *testing.T) {
+	client := &fakeClient{}
+	svc, db, itemID := autoSetup(t, []ports.Release{rel("Test.Movie.2024.1080p.WEB-DL.x264-GRP", 50)}, client)
+	svc.WithWantedSearchQueue(wantedDBQueue{db: db})
+	ctx := t.Context()
+
+	bulk, err := svc.StartWantedSearch(ctx, WantedSearchRequest{Scope: "all"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	direct, err := svc.StartWantedSearch(ctx, WantedSearchRequest{Scope: "group", MediaItemID: itemID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	directJob, err := db.ClaimInteractiveJob(ctx, "direct", nil, time.Minute)
+	if err != nil || directJob.DedupeKey != "wanted.search:"+direct.RunID {
+		t.Fatalf("reserved worker claimed %+v, %v; want direct request", directJob, err)
+	}
+	bulkJob, err := db.ClaimJob(ctx, "general", nil, time.Minute)
+	if err != nil || bulkJob.DedupeKey != "wanted.search:"+bulk.RunID {
+		t.Fatalf("general worker claimed %+v, %v; want bulk request", bulkJob, err)
+	}
+
+	start := make(chan struct{})
+	finished := make(chan error, 2)
+	for _, job := range []domain.Job{directJob, bulkJob} {
+		go func() {
+			<-start
+			finished <- svc.handleWantedSearchChunk(ctx, job)
+		}()
+	}
+	close(start)
+	for range 2 {
+		if err = <-finished; err != nil {
+			t.Error(err)
+		}
+	}
+	if len(client.added) != 1 {
+		t.Fatalf("overlapping runs admitted %d grabs, want one", len(client.added))
+	}
+	grabbed := 0
+	for _, id := range []string{direct.RunID, bulk.RunID} {
+		rows, err := svc.WantedSearchResults(ctx, id, 10, 0)
+		if err != nil || len(rows) != 1 {
+			t.Fatalf("run %s results = %+v, %v; want independent outcome", id, rows, err)
+		}
+		if rows[0].Grabbed != "" {
+			grabbed++
+		}
+	}
+	if grabbed != 1 {
+		t.Fatalf("run outcomes report %d grabs, want one", grabbed)
 	}
 }
 
