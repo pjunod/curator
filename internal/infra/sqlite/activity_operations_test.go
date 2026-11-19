@@ -267,6 +267,16 @@ func TestActivityBulkProgressCannotOverwriteNewDispositionRevision(t *testing.T)
 }
 
 func TestActivityLateReplacementPublicationReopensParentDeletion(t *testing.T) {
+	t.Run("parent operation alone", func(t *testing.T) {
+		checkLateReplacementPublicationReplay(t, false)
+	})
+	t.Run("parent and later direct child operations", func(t *testing.T) {
+		checkLateReplacementPublicationReplay(t, true)
+	})
+}
+
+func checkLateReplacementPublicationReplay(t *testing.T, directChildDelete bool) {
+	t.Helper()
 	db, parent, attempt := importControlFixture(t)
 	ctx := context.Background()
 	child, err := db.InsertReplacementDownload(ctx, Download{
@@ -277,35 +287,51 @@ func TestActivityLateReplacementPublicationReopensParentDeletion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	identity := ActivityIdentity{ID: parent.ID, GenerationKey: parent.GenerationKey, Epoch: strconv.FormatInt(attempt.Epoch, 10)}
-	operation, err := db.CreateActivityOperation(ctx, "delete-with-replacement", "delete", identity, []ActivityTarget{{ActivityIdentity: identity}})
-	if err != nil {
-		t.Fatal(err)
-	}
 
-	original, err := db.ClaimJob(ctx, "activity-worker", nil, time.Minute)
-	if err != nil || original.Kind != ActivityActionJobKind || original.DedupeKey != "activity:"+operation.ID {
-		t.Fatalf("claim initial delete: %+v err=%v", original, err)
+	type completedDelete struct {
+		identity ActivityIdentity
+		jobID    int64
 	}
-	for _, dl := range []Download{child, parent} {
-		revision, err := db.DispositionRevision(ctx, dl.ID, dl.GenerationKey)
+	expected := map[string]completedDelete{}
+	finishDelete := func(id string, identity ActivityIdentity, dispositions ...Download) {
+		t.Helper()
+		operation, err := db.CreateActivityOperation(ctx, id, "delete", identity, []ActivityTarget{{ActivityIdentity: identity}})
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := db.VerifyDownloadDeletion(ctx, dl.ID, dl.GenerationKey, revision); err != nil {
+		dedupe := "activity:" + id
+		original, err := db.ClaimJob(ctx, "activity-worker", nil, time.Minute)
+		if err != nil || original.Kind != ActivityActionJobKind || original.DedupeKey != dedupe {
+			t.Fatalf("claim initial delete: %+v err=%v", original, err)
+		}
+		for _, dl := range dispositions {
+			revision, err := db.DispositionRevision(ctx, dl.ID, dl.GenerationKey)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := db.VerifyDownloadDeletion(ctx, dl.ID, dl.GenerationKey, revision); err != nil {
+				t.Fatal(err)
+			}
+		}
+		operation.Targets[0].State = "succeeded"
+		if err := db.SaveActivityTarget(ctx, &operation, 0); err != nil {
 			t.Fatal(err)
 		}
+		if err := db.CompleteJob(ctx, original.ID); err != nil {
+			t.Fatal(err)
+		}
+		completed, err := db.ActivityOperation(ctx, id)
+		if err != nil || completed.State != "completed" || completed.Succeeded != 1 {
+			t.Fatalf("fixture did not complete deletion %s: %+v err=%v", id, completed, err)
+		}
+		expected[dedupe] = completedDelete{identity: identity, jobID: original.ID}
 	}
-	operation.Targets[0].State = "succeeded"
-	if err := db.SaveActivityTarget(ctx, &operation, 0); err != nil {
-		t.Fatal(err)
-	}
-	if err := db.CompleteJob(ctx, original.ID); err != nil {
-		t.Fatal(err)
-	}
-	completed, err := db.ActivityOperation(ctx, operation.ID)
-	if err != nil || completed.State != "completed" || completed.Succeeded != 1 {
-		t.Fatalf("fixture did not complete parent deletion: %+v err=%v", completed, err)
+
+	parentIdentity := ActivityIdentity{ID: parent.ID, GenerationKey: parent.GenerationKey, Epoch: strconv.FormatInt(attempt.Epoch, 10)}
+	finishDelete("delete-with-replacement", parentIdentity, child, parent)
+	if directChildDelete {
+		childIdentity := ActivityIdentity{ID: child.ID, GenerationKey: child.GenerationKey, Epoch: "0"}
+		finishDelete("later-direct-child-delete", childIdentity, child)
 	}
 
 	if _, err := db.InsertPublication(ctx, PublicationWrite{
@@ -320,15 +346,20 @@ func TestActivityLateReplacementPublicationReopensParentDeletion(t *testing.T) {
 			t.Fatalf("late child publication did not reopen disposition %d: requested=%v verified=%v err=%v", dl.ID, requested, verified, err)
 		}
 	}
-	reopened, err := db.ActivityOperation(ctx, operation.ID)
-	if err != nil || reopened.State != "running" || len(reopened.Targets) != 1 ||
-		reopened.Targets[0].ActivityIdentity != identity || reopened.Targets[0].State != "pending" {
-		t.Fatalf("late child publication did not reopen the original parent member: %+v err=%v", reopened, err)
+	for dedupe, want := range expected {
+		reopened, err := db.ActivityOperation(ctx, strings.TrimPrefix(dedupe, "activity:"))
+		if err != nil || reopened.State != "running" || len(reopened.Targets) != 1 ||
+			reopened.Targets[0].ActivityIdentity != want.identity || reopened.Targets[0].State != "pending" {
+			t.Fatalf("late child publication did not reopen the original member of %s: %+v err=%v", dedupe, reopened, err)
+		}
 	}
-
-	replay, err := db.ClaimJob(ctx, "activity-worker", nil, time.Minute)
-	if err != nil || replay.ID == original.ID || replay.Kind != ActivityActionJobKind || replay.DedupeKey != "activity:"+operation.ID {
-		t.Fatalf("late child publication did not queue the original operation for replay: %+v err=%v", replay, err)
+	for len(expected) > 0 {
+		replay, err := db.ClaimJob(ctx, "activity-worker", nil, time.Minute)
+		want, found := expected[replay.DedupeKey]
+		if err != nil || !found || replay.ID == want.jobID || replay.Kind != ActivityActionJobKind {
+			t.Fatalf("late child publication did not queue one replay per operation: %+v err=%v", replay, err)
+		}
+		delete(expected, replay.DedupeKey)
 	}
 	if _, err := db.ClaimJob(ctx, "another-worker", nil, time.Minute); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("late child publication queued an extra operation: %v", err)

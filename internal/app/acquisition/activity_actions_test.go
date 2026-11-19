@@ -2,10 +2,12 @@ package acquisition
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -647,5 +649,71 @@ func TestActivityDeleteAdoptsFirstInstallAfterInterruptedMetadata(t *testing.T) 
 	}
 	if body, err := os.ReadFile(destination); err != nil || string(body) != installed {
 		t.Fatalf("deletion changed an installed Library file: %q err=%v", body, err)
+	}
+}
+
+func TestActivityDeleteKeepsDigestlessReplacementDuringOrdinarySweep(t *testing.T) {
+	f := setupV2(t, nil)
+	dl, err := f.db.InsertDownloadRecord(f.ctx, sqlite.Download{
+		MediaItemID: f.item, State: "failed", Protocol: "manual", ReleaseTitle: "Legacy publication",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	const generation = "legacy-digestless"
+	const original, replacement = "original bytes", "replaced bytes"
+	dir := filepath.Join(f.root, generation)
+	name := epOne + ".mkv"
+	source := writeFile(t, filepath.Join(dir, name), original)
+	unrelated := writeFile(t, filepath.Join(f.root, "unrelated.mkv"), replacement)
+	if err := os.Rename(unrelated, source); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := json.Marshal(ports.Manifest{
+		Generation: generation, Files: []ports.ManifestFile{{Path: name, Bytes: int64(len(original))}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, err := f.db.InsertPublication(f.ctx, sqlite.PublicationWrite{
+		DownloadID: dl.ID, Kind: "completed", Generation: generation, Path: dir,
+		Cohort: "historical", Source: "v1_record", ManifestJSON: string(raw),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	identity := sqlite.ActivityIdentity{ID: dl.ID, GenerationKey: dl.GenerationKey, Epoch: "0"}
+	const operationID = "delete-digestless-replacement"
+	job := claimActivityAction(t, f.db, operationID, "delete", identity)
+	if err := f.svc.handleActivityAction(f.ctx, job); err != nil {
+		t.Fatal(err)
+	}
+	operation, err := f.db.ActivityOperation(f.ctx, operationID)
+	if err != nil || operation.Blocked != 1 || len(operation.Targets) != 1 ||
+		!strings.Contains(operation.Targets[0].Message, "no recorded digest or object identity") {
+		t.Fatalf("explicit Delete did not refuse digestless ownership: %+v err=%v", operation, err)
+	}
+	if got, err := os.ReadFile(source); err != nil || string(got) != replacement {
+		t.Fatalf("explicit Delete changed the unrelated file: %q err=%v", got, err)
+	}
+	if err := f.db.CompleteJob(f.ctx, job.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.db.ClearPublicationCleanupError(f.ctx, id); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.svc.sweepPublications(f.ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	stored, files := f.publicationFiles(dir)
+	if stored.State == "removed" || stored.CleanupApprovedAt.IsZero() ||
+		!strings.Contains(stored.Error, "no recorded digest or object identity") ||
+		files[name].Outcome != "discarded" || !files[name].RemovedAt.IsZero() {
+		t.Fatalf("ordinary sweep did not recheck and keep the digestless file: publication=%+v files=%+v", stored, files)
+	}
+	if got, err := os.ReadFile(source); err != nil || string(got) != replacement {
+		t.Fatalf("ordinary sweep changed the unrelated file: %q err=%v", got, err)
 	}
 }

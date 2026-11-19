@@ -521,9 +521,15 @@ func (s *Service) cleanupPublicationFile(ctx context.Context, pub sqlite.Publica
 		if size != expected.Bytes || actual != digest {
 			return fmt.Errorf("the source bytes do not match the manifest digest; nothing deleted")
 		}
-	} else if observed, _ := ctx.Value(activityDispositionContext{}).(bool); observed {
-		return fmt.Errorf("this legacy file has no recorded digest or object identity; its ownership cannot be verified for deletion")
 	} else {
+		var disposing bool
+		if e := s.db.R.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM download_dispositions x JOIN downloads d ON d.id=x.download_id AND d.generation_key=x.generation_key WHERE d.id=?)`, pub.DownloadID).Scan(&disposing); e != nil {
+			return e
+		}
+		observed, _ := ctx.Value(activityDispositionContext{}).(bool)
+		if observed || disposing {
+			return fmt.Errorf("this legacy file has no recorded digest or object identity; its ownership cannot be verified for deletion")
+		}
 		s.log.Info("publication cleanup has no legacy source digest; checking size and identity", "publication", pub.ID, "file", f.Path)
 	}
 	var libGeneration string
