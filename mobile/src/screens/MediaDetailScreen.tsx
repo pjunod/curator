@@ -1,5 +1,5 @@
 import { availabilityLabel } from '../availability'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { type ComponentRef, useEffect, useMemo, useRef, useState } from 'react'
 import { Alert, ScrollView, StyleSheet, Switch, Text, View } from 'react-native'
 import type { MonarrClient } from '../api'
 import { describeAutoSearch } from '../autosearch'
@@ -36,7 +36,7 @@ import { RematchSheet } from './RematchSheet'
 
 export function MediaDetailScreen({ client, id, assignFolder, onBack, onInteractiveSearch, onOpenActivity }: { client: MonarrClient; id: number; assignFolder?: boolean; onBack: () => void; onInteractiveSearch: (scope: ReleaseSearchScope) => void; onOpenActivity?: () => void }) {
   const theme = useTheme()
-  const scroll = useRef<ScrollView>(null)
+  const scroll = useRef<ComponentRef<typeof ScrollView>>(null)
   const focusedFolder = useRef(false)
   const resource = useResource(() => client.getLibraryItem(id), [client, id])
   const profilesResource = useResource(() => client.getProfiles(), [client])
