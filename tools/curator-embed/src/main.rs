@@ -5,6 +5,7 @@ use candle_transformers::models::bert::{BertModel, Config, DTYPE};
 use rayon::ThreadPool;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::fmt::Write as _;
 use std::io::{self, BufRead, Read, Write};
 use std::path::{Path, PathBuf};
 use tokenizers::{Tokenizer, TruncationParams};
@@ -58,10 +59,19 @@ struct Encoder {
     pool: ThreadPool,
 }
 
+fn sha256_hex(bytes: &[u8]) -> String {
+    let digest = Sha256::digest(bytes);
+    let mut hex = String::with_capacity(digest.len() * 2);
+    for byte in digest {
+        write!(hex, "{byte:02x}").expect("writing to a String cannot fail");
+    }
+    hex
+}
+
 fn read_verified(source: impl Read, size: usize, sha256: &str) -> Result<Vec<u8>> {
     let mut bytes = Vec::new();
     source.take((size + 1) as u64).read_to_end(&mut bytes)?;
-    if bytes.len() != size || format!("{:x}", Sha256::digest(&bytes)) != sha256 {
+    if bytes.len() != size || sha256_hex(&bytes) != sha256 {
         bail!("model file failed manifest verification");
     }
     Ok(bytes)
@@ -300,13 +310,13 @@ mod tests {
 
     #[test]
     fn verified_read_rejects_oversize_and_corruption() {
-        let expected = format!("{:x}", Sha256::digest(b"good"));
+        let expected = "770e607624d689265ca6c44884d0807d9b054d23c473c106c72be9de08b7376c";
         assert_eq!(
-            read_verified(std::io::Cursor::new(b"good"), 4, &expected).unwrap(),
+            read_verified(std::io::Cursor::new(b"good"), 4, expected).unwrap(),
             b"good"
         );
-        assert!(read_verified(std::io::Cursor::new(b"goods"), 4, &expected).is_err());
-        assert!(read_verified(std::io::Cursor::new(b"bad!"), 4, &expected).is_err());
+        assert!(read_verified(std::io::Cursor::new(b"goods"), 4, expected).is_err());
+        assert!(read_verified(std::io::Cursor::new(b"bad!"), 4, expected).is_err());
     }
 
     // Recorded by Cinema's onig tokenizer harness. Run with
