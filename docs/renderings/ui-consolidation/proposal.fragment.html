@@ -1,0 +1,130 @@
+<style>
+#curator-cleanup-preview{font-family:system-ui,-apple-system,'Segoe UI',sans-serif;color-scheme:light dark;color:light-dark(#1b212b,#e6e9ef);font-size:14px;line-height:1.5;--cu-bg:light-dark(#f4f5f8,#0e1117);--cu-panel:light-dark(#fff,#151a23);--cu-hover:light-dark(#e9ebf1,#1a202c);--cu-line:light-dark(#d7dbe4,#232a38);--cu-muted:light-dark(#5b6472,#9aa3b2);--cu-accent:light-dark(#6a58d8,#aa9fff);--cu-soft:light-dark(#eeeafb,#242238);--cu-warn:light-dark(#85600b,#e5b45a);--cu-ok:light-dark(#23764f,#62c697);width:100%}
+#curator-cleanup-preview *{box-sizing:border-box}
+#curator-cleanup-preview .cu-caption{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:12px;color:var(--cu-muted);font-size:12px}
+#curator-cleanup-preview .cu-shell{background:var(--cu-bg);display:grid;grid-template-columns:156px minmax(0,1fr);border:1px solid var(--cu-line);border-radius:12px;overflow:hidden;min-height:660px}
+#curator-cleanup-preview button,#curator-cleanup-preview select,#curator-cleanup-preview input{font:inherit;color:inherit}
+#curator-cleanup-preview button{cursor:default;border:1px solid var(--cu-line);border-radius:8px;background:var(--cu-panel);padding:8px 12px;min-height:36px}
+#curator-cleanup-preview button:hover{background:var(--cu-hover)}
+#curator-cleanup-preview button:focus-visible,#curator-cleanup-preview select:focus-visible{outline:2px solid var(--cu-accent);outline-offset:3px}
+#curator-cleanup-preview button:disabled{opacity:.5}
+#curator-cleanup-preview .cu-primary{background:var(--cu-soft);color:var(--cu-accent);border-color:var(--cu-accent)}
+#curator-cleanup-preview .cu-rail{padding:24px 12px;background:var(--cu-panel);border-right:1px solid var(--cu-line);display:flex;flex-direction:column;gap:5px}
+#curator-cleanup-preview .cu-brand{font-size:19px;font-weight:600;letter-spacing:-.5px;padding:0 12px 22px}
+#curator-cleanup-preview .cu-rail button{text-align:left;background:transparent;border-color:transparent;padding:9px 12px}
+#curator-cleanup-preview .cu-rail button[aria-current=page]{background:var(--cu-soft);color:var(--cu-accent)}
+#curator-cleanup-preview .cu-rail-spacer{flex:1;min-height:50px}
+#curator-cleanup-preview .cu-main{padding:28px;min-width:0}
+#curator-cleanup-preview h1{font-size:25px;line-height:1.25;letter-spacing:-.5px;margin:0;font-weight:600}
+#curator-cleanup-preview h2{font-size:16px;font-weight:600;margin:0}
+#curator-cleanup-preview h3{font-size:14px;font-weight:600;margin:0}
+#curator-cleanup-preview p{margin:4px 0 0}
+#curator-cleanup-preview .cu-muted{color:var(--cu-muted)}
+#curator-cleanup-preview .cu-small{font-size:12px}
+#curator-cleanup-preview .cu-header{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;margin-bottom:25px}
+#curator-cleanup-preview .cu-tabs{display:flex;gap:20px;flex-wrap:wrap;border-bottom:1px solid var(--cu-line);margin-bottom:22px}
+#curator-cleanup-preview .cu-tabs button{border:0;border-radius:0;background:transparent;color:var(--cu-muted);padding:10px 0 12px;border-bottom:2px solid transparent}
+#curator-cleanup-preview .cu-tabs button[aria-selected=true]{color:inherit;border-bottom-color:var(--cu-accent)}
+#curator-cleanup-preview .cu-count{font-size:12px;margin-left:5px;color:var(--cu-muted)}
+#curator-cleanup-preview .cu-notice{display:flex;align-items:center;justify-content:space-between;gap:15px;background:var(--cu-panel);border:1px solid var(--cu-line);border-radius:9px;padding:14px 16px;margin-bottom:22px}
+#curator-cleanup-preview .cu-notice strong{font-weight:500;color:var(--cu-warn)}
+#curator-cleanup-preview .cu-row{display:grid;grid-template-columns:38px minmax(0,1fr) auto;gap:13px;padding:19px 0;border-bottom:1px solid var(--cu-line);align-items:start}
+#curator-cleanup-preview .cu-cover{width:38px;height:54px;display:grid;place-items:center;background:var(--cu-soft);color:var(--cu-accent);border-radius:5px;font-weight:500}
+#curator-cleanup-preview .cu-status{color:var(--cu-muted);white-space:nowrap;font-size:12px;margin-top:3px}
+#curator-cleanup-preview .cu-progress{height:5px;border-radius:5px;background:var(--cu-hover);margin:12px 0 6px;overflow:hidden}
+#curator-cleanup-preview .cu-progress span{display:block;height:100%;background:var(--cu-accent)}
+#curator-cleanup-preview .cu-measures{display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;color:var(--cu-muted);font-size:12px}
+#curator-cleanup-preview .cu-subhead{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-top:24px}
+#curator-cleanup-preview .cu-footer{color:var(--cu-muted);font-size:12px;margin-top:22px}
+#curator-cleanup-preview .cu-detail{margin-top:18px;border:1px solid var(--cu-line);border-radius:10px;background:var(--cu-panel);padding:20px}
+#curator-cleanup-preview .cu-detail-head{display:flex;justify-content:space-between;align-items:center;gap:12px}
+#curator-cleanup-preview .cu-detail dl{display:grid;grid-template-columns:90px minmax(0,1fr);gap:9px 14px;margin:20px 0}
+#curator-cleanup-preview .cu-detail dt{color:var(--cu-muted)}
+#curator-cleanup-preview .cu-detail dd{margin:0;overflow-wrap:anywhere}
+#curator-cleanup-preview details{margin-top:17px;color:var(--cu-muted);font-size:12px}
+#curator-cleanup-preview summary{padding:6px 0}
+#curator-cleanup-preview .cu-actions{display:flex;gap:9px;flex-wrap:wrap;margin-top:18px}
+#curator-cleanup-preview .cu-empty{text-align:center;padding:76px 15px}
+#curator-cleanup-preview .cu-empty h2{margin-bottom:7px}
+#curator-cleanup-preview .cu-setting{padding:20px 0;border-bottom:1px solid var(--cu-line);display:flex;justify-content:space-between;gap:20px;align-items:center}
+#curator-cleanup-preview .cu-setting-value{color:var(--cu-muted);white-space:nowrap}
+#curator-cleanup-preview .cu-link{color:var(--cu-accent);background:transparent;border:0}
+#curator-cleanup-preview select{background:var(--cu-bg);border:1px solid var(--cu-line);border-radius:7px;padding:9px;width:100%;max-width:340px}
+#curator-cleanup-preview .cu-storage-path{font-family:ui-monospace,monospace;font-size:12px;overflow-wrap:anywhere}
+#curator-cleanup-preview .cu-mobile-nav,#curator-cleanup-preview .cu-mobile-menu{display:none}
+#curator-cleanup-preview .cu-mobile-nav details{flex:1;margin:0;position:relative;font-size:12px;color:inherit}#curator-cleanup-preview .cu-mobile-nav summary{padding:12px 7px;text-align:center;list-style:none}#curator-cleanup-preview .cu-mobile-nav .cu-mobile-menu{position:absolute;right:0;bottom:100%;flex-direction:column;min-width:145px;border:1px solid var(--cu-line);border-radius:8px;z-index:3}#curator-cleanup-preview [hidden]{display:none!important}
+@media(max-width:650px){#curator-cleanup-preview .cu-shell{grid-template-columns:minmax(0,1fr);min-height:770px}#curator-cleanup-preview .cu-rail{display:none}#curator-cleanup-preview .cu-main{padding:21px 17px}#curator-cleanup-preview .cu-header{flex-wrap:wrap}#curator-cleanup-preview h1{font-size:23px}#curator-cleanup-preview .cu-tabs{gap:15px}#curator-cleanup-preview .cu-tabs button{font-size:13px}#curator-cleanup-preview button{min-height:42px}#curator-cleanup-preview .cu-row{grid-template-columns:32px minmax(0,1fr);gap:11px}#curator-cleanup-preview .cu-row>.cu-status,#curator-cleanup-preview .cu-row>button{grid-column:2;justify-self:start;margin-top:0}#curator-cleanup-preview .cu-cover{width:32px;height:47px}#curator-cleanup-preview .cu-notice{align-items:flex-start;padding:13px;gap:8px}#curator-cleanup-preview .cu-detail{padding:15px}#curator-cleanup-preview .cu-detail dl{grid-template-columns:1fr;gap:3px}#curator-cleanup-preview .cu-detail dd{margin-bottom:9px}#curator-cleanup-preview .cu-setting{align-items:flex-start;flex-wrap:wrap;gap:10px}#curator-cleanup-preview .cu-mobile-menu{display:flex;gap:10px;padding:12px 17px;background:var(--cu-panel);border-top:1px solid var(--cu-line)}#curator-cleanup-preview .cu-mobile-nav{display:flex;flex-wrap:wrap;gap:5px;border-top:1px solid var(--cu-line);padding:9px;background:var(--cu-panel)}#curator-cleanup-preview .cu-mobile-nav button{flex:1;border:0;background:transparent;padding:7px;font-size:12px}}
+</style>
+<div id="curator-cleanup-preview">
+  <div class="cu-caption"><span>Proposed consolidation · sample data</span><span>Activity · Settings · System</span></div>
+  <div class="cu-shell">
+    <nav class="cu-rail" aria-label="Application navigation">
+      <div class="cu-brand">curator</div>
+      <button type="button" disabled>Library</button><button type="button" disabled>Discover</button><button type="button" disabled>Wanted</button><button type="button" disabled>Calendar</button>
+      <button type="button" data-view="activity" aria-current="page">Activity</button>
+      <div class="cu-rail-spacer"></div>
+      <button type="button" data-view="settings">Settings</button><button type="button" data-view="system">System</button>
+    </nav>
+    <main class="cu-main">
+      <section data-screen="activity" aria-label="Activity preview">
+        <header class="cu-header"><div><h1>Activity</h1><p class="cu-muted">Downloads and imports, in one place.</p></div><span class="cu-muted cu-small">Updated just now</span></header>
+        <div class="cu-tabs" role="tablist" aria-label="Activity views"><button type="button" role="tab" aria-selected="true" data-filter="progress">In progress <span class="cu-count">3</span></button><button type="button" role="tab" aria-selected="false" data-filter="attention">Needs attention <span class="cu-count">1</span></button><button type="button" role="tab" aria-selected="false" data-filter="history">History <span class="cu-count">3</span></button></div>
+        <div data-content="progress">
+          <div class="cu-notice"><div><strong>One import needs a title</strong><p class="cu-muted cu-small">Your other downloads and imports are continuing.</p></div><button type="button" data-review>Review</button></div>
+          <div data-running>
+            <article class="cu-row"><div class="cu-cover">F</div><div><h3>Foundation</h3><p class="cu-muted cu-small">S03E04 · 2160p · Copying to your library</p><div class="cu-progress" role="progressbar" aria-label="Foundation import progress" aria-valuenow="63" aria-valuemin="0" aria-valuemax="100"><span style="width:63%"></span></div><div class="cu-measures"><span>5.2 GB of 8.3 GB · 63%</span><span>84 MB/s · about 40 sec left</span></div><details><summary>Details</summary><p>Runner completed the download. Curator is copying the verified files to the TV library.</p></details></div><span class="cu-status">Importing</span></article>
+            <article class="cu-row"><div class="cu-cover">B</div><div><h3>The Bear</h3><p class="cu-muted cu-small">S04E03 · 1080p · Downloading</p><div class="cu-progress" role="progressbar" aria-label="The Bear download progress" aria-valuenow="41" aria-valuemin="0" aria-valuemax="100"><span style="width:41%"></span></div><div class="cu-measures"><span>1.1 GB of 2.7 GB · 41%</span><span>18 MB/s · about 2 min left</span></div><details><summary>Details</summary><p>One acquisition attempt. The same row will show verification, extraction and import as they happen.</p></details></div><span class="cu-status">Downloading</span></article>
+            <article class="cu-row"><div class="cu-cover">P</div><div><h3>Project Hail Mary</h3><p class="cu-muted cu-small">Audiobook · Waiting for an import worker</p><p class="cu-muted cu-small">Download complete. Import starts automatically.</p></div><span class="cu-status">Waiting to import</span></article>
+          </div>
+          <div class="cu-empty" data-idle hidden><h2>All caught up</h2><p class="cu-muted">New downloads and imports will appear here.</p></div>
+          <p class="cu-footer">Updates automatically · Source files and cleanup are managed in System → Storage.</p>
+        </div>
+        <div data-content="attention" hidden><div class="cu-empty" data-attention-empty hidden><h2>Nothing needs your attention</h2><p class="cu-muted">Automatic retries continue without a decision from you.</p></div>
+          <article class="cu-row"><div class="cu-cover">A</div><div><h3>Arrival</h3><p class="cu-muted cu-small">Manual import · Choose a library title</p><p class="cu-small">The file is safe. Nothing will be imported until you choose.</p></div><button type="button" class="cu-primary" data-detail-open>Choose title</button></article>
+          <section class="cu-detail" data-issue hidden aria-label="Selected import issue"><div class="cu-detail-head"><h2>Choose where this file belongs</h2><button type="button" data-detail-close aria-label="Close import details">Close</button></div><p class="cu-muted">Curator could not match this manual import confidently.</p><dl><dt>File</dt><dd>Arrival.2016.2160p.mkv</dd><dt>Source</dt><dd>/pool/downloads/manual/Arrival</dd><dt>Destination</dt><dd>Movies · chosen after title selection</dd></dl><label for="cu-title">Library title</label><p><select id="cu-title"><option>Arrival (2016)</option><option>A different library title…</option></select></p><div class="cu-actions"><button type="button" class="cu-primary" data-preview>Preview import</button><button type="button" data-later>Decide later</button></div><p class="cu-small cu-muted" data-preview-result hidden>Preview: one file will be added to Arrival (2016). Existing library files stay protected. No action has been submitted.</p><details><summary>File and attempt details</summary><p>Shows the original release, matched identifiers, recorded import attempt and destination checks. Destructive decisions remain scoped to this item.</p></details></section>
+          <p class="cu-footer">Only decisions you can act on appear here. Automatic retries remain with the running item.</p>
+        </div>
+        <div data-content="history" hidden>
+          <div class="cu-subhead" style="margin-top:0"><h2>Recently finished</h2><span class="cu-muted cu-small">Retained import history included</span></div>
+          <article class="cu-row"><div class="cu-cover">D</div><div><h3>Dune: Part Two</h3><p class="cu-muted cu-small">2160p · Available in Movies</p></div><span class="cu-status" style="color:var(--cu-ok)">Imported · 12 min ago</span></article>
+          <article class="cu-row"><div class="cu-cover">S</div><div><h3>Severance</h3><p class="cu-muted cu-small">S02E05 · 1080p · Available in TV</p></div><span class="cu-status" style="color:var(--cu-ok)">Imported · 36 min ago</span></article>
+          <article class="cu-row"><div class="cu-cover">L</div><div><h3>The Left Hand of Darkness</h3><p class="cu-muted cu-small">Ebook · Manual import · Read only historical record</p></div><span class="cu-status" style="color:var(--cu-ok)">Imported · Yesterday</span></article>
+          <p class="cu-footer">Showing 3 of 3 · Import history survives dismissal from the download client.</p>
+        </div>
+        <section class="cu-detail" data-manual hidden aria-label="Manual import preview"><div class="cu-detail-head"><h2>Import files</h2><button type="button" data-manual-close>Close</button></div><p class="cu-muted">Choose completed files, then preview their library matches and destinations.</p><p class="cu-small cu-muted">This opens the existing manual import flow, with a direct name and no receipt or backlog tabs.</p></section>
+      </section>
+      <section data-screen="settings" hidden aria-label="Settings preview"><header class="cu-header"><div><h1>Settings</h1><p class="cu-muted">Library preferences and connected services.</p></div></header>
+        <div class="cu-tabs" role="tablist" aria-label="Settings views"><button type="button" role="tab" data-setting="general" aria-selected="true">General</button><button type="button" role="tab" data-setting="connections" aria-selected="false">Connections</button></div>
+        <div data-settings-content="general"><div class="cu-setting"><div><h2>Metadata</h2><p class="cu-muted">TMDB for movies and TV. Open Library for books.</p></div><span class="cu-setting-value">Configured</span></div><div class="cu-setting"><div><h2>Library folders</h2><p class="cu-muted">Movies, TV, ebooks and audiobooks.</p></div><span class="cu-setting-value">4 folders</span></div><div class="cu-setting"><div><h2>Activity history</h2><p class="cu-muted">Keep download and import history together.</p></div><span class="cu-setting-value">30 days</span></div><div class="cu-setting"><div><h2>Downloads and imports</h2><p class="cu-muted">Quality profiles, monitoring and import preferences.</p></div><span class="cu-setting-value">Manage</span></div><p class="cu-footer">Looking for files that need a decision? Open Activity → Needs attention.</p></div>
+        <div data-settings-content="connections" hidden><div class="cu-setting"><div><h2>Download clients</h2><p class="cu-muted">Runner · Connected</p></div><span class="cu-setting-value">Test connection</span></div><div class="cu-setting"><div><h2>Indexers</h2><p class="cu-muted">Search providers and request limits.</p></div><span class="cu-setting-value">Manage</span></div><div class="cu-setting"><div><h2>Cinema</h2><p class="cu-muted">Library updates · Connected</p><p class="cu-small cu-muted">Removed-file notifications supported · Last tested today</p></div><span class="cu-setting-value">Test connection</span></div><details><summary>Advanced Runner integration</summary><p>Published path mapping and the recovery credential live with the Runner connection. Preserve existing configuration; hide the legacy staging setup when that capability is unavailable.</p></details><p class="cu-footer">Capabilities appear beside the connection they describe.</p></div>
+      </section>
+      <section data-screen="system" hidden aria-label="System preview"><header class="cu-header"><div><h1>System</h1><p class="cu-muted">Health, storage and occasional maintenance.</p></div></header>
+        <div class="cu-tabs" role="tablist" aria-label="System views"><button type="button" role="tab" aria-selected="true" data-system="storage">Storage</button><button type="button" role="tab" aria-selected="false" data-system="diagnostics">Diagnostics</button></div>
+        <div data-system-content="storage"><h2>Completed downloads</h2><p class="cu-muted">Files awaiting a library match or a storage decision.</p><div class="cu-setting"><div><h3>Manual files</h3><p class="cu-storage-path">/pool/downloads/manual</p><p class="cu-muted cu-small">One unmatched folder · library files are unaffected</p></div><button type="button" data-storage-import>Choose files to import</button></div><div class="cu-setting"><div><h3>Library storage</h3><p class="cu-muted">All configured folders are available.</p></div><span class="cu-setting-value" style="color:var(--cu-ok)">Healthy</span></div><details><summary>Earlier delivery records</summary><p>Shown only when retained records or unresolved cleanup obligations exist. Open a record to inspect its exact files; unavailable legacy cleanup actions are removed.</p></details><p class="cu-footer">Storage work stays here. Individual import decisions stay with their Activity item.</p></div>
+        <div data-system-content="diagnostics" hidden><div class="cu-setting"><div><h2>Pipeline health</h2><p class="cu-muted">Read-only service health and processing timings.</p></div><span class="cu-setting-value" style="color:var(--cu-ok)">Healthy</span></div><div class="cu-setting"><div><h2>Background tasks</h2><p class="cu-muted">Scheduled work and recent outcomes.</p></div><span class="cu-setting-value">View tasks</span></div><p class="cu-footer">No second queue and no duplicate recovery console.</p></div>
+      </section>
+    </main>
+    <nav class="cu-mobile-nav" aria-label="Phone navigation"><button type="button" disabled>Library</button><button type="button" disabled>Discover</button><button type="button" disabled>Wanted</button><button type="button" data-view="activity">Activity</button><details data-more-menu><summary data-more>More</summary><div class="cu-mobile-menu" data-mobile-menu><button type="button" data-view="settings">Settings</button><button type="button" data-view="system">System</button></div></details></nav>
+  </div>
+</div>
+<script>
+(()=>{
+const root=document.getElementById('curator-cleanup-preview');if(root.dataset.cuWired)return;root.dataset.cuWired='true';
+function view(name){root.querySelector('[data-more-menu]').open=false;root.querySelectorAll('[data-screen]').forEach(el=>el.hidden=el.dataset.screen!==name);root.querySelectorAll('.cu-rail [data-view]').forEach(el=>{if(el.dataset.view===name)el.setAttribute('aria-current','page');else el.removeAttribute('aria-current')});}
+function filter(name){root.querySelectorAll('[data-content]').forEach(el=>el.hidden=el.dataset.content!==name);root.querySelectorAll('[data-filter]').forEach(el=>el.setAttribute('aria-selected',String(el.dataset.filter===name)));root.querySelector('[data-manual]').hidden=true;}
+root.querySelectorAll('[data-view]').forEach(el=>el.addEventListener('click',()=>view(el.dataset.view)));
+root.querySelectorAll('[data-filter]').forEach(el=>el.addEventListener('click',()=>filter(el.dataset.filter)));
+root.querySelector('[data-review]').addEventListener('click',()=>{filter('attention');root.querySelector('[data-issue]').hidden=false;});
+root.querySelector('[data-detail-open]').addEventListener('click',()=>root.querySelector('[data-issue]').hidden=false);
+root.querySelector('[data-detail-close]').addEventListener('click',()=>root.querySelector('[data-issue]').hidden=true);
+root.querySelector('[data-later]').addEventListener('click',()=>root.querySelector('[data-issue]').hidden=true);
+root.querySelector('[data-preview]').addEventListener('click',()=>root.querySelector('[data-preview-result]').hidden=false);
+
+root.querySelector('[data-manual-close]').addEventListener('click',()=>root.querySelector('[data-manual]').hidden=true);
+root.querySelector('[data-storage-import]').addEventListener('click',()=>{view('activity');root.querySelector('[data-manual]').hidden=false});
+root.querySelectorAll('[data-setting]').forEach(el=>el.addEventListener('click',()=>{root.querySelectorAll('[data-settings-content]').forEach(x=>x.hidden=x.dataset.settingsContent!==el.dataset.setting);root.querySelectorAll('[data-setting]').forEach(x=>x.setAttribute('aria-selected',String(x===el)))}));
+root.querySelectorAll('[data-system]').forEach(el=>el.addEventListener('click',()=>{root.querySelectorAll('[data-system-content]').forEach(x=>x.hidden=x.dataset.systemContent!==el.dataset.system);root.querySelectorAll('[data-system]').forEach(x=>x.setAttribute('aria-selected',String(x===el)))}));
+const state={showRunning:true,showAttention:true};function render(){root.querySelector('[data-running]').hidden=!state.showRunning;root.querySelector('[data-idle]').hidden=state.showRunning;root.querySelector('[data-filter="progress"] .cu-count').textContent=state.showRunning?'3':'0';root.querySelector('.cu-notice').hidden=!state.showAttention;root.querySelector('[data-filter="attention"] .cu-count').textContent=state.showAttention?'1':'0';root.querySelector('[data-content="attention"] article').hidden=!state.showAttention;root.querySelector('[data-attention-empty]').hidden=state.showAttention;if(!state.showAttention)root.querySelector('[data-issue]').hidden=true;}
+render();if(globalThis.Tweak){const t=new Tweak({container:root,onChange:render});t.addToggle(state,'showRunning',{label:'Show running work'});t.addToggle(state,'showAttention',{label:'Show an import decision'});}
+})();
+</script>
