@@ -184,6 +184,40 @@ will play it (full FEL, DV tone-mapped, EL dropped, HDR10 base layer), and
 the player overlay says "EL dropped" when that happens rather than hiding
 it.
 
+### 8. Built: measurement (v0.39.0)
+
+What the first slice settled while building §1–§2:
+
+- **The Matroska DV signal was being read in the wrong element.**
+  `BlockAdditionMapping` is a child of `TrackEntry`; the walker looked for
+  it inside `Video`, and the hand-built test fixture made the same mistake,
+  so real mkvmerge output was recognised only when its CodecID happened to
+  say Dolby Vision. It is now read where the spec puts it, with its
+  `BlockAddIDExtraData` (the configuration record).
+- **The RPU parser is a port of libdovi's** (`dolby_vision` crate, MIT), the
+  de facto reference, and it checks the RPU's CRC32 before trusting a field.
+  Its tests run against RPUs libdovi wrote, with libdovi's own parse as the
+  expectation; MEL and CM v2.9, which those fixtures lack, are covered by an
+  RPU written from the syntax table.
+- **The first frame is read without reading the frame.** Both walkers step
+  over NAL units by their length prefixes and read only the RPU (type 62) and
+  prefix SEI (type 39) bodies, so a multi-MiB UHD keyframe costs a few KiB of
+  budget. MP4 finds the first sample from `stsz`/`stco`/`co64`, or, in a
+  fragmented file, from the first `moof`'s `tfhd`/`trun`.
+- **HDR10+ implies HDR10.** ST 2094-40 is defined over a PQ signal, so the SEI
+  proves the HDR10 base even when an MP4 carries no `colr` box.
+- **The ffprobe path is one call**, adding `-show_frames -read_intervals
+  %+#1` to read the first frame's side data, and maps FFmpeg's decoded RPU
+  fields onto `dovi.Header` and `dovi.NLQ`, so profile and FEL/MEL go through
+  the same functions. FFmpeg does not print the CM version or level 6, so
+  those stay unknown on that path. A test holds the two paths equal on every
+  field FFmpeg reports, using committed ffprobe output for the same fixtures.
+- **Existing measurements are refreshed by revision, not by migration.**
+  `Info` records the `ProberRevision` that measured it; `Info.Outdated()`
+  says whether the current prober would learn more (revision 2: HEVC
+  files), and the scan's `NeedsProbe` queues those like any unprobed file
+  (ADR 0013 §4). Manual qualities are never re-measured.
+
 ## Consequences
 
 - One more binary format we own (the DV config record and enough RPU to

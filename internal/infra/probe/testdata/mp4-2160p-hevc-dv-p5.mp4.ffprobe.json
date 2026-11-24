@@ -1,0 +1,222 @@
+{
+    "frames": [
+        {
+            "media_type": "video",
+            "stream_index": 0,
+            "key_frame": 1,
+            "pts": 0,
+            "pts_time": "0.000000",
+            "best_effort_timestamp": 0,
+            "best_effort_timestamp_time": "0.000000",
+            "duration": 512,
+            "duration_time": "0.041667",
+            "pkt_pos": "44",
+            "pkt_size": "8981",
+            "width": 3840,
+            "height": 2160,
+            "crop_top": 0,
+            "crop_bottom": 0,
+            "crop_left": 0,
+            "crop_right": 0,
+            "pix_fmt": "yuv420p10le",
+            "sample_aspect_ratio": "1:1",
+            "pict_type": "I",
+            "interlaced_frame": 0,
+            "top_field_first": 0,
+            "lossless": 0,
+            "repeat_pict": 0,
+            "color_range": "pc",
+            "color_space": "ipt-c2",
+            "color_primaries": "bt2020",
+            "color_transfer": "smpte2084",
+            "chroma_location": "left",
+            "side_data_list": [
+                {
+                    "side_data_type": "H.26[45] User Data Unregistered SEI message"
+                },
+                {
+                    "side_data_type": "H.26[45] User Data Unregistered SEI message"
+                },
+                {
+                    "side_data_type": "Dolby Vision RPU Data"
+                },
+                {
+                    "side_data_type": "Dolby Vision Metadata",
+                    "rpu_type": 2,
+                    "rpu_format": 18,
+                    "vdr_rpu_profile": 0,
+                    "vdr_rpu_level": 0,
+                    "chroma_resampling_explicit_filter_flag": 0,
+                    "coef_data_type": 0,
+                    "coef_log2_denom": 23,
+                    "vdr_rpu_normalized_idc": 1,
+                    "bl_video_full_range_flag": 1,
+                    "bl_bit_depth": 10,
+                    "el_bit_depth": 10,
+                    "vdr_bit_depth": 12,
+                    "spatial_resampling_filter_flag": 0,
+                    "el_spatial_resampling_filter_flag": 0,
+                    "disable_residual_flag": 1,
+                    "vdr_rpu_id": 0,
+                    "mapping_color_space": 0,
+                    "mapping_chroma_format_idc": 0,
+                    "nlq_method_idc": -1,
+                    "nlq_method_idc_name": "none",
+                    "num_x_partitions": 1,
+                    "num_y_partitions": 1,
+                    "components": [
+                        {
+                            "pivots": "0 1023",
+                            "pieces": [
+                                {
+                                    "mapping_idc": 0,
+                                    "mapping_idc_name": "polynomial",
+                                    "poly_order": 1,
+                                    "poly_coef": "0 8388608"
+                                }
+                            ]
+                        },
+                        {
+                            "pivots": "0 1023",
+                            "pieces": [
+                                {
+                                    "mapping_idc": 0,
+                                    "mapping_idc_name": "polynomial",
+                                    "poly_order": 1,
+                                    "poly_coef": "0 8388608"
+                                }
+                            ]
+                        },
+                        {
+                            "pivots": "0 1023",
+                            "pieces": [
+                                {
+                                    "mapping_idc": 0,
+                                    "mapping_idc_name": "polynomial",
+                                    "poly_order": 1,
+                                    "poly_coef": "0 8388608"
+                                }
+                            ]
+                        }
+                    ],
+                    "dm_metadata_id": 0,
+                    "scene_refresh_flag": 1,
+                    "ycc_to_rgb_matrix": "8192/8192 799/8192 1681/8192 8192/8192 -933/8192 1091/8192 8192/8192 267/8192 -5545/8192",
+                    "ycc_to_rgb_offset": "0/268435456 134217728/268435456 134217728/268435456",
+                    "rgb_to_lms_matrix": "17081/16384 -349/16384 -349/16384 -349/16384 17081/16384 -349/16384 -349/16384 -349/16384 17081/16384",
+                    "signal_eotf": 65535,
+                    "signal_eotf_param0": 0,
+                    "signal_eotf_param1": 0,
+                    "signal_eotf_param2": 0,
+                    "signal_bit_depth": 12,
+                    "signal_color_space": 2,
+                    "signal_chroma_format": 0,
+                    "signal_full_range_flag": 1,
+                    "source_min_pq": 7,
+                    "source_max_pq": 3079,
+                    "source_diagonal": 42
+                }
+            ]
+        }
+    ],
+    "streams": [
+        {
+            "index": 0,
+            "codec_name": "hevc",
+            "codec_long_name": "H.265 / HEVC (High Efficiency Video Coding)",
+            "profile": "Main 10",
+            "codec_type": "video",
+            "codec_tag_string": "dvh1",
+            "codec_tag": "0x31687664",
+            "width": 3840,
+            "height": 2160,
+            "coded_width": 3840,
+            "coded_height": 2160,
+            "has_b_frames": 2,
+            "sample_aspect_ratio": "1:1",
+            "display_aspect_ratio": "16:9",
+            "pix_fmt": "yuv420p10le",
+            "level": 153,
+            "color_range": "pc",
+            "color_space": "ipt-c2",
+            "color_transfer": "smpte2084",
+            "color_primaries": "bt2020",
+            "chroma_location": "left",
+            "field_order": "progressive",
+            "refs": 1,
+            "view_ids_available": "",
+            "view_pos_available": "",
+            "id": "0x1",
+            "r_frame_rate": "24/1",
+            "avg_frame_rate": "24/1",
+            "time_base": "1/12288",
+            "start_pts": 0,
+            "start_time": "0.000000",
+            "duration_ts": 12288,
+            "duration": "1.000000",
+            "bit_rate": "246600",
+            "nb_frames": "24",
+            "nb_read_frames": "1",
+            "extradata_size": 2553,
+            "disposition": {
+                "default": 1,
+                "dub": 0,
+                "original": 0,
+                "comment": 0,
+                "lyrics": 0,
+                "karaoke": 0,
+                "forced": 0,
+                "hearing_impaired": 0,
+                "visual_impaired": 0,
+                "clean_effects": 0,
+                "attached_pic": 0,
+                "timed_thumbnails": 0,
+                "non_diegetic": 0,
+                "captions": 0,
+                "descriptions": 0,
+                "metadata": 0,
+                "dependent": 0,
+                "still_image": 0,
+                "multilayer": 0
+            },
+            "tags": {
+                "language": "und",
+                "handler_name": "VideoHandler",
+                "encoder": "Lavc62.28.103 libx265"
+            },
+            "side_data_list": [
+                {
+                    "side_data_type": "DOVI configuration record",
+                    "dv_version_major": 1,
+                    "dv_version_minor": 0,
+                    "dv_profile": 5,
+                    "dv_level": 6,
+                    "rpu_present_flag": 1,
+                    "el_present_flag": 0,
+                    "bl_present_flag": 1,
+                    "dv_bl_signal_compatibility_id": 0,
+                    "dv_md_compression": "none"
+                }
+            ]
+        }
+    ],
+    "format": {
+        "filename": "internal/domain/mediainfo/testdata/mp4-2160p-hevc-dv-p5.mp4",
+        "nb_streams": 1,
+        "nb_programs": 0,
+        "nb_stream_groups": 0,
+        "format_name": "mov,mp4,m4a,3gp,3g2,mj2",
+        "format_long_name": "QuickTime / MOV",
+        "start_time": "0.000000",
+        "duration": "1.000000",
+        "size": "34592",
+        "bit_rate": "276736",
+        "probe_score": 100,
+        "tags": {
+            "major_brand": "isom",
+            "minor_version": "512",
+            "compatible_brands": "isomiso2mp41",
+            "encoder": "Lavf62.12.103"
+        }
+    }
+}

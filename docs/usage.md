@@ -367,7 +367,9 @@ existing collection and run **Scan disk** (Library page):
   `S01E02`-style names; book formats read from the extension).
 - Every video file is **measured**: monarr reads the container headers and
   records resolution, codec, bit depth, HDR format, audio tracks and
-  bitrate. A file called `A Good Day to Die Hard.mkv` gets a real quality,
+  bitrate. For HEVC it also reads the first frame, which is where Dolby
+  Vision's profile and enhancement-layer type and HDR10+ metadata live
+  (ADR 0026). A file called `A Good Day to Die Hard.mkv` gets a real quality,
   because the bytes were always there to answer the question (ADR 0013).
   Measuring is queued per file, so a large library fills in over the
   minutes after the scan rather than blocking it.
@@ -906,6 +908,7 @@ facts monarr measured, and whether it is still hunting.
 |---|---|
 | `on disk  WEB-DL 1080p` | The weakest quality among this item's files — the one that decides whether it is still being hunted. |
 | `1080p · HEVC · HDR10 · TrueHD · 23 Mbps` | Measured from the file itself, not from its name. |
+| `2160p · HEVC 10-bit · DV P7 FEL · HDR10 · TrueHD · 61 Mbps` | Dolby Vision, measured: the profile, and for profile 7 whether the enhancement layer is **FEL** (it carries real picture data) or **MEL** (it carries none and looks like 8.1). See *Dolby Vision and HDR10+* below. |
 | `upgrading to WEB-DL 1080p` | Below the profile's target, upgrades on, still looking. |
 | `at or above WEB-DL 1080p` | Target met. Nothing better will be sought. |
 | `at target (source unverified)` | The resolution matches the target but monarr could only *guess* at the source. It stops rather than replace a possibly-perfect file on a guess. Interactive search still grabs whatever you pick. |
@@ -935,6 +938,25 @@ audio, bitrate bands, interlacing, muxer signature — and cross-checked
 against the name. A low-confidence inference is shown but never triggers
 a replacement, because being wrong about a source should cost an odd badge
 and never somebody's 17 GB file.
+
+### Dolby Vision and HDR10+
+
+Dolby Vision comes in kinds that matter for picture and playback, and the
+name of a release rarely says which one it is. monarr reads it from the file:
+
+| Label | What it is |
+|---|---|
+| `DV P7 FEL` | UHD Blu-ray dual layer with a **full enhancement layer**: real extra picture data on top of the HDR10 base. |
+| `DV P7 MEL` | UHD Blu-ray dual layer whose enhancement layer is **minimal**: no picture data; it plays the same as 8.1. |
+| `DV P7` | Profile 7 whose first frame could not be read, so FEL or MEL is unknown. |
+| `DV 8.1` | Single layer with an HDR10 base — most streaming and encodes. `8.4` is the HLG-based variant. |
+| `DV P5` | Single layer with **no** HDR10 base: wrong colours on anything that does not decode Dolby Vision. |
+| `HDR10+` | Dynamic HDR10 metadata (SMPTE ST 2094-40) without Dolby Vision. |
+
+The configuration record in the container gives the profile and layers. The
+first frame's RPU gives FEL versus MEL and the content-mapping version
+(CM 2.9 or 4.0). Files measured before this release are measured again by
+the next scan when they are HEVC, so an existing library fills in on its own.
 
 When a grabbed release turns out not to be what it claimed, the import
 still proceeds — the file is what it is — and a `quality_mismatch` event

@@ -58,14 +58,16 @@ func TestDolbyVisionMatroska(t *testing.T) {
 		ebml(0x55B0, // Colour
 			ebml(0x55BA, be(16)), // TransferCharacteristics = PQ
 		),
-		ebml(0x41E4, // BlockAdditionMapping
-			ebml(0x41E7, be(0x64766343)), // BlockAddIDType = 'dvcC'
-		),
 	)
+	// BlockAdditionMapping is a child of TrackEntry, not of Video — that is
+	// where the Matroska spec and mkvmerge put it.
 	track := ebml(0xAE,
 		ebml(0x83, be(1)), // TrackType = video
 		ebml(0x86, []byte("V_MPEGH/ISO/HEVC")),
 		video,
+		ebml(0x41E4, // BlockAdditionMapping
+			ebml(0x41E7, be(0x64766343)), // BlockAddIDType = 'dvcC'
+		),
 	)
 	audio := ebml(0xAE,
 		ebml(0x83, be(2)),

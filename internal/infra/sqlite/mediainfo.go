@@ -62,7 +62,14 @@ func (f FileQuality) NeedsProbe(sizeOnDisk int64) bool {
 	if f.Size != sizeOnDisk {
 		return true
 	}
-	return f.Provenance == mediainfo.ProvenanceFailed && !mediainfo.IsUnsupported(f.Info.Container)
+	if f.Provenance == mediainfo.ProvenanceFailed && !mediainfo.IsUnsupported(f.Info.Container) {
+		return true
+	}
+	// A measurement from an older prober may be missing facts the current
+	// one reads (mediainfo.ProberRevision). Only measured records qualify: a
+	// manual quality is the user's, and a filename hint is re-probed anyway.
+	measured := f.Provenance == mediainfo.ProvenanceProbe || f.Provenance == mediainfo.ProvenanceImplausible
+	return measured && f.Info.Outdated()
 }
 
 // CopyDiskState is what one copy of an item actually has on disk.

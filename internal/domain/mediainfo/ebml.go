@@ -5,6 +5,8 @@ import (
 	"io"
 	"math"
 	"strings"
+
+	"github.com/pjunod/monarr/internal/domain/mediainfo/dovi"
 )
 
 // mkvBudget caps how many bytes an MKV probe may read. Everything we want
@@ -31,37 +33,52 @@ const (
 
 	idTracks       = 0x1654AE6B
 	idTrackEntry   = 0xAE
+	idTrackNumber  = 0xD7
 	idTrackType    = 0x83
 	idCodecID      = 0x86
 	idCodecPrivate = 0x63A2
 	idLanguage     = 0x22B59C
 	idLanguageBCP  = 0x22B59D
 
-	idVideo          = 0xE0
-	idPixelWidth     = 0xB0
-	idPixelHeight    = 0xBA
-	idFlagInterlaced = 0x9A
-	idColour         = 0x55B0
-	idBitsPerChannel = 0x55B2
-	idTransferChars  = 0x55BA
-	idBlockAddMap    = 0x41E4
-	idBlockAddIDType = 0x41E7
+	idVideo             = 0xE0
+	idPixelWidth        = 0xB0
+	idPixelHeight       = 0xBA
+	idFlagInterlaced    = 0x9A
+	idColour            = 0x55B0
+	idBitsPerChannel    = 0x55B2
+	idTransferChars     = 0x55BA
+	idBlockAddMap       = 0x41E4 // BlockAdditionMapping, a child of TrackEntry
+	idBlockAddIDType    = 0x41E7
+	idBlockAddExtraData = 0x41ED
 
 	idAudio    = 0xE1
 	idChannels = 0x9F
 
-	idCluster = 0x1F43B675
-	idCues    = 0x1C53BB6B
-	idTags    = 0x1254C367
-	idAttachs = 0x1941A469
-	idChapter = 0x1043A770
+	idCluster     = 0x1F43B675
+	idSimpleBlock = 0xA3
+	idBlockGroup  = 0xA0
+	idBlock       = 0xA1
+	idCues        = 0x1C53BB6B
+	idTags        = 0x1254C367
+	idAttachs     = 0x1941A469
+	idChapter     = 0x1043A770
 )
 
 // BlockAddIDType values that mark a Dolby Vision enhancement layer.
 const (
 	blockAddDvcC = 0x64766343 // 'dvcC'
 	blockAddDvvC = 0x64767643 // 'dvvC'
+	blockAddDvwC = 0x64767743 // 'dvwC'
 )
+
+// mkvVideoTrack is what the walker carries from Tracks to the first Cluster:
+// enough to find the video track's first frame and to decode it.
+type mkvVideoTrack struct {
+	number     uint64
+	hevc       bool
+	lengthSize int
+	cfg        *dovi.Config
+}
 
 // Transfer characteristics values from the Matroska/ITU-T H.273 table.
 const (
@@ -119,13 +136,20 @@ func probeMatroska(r io.ReaderAt, size int64) (Info, error) {
 	}
 
 	var (
-		info       Info
-		seekInfo   int64 = -1
-		seekTracks int64 = -1
-		haveInfo   bool
-		haveTracks bool
-		firstErr   error
+		info         Info
+		vt           mkvVideoTrack
+		seekInfo     int64 = -1
+		seekTracks   int64 = -1
+		haveInfo     bool
+		haveTracks   bool
+		firstErr     error
+		clusterStart int64 = -1
+		clusterEnd   int64
 	)
+	// The first frame is read only for HEVC, where Dolby Vision RPUs and
+	// HDR10+ SEI live; once Info and Tracks are in hand, the walk continues
+	// only as far as the first Cluster, by seeking (which spends no budget).
+	wantFrame := func() bool { return vt.hevc && vt.number > 0 && vt.lengthSize > 0 }
 
 	walk := func(from, to int64) {
 		if err := c.seek(from); err != nil {
@@ -147,7 +171,7 @@ func probeMatroska(r io.ReaderAt, size int64) (Info, error) {
 				}
 				haveInfo = true
 			case idTracks:
-				if err := readTracks(c, body, &info); err != nil && firstErr == nil {
+				if err := readTracks(c, body, &info, &vt); err != nil && firstErr == nil {
 					firstErr = err
 				}
 				haveTracks = true
@@ -156,6 +180,12 @@ func probeMatroska(r io.ReaderAt, size int64) (Info, error) {
 			case idCluster:
 				// Media data starts here; everything we came for is behind us
 				// or reachable through the SeekHead.
+				if clusterStart < 0 {
+					clusterStart, clusterEnd = start, segEnd
+					if body >= 0 && start+body < segEnd {
+						clusterEnd = start + body
+					}
+				}
 				return
 			}
 			if body < 0 { // unknown-size element we did not consume: give up.
@@ -164,7 +194,7 @@ func probeMatroska(r io.ReaderAt, size int64) (Info, error) {
 			if err := c.seek(start + body); err != nil {
 				return
 			}
-			if haveInfo && haveTracks {
+			if haveInfo && haveTracks && (clusterStart >= 0 || !wantFrame()) {
 				return
 			}
 		}
@@ -182,6 +212,13 @@ func probeMatroska(r io.ReaderAt, size int64) (Info, error) {
 
 	if !haveTracks && firstErr == nil {
 		firstErr = ErrMalformed
+	}
+	if info.Video != nil {
+		var f frameFacts
+		if wantFrame() && clusterStart >= 0 {
+			f = scanFirstVideoBlock(c, clusterStart, clusterEnd, vt)
+		}
+		applyFrameFacts(info.Video, vt.cfg, f)
 	}
 	info.DeclaredBytes = declared
 	return info, firstErr
@@ -358,7 +395,7 @@ func readSegmentInfo(c *cursor, size int64, info *Info) error {
 
 // readTracks walks TrackEntry elements, keeping the first video track and
 // every audio track.
-func readTracks(c *cursor, size int64, info *Info) error {
+func readTracks(c *cursor, size int64, info *Info, vt *mkvVideoTrack) error {
 	end := c.pos + size
 	for c.pos < end {
 		id, _, body, err := readElement(c)
@@ -367,7 +404,7 @@ func readTracks(c *cursor, size int64, info *Info) error {
 		}
 		start := c.pos
 		if id == idTrackEntry {
-			readTrackEntry(c, body, info)
+			readTrackEntry(c, body, info, vt)
 		}
 		if err := c.seek(start + body); err != nil {
 			return wrapMalformed(err)
@@ -376,7 +413,7 @@ func readTracks(c *cursor, size int64, info *Info) error {
 	return nil
 }
 
-func readTrackEntry(c *cursor, size int64, info *Info) {
+func readTrackEntry(c *cursor, size int64, info *Info, vt *mkvVideoTrack) {
 	end := c.pos + size
 	var (
 		codecID   string
@@ -385,6 +422,9 @@ func readTrackEntry(c *cursor, size int64, info *Info) {
 		video     *VideoInfo
 		audio     *AudioInfo
 		trackType uint64
+		number    uint64
+		dv        bool
+		dvCfg     *dovi.Config
 	)
 	for c.pos < end {
 		id, _, body, err := readElement(c)
@@ -395,6 +435,15 @@ func readTrackEntry(c *cursor, size int64, info *Info) {
 		switch id {
 		case idTrackType:
 			trackType, _ = readUintBody(c, body)
+		case idTrackNumber:
+			number, _ = readUintBody(c, body)
+		case idBlockAddMap:
+			if isDV, cfg := readBlockAdditionMapping(c, body); isDV {
+				dv = true
+				if cfg != nil {
+					dvCfg = cfg
+				}
+			}
 		case idCodecID:
 			codecID = readStringBody(c, body)
 		case idCodecPrivate:
@@ -424,10 +473,16 @@ func readTrackEntry(c *cursor, size int64, info *Info) {
 		if d := bitDepthFromCodecPrivate(video.Codec, private); d > 0 && video.BitDepth == 0 {
 			video.BitDepth = d
 		}
-		if dvFromCodecID(codecID) {
+		if dv || dvFromCodecID(codecID) {
 			video.HDR = append(video.HDR, DV)
 		}
 		info.Video = video
+		*vt = mkvVideoTrack{
+			number:     number,
+			hevc:       video.Codec == "hevc",
+			lengthSize: nalLengthSizeHVCC(private),
+			cfg:        dvCfg,
+		}
 	case 2: // audio
 		if audio == nil {
 			audio = &AudioInfo{}
@@ -465,10 +520,6 @@ func readVideoElement(c *cursor, size int64) *VideoInfo {
 			}
 		case idColour:
 			readColourElement(c, body, v)
-		case idBlockAddMap:
-			if blockAdditionIsDV(c, body) {
-				v.HDR = append(v.HDR, DV)
-			}
 		}
 		if err := c.seek(start + body); err != nil {
 			return v
@@ -506,28 +557,110 @@ func readColourElement(c *cursor, size int64, v *VideoInfo) {
 	}
 }
 
-// blockAdditionIsDV reports whether a BlockAdditionMapping describes a Dolby
-// Vision enhancement layer — the MKV way of saying what MP4 says with a dvcC
-// box inside the sample entry.
-func blockAdditionIsDV(c *cursor, size int64) bool {
+// readBlockAdditionMapping reports whether a BlockAdditionMapping describes
+// Dolby Vision — the Matroska way of saying what MP4 says with a dvcC box in
+// the sample entry — and returns the configuration record it carries in
+// BlockAddIDExtraData, when that decodes.
+func readBlockAdditionMapping(c *cursor, size int64) (bool, *dovi.Config) {
 	end := c.pos + size
-	found := false
+	var (
+		isDV  bool
+		extra []byte
+	)
 	for c.pos < end {
 		id, _, body, err := readElement(c)
 		if err != nil || body < 0 {
-			return found
+			break
 		}
 		start := c.pos
-		if id == idBlockAddIDType {
-			if n, ok := readUintBody(c, body); ok && (n == blockAddDvcC || n == blockAddDvvC) {
-				found = true
+		switch id {
+		case idBlockAddIDType:
+			if n, ok := readUintBody(c, body); ok &&
+				(n == blockAddDvcC || n == blockAddDvvC || n == blockAddDvwC) {
+				isDV = true
+			}
+		case idBlockAddExtraData:
+			if body <= 256 {
+				extra, _ = c.read(body)
 			}
 		}
 		if err := c.seek(start + body); err != nil {
-			return found
+			break
 		}
 	}
-	return found
+	if !isDV {
+		return false, nil
+	}
+	if cfg, ok := dovi.ParseConfig(extra); ok {
+		return true, &cfg
+	}
+	return true, nil
+}
+
+// scanFirstVideoBlock finds the first block of the video track in the Cluster
+// spanning [start, end) and scans its access unit. Laced blocks are skipped:
+// video is never laced in practice, and a laced one has no single frame to
+// read.
+func scanFirstVideoBlock(c *cursor, start, end int64, vt mkvVideoTrack) frameFacts {
+	if err := c.seek(start); err != nil {
+		return frameFacts{}
+	}
+	for c.pos < end {
+		id, _, body, err := readElement(c)
+		if err != nil || body < 0 {
+			return frameFacts{}
+		}
+		elStart := c.pos
+		switch id {
+		case idSimpleBlock:
+			if f, ok := scanBlock(c, elStart, elStart+body, vt); ok {
+				return f
+			}
+		case idBlockGroup:
+			if f, ok := scanBlockGroup(c, elStart, elStart+body, vt); ok {
+				return f
+			}
+		}
+		if err := c.seek(elStart + body); err != nil {
+			return frameFacts{}
+		}
+	}
+	return frameFacts{}
+}
+
+func scanBlockGroup(c *cursor, start, end int64, vt mkvVideoTrack) (frameFacts, bool) {
+	for c.pos < end {
+		id, _, body, err := readElement(c)
+		if err != nil || body < 0 {
+			return frameFacts{}, false
+		}
+		elStart := c.pos
+		if id == idBlock {
+			return scanBlock(c, elStart, elStart+body, vt)
+		}
+		if err := c.seek(elStart + body); err != nil {
+			return frameFacts{}, false
+		}
+	}
+	return frameFacts{}, false
+}
+
+// scanBlock reads a (Simple)Block header — track number, 16-bit timecode,
+// flags — and, when it belongs to the video track, scans the frame. ok is
+// true once the video track's first block has been seen, whatever it held.
+func scanBlock(c *cursor, start, end int64, vt mkvVideoTrack) (frameFacts, bool) {
+	track, _, err := readVint(c, false)
+	if err != nil || track != vt.number {
+		return frameFacts{}, false
+	}
+	hdr, err := c.read(3)
+	if err != nil {
+		return frameFacts{}, true
+	}
+	if lacing := (hdr[2] >> 1) & 0x03; lacing != 0 {
+		return frameFacts{}, true
+	}
+	return scanAccessUnit(c, c.pos, end, vt.lengthSize), true
 }
 
 func readAudioElement(c *cursor, size int64) *AudioInfo {

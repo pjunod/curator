@@ -113,3 +113,13 @@ func bitDepthAV1C(b []byte) int {
 	}
 	return 8
 }
+
+// nalLengthSizeHVCC reads lengthSizeMinusOne from an
+// HEVCDecoderConfigurationRecord (byte 21, low two bits): how many bytes
+// prefix each NAL unit in a sample. 0 means the record is unreadable.
+func nalLengthSizeHVCC(b []byte) int {
+	if len(b) < 23 || b[0] != 1 {
+		return 0
+	}
+	return int(b[21]&0x03) + 1
+}

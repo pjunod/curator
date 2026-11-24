@@ -104,4 +104,27 @@ trunc l.mp4 mp4-480p-h264-ac3.mp4 64
 SIZE=1280x720 gen m.avi -c:v mpeg4 -pix_fmt yuv420p -c:a ac3 -ac 2 -f avi
 trunc m.avi avi-720p-mpeg4-ac3.avi 32
 
+# HDR10+ (ADR 0026): x265 writes SMPTE ST 2094-40 SEI from a dynamic-metadata
+# JSON. HDR10+ lives in the frames, not the headers, so these stay whole
+# (a few KiB): the probe reads the first access unit.
+cat > "$tmp/hdr10plus.json" <<'JSON'
+{"JSONInfo":{"HDR10plusProfile":"A","Version":"1.0"},"SceneInfo":[{"BezierCurveData":{"Anchors":[256,256,256,256,256,256,256,256,256],"KneePointX":0,"KneePointY":0},"LuminanceParameters":{"AverageRGB":100,"LuminanceDistributions":{"DistributionIndex":[1,5,10,25,50,75,90,95,99],"DistributionValues":[0,0,0,0,0,0,0,0,0]},"MaxScl":[1000,1000,1000]},"NumberOfWindows":1,"TargetedSystemDisplayMaximumLuminance":400,"SceneFrameIndex":0,"SceneId":0,"SequenceFrameIndex":0}],"SceneInfoSummary":{"SceneFirstFrameIndex":[0],"SceneFrameNumbers":[1]},"ToolInfo":{"Tool":"monarr-fixtures","Version":"1"}}
+JSON
+ffmpeg -hide_banner -loglevel error -y -f lavfi -i "testsrc2=size=64x64:rate=25:duration=0.04" \
+  -pix_fmt yuv420p10le -c:v libx265 -tag:v hvc1 \
+  -x265-params "log-level=error:hdr10=1:colorprim=bt2020:transfer=smpte2084:colormatrix=bt2020nc:dhdr10-info=$tmp/hdr10plus.json" \
+  "$tmp/n.mp4"
+ffmpeg -hide_banner -loglevel error -y -i "$tmp/n.mp4" -c copy "$tmp/n.mkv"
+copy n.mp4 mp4-64p-hevc-hdr10plus.mp4
+copy n.mkv mkv-64p-hevc-hdr10plus.mkv
+
+# Dolby Vision fixtures are NOT generated here: ffmpeg cannot author an RPU.
+# They are small real files kept whole, copied from the plurx repository,
+# where they were authored with libdovi (dovi_tool) and checked with ffprobe:
+#   mkv-64p-hevc-dv-p7-fel.mkv  tools/dv_quality/backends/combined/source.mkv
+#   mp4-2160p-hevc-dv-p5.mp4    crates/plurxd/fixtures/linux-dolby/p5_4k24_fresh.mp4
+#   mp4-64p-hevc-dv-p81.mp4     crates/plurx-core/tests/fixtures/dv-runtime/authored.mp4 (fragmented)
+# The RPU-only fixtures in mediainfo/dovi/testdata come from
+#   tools/dv_quality/backends/parsed-rpu/fixtures.
+
 ls -la "$out"
