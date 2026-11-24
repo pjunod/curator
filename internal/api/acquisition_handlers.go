@@ -272,6 +272,7 @@ func profileDTO(p quality.Profile, inUse int64) apigen.QualityProfile {
 	}
 	qp.HdrOrder, qp.HdrReject = hdrTiersDTO(p.HDROrder), hdrTiersDTO(p.HDRReject)
 	qp.Preflight = preflightDTO(p.Preflight)
+	qp.HdrTies = hdrTiesDTO(p.HDRTies)
 	if p.Floor != nil {
 		f := qualityDTO(*p.Floor)
 		qp.Floor = &f
@@ -343,6 +344,9 @@ func profileFromInput(in apigen.ProfileInput) (quality.Profile, error) {
 		}
 	}
 	p.HDROrder, p.HDRReject = order, reject
+	if p.HDRTies, err = hdrTiesFromInput(in.HdrTies, order); err != nil {
+		return quality.Profile{}, err
+	}
 	if p.Preflight, err = preflightFromInput(in.Preflight); err != nil {
 		return quality.Profile{}, err
 	}

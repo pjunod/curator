@@ -134,3 +134,30 @@ func TestSentenceNamesTheHDROrder(t *testing.T) {
 		t.Errorf("Sentence =\n %q\nwant\n %q", got, want)
 	}
 }
+
+// Ties (ADR 0026 §5): on a device that drops the enhancement layer, FEL, MEL
+// and 8.1 are one picture. They rank as one, so FEL is not hunted over 8.1
+// and an FEL file is not replaced by 8.1 either.
+func TestHDRTiesRankAsOne(t *testing.T) {
+	p := uhdReference()
+	p.HDRTies = [][]hdr.Tier{{hdr.TierDVP7FEL, hdr.TierDVP7MEL, hdr.TierDVP8}}
+	for _, tier := range []hdr.Tier{hdr.TierDVP7FEL, hdr.TierDVP7MEL, hdr.TierDVP8, hdr.TierDVP7} {
+		if got := p.HDRRank(tier); got != 0 {
+			t.Errorf("HDRRank(%q) = %d, want 0 inside the tie", tier, got)
+		}
+	}
+	if p.HDRRank(hdr.TierHDR10) != 4 {
+		t.Errorf("HDR10 rank = %d, want 4", p.HDRRank(hdr.TierHDR10))
+	}
+	if !p.HDRMet(hdr.TierDVP8) {
+		t.Error("8.1 is not met though it ties with the top tier")
+	}
+	remux := q(quality.SourceRemux, 2160)
+	if p.Upgrade(remux, nil, hdr.Measure(hdr.TierDVP7FEL), remux, true, quality.Audio{}, hdr.TierDVP8) {
+		t.Error("FEL counted as an upgrade over a tied 8.1")
+	}
+	want := "hunts the best release up to Remux 2160p, then stops; prefers DV P7 FEL = DV P7 MEL = DV P8 › HDR10+ › HDR10; never DV P5"
+	if got := p.Sentence(); got != want {
+		t.Errorf("Sentence =\n %q\nwant\n %q", got, want)
+	}
+}

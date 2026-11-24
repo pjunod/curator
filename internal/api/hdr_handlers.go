@@ -10,6 +10,7 @@ import (
 	"github.com/pjunod/monarr/internal/domain/hdr"
 	"github.com/pjunod/monarr/internal/domain/mediainfo"
 	"github.com/pjunod/monarr/internal/domain/quality"
+	"github.com/pjunod/monarr/internal/ports"
 )
 
 // ListHDRTiers implements GET /hdr-tiers: the ADR 0026 vocabulary in the
@@ -166,4 +167,99 @@ func probeEvidenceDTO(ev *acquisition.ProbeEvidence) *apigen.ProbeEvidence {
 		out.DolbyVision = dolbyVisionDTO(mediainfo.Info{Video: &mediainfo.VideoInfo{DoVi: ev.DoVi}})
 	}
 	return out
+}
+
+func hdrTiesDTO(in [][]hdr.Tier) *[][]apigen.HDRTier {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([][]apigen.HDRTier, len(in))
+	for i, g := range in {
+		out[i] = *hdrTiersDTO(g)
+	}
+	return &out
+}
+
+// hdrTiesFromInput validates tie groups: two or more tiers each, every one in
+// the order, none in two groups.
+func hdrTiesFromInput(in *[][]apigen.HDRTier, order []hdr.Tier) ([][]hdr.Tier, error) {
+	if in == nil {
+		return nil, nil
+	}
+	seen := map[hdr.Tier]bool{}
+	var out [][]hdr.Tier
+	for _, raw := range *in {
+		g, err := hdrTiersFromInput("hdrTies", &raw)
+		if err != nil {
+			return nil, err
+		}
+		if len(g) < 2 {
+			return nil, fmt.Errorf("a tie needs two or more tiers")
+		}
+		for _, t := range g {
+			if !slices.Contains(order, t) {
+				return nil, fmt.Errorf("%s is tied but not in the order", t.Label())
+			}
+			if seen[t] {
+				return nil, fmt.Errorf("%s is in two ties", t.Label())
+			}
+			seen[t] = true
+		}
+		out = append(out, g)
+	}
+	return out, nil
+}
+
+// ListHDRDevices implements GET /hdr/devices: every plurx connection's
+// signed-in playback devices, what each decodes, and the HDR order, ties and
+// refusals a profile would take from it (ADR 0026 §5).
+func (s *Server) ListHDRDevices(w http.ResponseWriter, r *http.Request) {
+	notifiers, err := s.deps.Store.ListNotifiers(r.Context())
+	if err != nil {
+		s.acqErr(w, err)
+		return
+	}
+	out := apigen.HDRDevices{Devices: []apigen.HDRDevice{}, Errors: []struct {
+		Message string `json:"message"`
+		Source  string `json:"source"`
+	}{}}
+	for _, cfg := range notifiers {
+		if cfg.Type != "plurx" || !cfg.Enabled {
+			continue
+		}
+		source, ok := s.deps.NotifierFactory(cfg).(ports.PlaybackDeviceSource)
+		if !ok {
+			continue
+		}
+		devices, err := source.PlaybackDevices(r.Context())
+		if err != nil {
+			out.Errors = append(out.Errors, struct {
+				Message string `json:"message"`
+				Source  string `json:"source"`
+			}{Message: err.Error(), Source: cfg.Name})
+			continue
+		}
+		for _, d := range devices {
+			order, ties, reject := hdr.Derive(d.Caps)
+			dto := apigen.HDRDevice{
+				Source: cfg.Name, Id: d.ID, User: d.User, Device: d.Device, Client: d.Client,
+				LastSeenAt: d.LastSeen, DolbyVision: d.Caps.DolbyVision, Fel: d.Caps.FEL,
+				Profile5: d.Caps.Profile5, Hdr10: d.Caps.HDR10, Hlg: d.Caps.HLG, Hdr10plus: d.Caps.HDR10Plus,
+				HdrOrder: derefTiers(hdrTiersDTO(order)), HdrReject: derefTiers(hdrTiersDTO(reject)),
+				HdrTies: [][]apigen.HDRTier{},
+			}
+			if t := hdrTiesDTO(ties); t != nil {
+				dto.HdrTies = *t
+			}
+			out.Devices = append(out.Devices, dto)
+		}
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+func derefTiers(t *[]apigen.HDRTier) []apigen.HDRTier {
+	if t == nil {
+		return []apigen.HDRTier{}
+	}
+	return *t
 }

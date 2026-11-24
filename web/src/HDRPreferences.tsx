@@ -5,7 +5,10 @@
 // Reordering uses buttons rather than drag-and-drop: a keyboard, a screen
 // reader and a phone can all press "move up", and the result is the same list.
 
-import type { HDRTier, HDRTierOption, PreflightPolicy } from './api'
+import { useLayoutEffect, useRef, useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
+import type { HDRDevice, HDRTier, HDRTierOption, PreflightPolicy } from './api'
+import { listHDRDevices } from './api'
 
 /** What each tier means for the picture, in a phrase. */
 export const TIER_NOTES: Partial<Record<HDRTier, string>> = {
@@ -26,7 +29,17 @@ export const SUGGESTED_REJECT: HDRTier[] = ['dv-p5']
 export interface HDRDraft {
   hdrOrder: HDRTier[]
   hdrReject: HDRTier[]
+  /** Tiers that rank as one; set from a device, cleared by any hand edit of the order. */
+  hdrTies: HDRTier[][]
   preflight: PreflightPolicy
+}
+
+/** Whether tier t ranks as one with the tier before it in the order. */
+export function tiedWithPrevious(d: Pick<HDRDraft, 'hdrOrder' | 'hdrTies'>, i: number): boolean {
+  if (i === 0) return false
+  const a = d.hdrOrder[i - 1]
+  const b = d.hdrOrder[i]
+  return d.hdrTies.some((g) => g.includes(a) && g.includes(b))
 }
 
 export function labelOf(options: HDRTierOption[] | undefined, tier: HDRTier): string {
@@ -52,11 +65,13 @@ export function HDRPreferences(props: {
   const order = value.hdrOrder
   const reject = value.hdrReject
   const set = (patch: Partial<HDRDraft>) => onChange({ ...value, ...patch })
+  // Reordering by hand states a preference the device ties no longer
+  // describe, so a hand edit clears them rather than leaving them stale.
   const move = (i: number, by: number) => {
     const next = [...order]
     const [t] = next.splice(i, 1)
     next.splice(i + by, 0, t)
-    set({ hdrOrder: next })
+    set({ hdrOrder: next, hdrTies: [] })
   }
   const unused = options.filter((o) => !order.includes(o.tier) && !reject.includes(o.tier))
   const enabled = order.length > 0 || reject.length > 0
@@ -68,9 +83,10 @@ export function HDRPreferences(props: {
         <p className="muted">
           No HDR preference: releases rank on resolution, source and custom formats alone.
         </p>
-        <button type="button" onClick={() => set({ hdrOrder: SUGGESTED_ORDER, hdrReject: SUGGESTED_REJECT })}>
+        <button type="button" onClick={() => set({ hdrOrder: SUGGESTED_ORDER, hdrReject: SUGGESTED_REJECT, hdrTies: [] })}>
           Rank by HDR and Dolby Vision
         </button>
+        <DeviceDerivation options={options} onApply={(d) => set(d)} />
       </fieldset>
     )
   }
@@ -81,8 +97,10 @@ export function HDRPreferences(props: {
       <p className="muted">Higher wins when resolution and source tie. It never trades resolution or source away.</p>
       <ol className="hdr-order" data-testid="hdr-order">
         {order.map((t, i) => (
-          <li key={t}>
-            <span className="hdr-rank">{i + 1}</span>
+          <li key={t} className={tiedWithPrevious(value, i) ? 'tied' : ''}>
+            <span className="hdr-rank" title={tiedWithPrevious(value, i) ? 'Same picture on the device: ranks with the tier above' : undefined}>
+              {tiedWithPrevious(value, i) ? '=' : i + 1}
+            </span>
             <span className="hdr-tier">{labelOf(options, t)}</span>
             <span className="hdr-note">{TIER_NOTES[t]}</span>
             <span className="hdr-actions">
@@ -92,7 +110,7 @@ export function HDRPreferences(props: {
               <button type="button" className="small" aria-label={`Move ${labelOf(options, t)} down`} disabled={i === order.length - 1} onClick={() => move(i, 1)}>
                 ↓
               </button>
-              <button type="button" className="small" aria-label={`Remove ${labelOf(options, t)}`} onClick={() => set({ hdrOrder: order.filter((x) => x !== t) })}>
+              <button type="button" className="small" aria-label={`Remove ${labelOf(options, t)}`} onClick={() => set({ hdrOrder: order.filter((x) => x !== t), hdrTies: [] })}>
                 ×
               </button>
             </span>
@@ -128,6 +146,8 @@ export function HDRPreferences(props: {
         </div>
       )}
 
+      <DeviceDerivation options={options} onApply={(d) => set(d)} />
+
       <h4>Pre-flight probe</h4>
       <p className="muted">
         Before grabbing, Runner reads the first bytes of the best releases and Curator measures them, so a
@@ -157,9 +177,104 @@ export function HDRPreferences(props: {
           </select>
         </label>
       </div>
-      <button type="button" className="small" onClick={() => set({ hdrOrder: [], hdrReject: [], preflight: {} })}>
+      <button type="button" className="small" onClick={() => set({ hdrOrder: [], hdrReject: [], hdrTies: [], preflight: {} })}>
         Remove HDR preference
       </button>
     </fieldset>
   )
+}
+
+const yes = (b: boolean, ok: string, no: string) => (b ? ok : no)
+
+/**
+ * "Derive order from device" (ADR 0026 §5): the playback devices Cinema
+ * reports, what each decodes, and the order, ties and refusals that follow.
+ * Applying one fills the profile; the profile, not the device, stays the
+ * policy, and it can be edited afterwards.
+ */
+function DeviceDerivation(props: { options: HDRTierOption[]; onApply: (d: Pick<HDRDraft, 'hdrOrder' | 'hdrTies' | 'hdrReject'>) => void }) {
+  const [open, setOpen] = useState(false)
+  const devices = useQuery({ queryKey: ['hdr-devices'], queryFn: listHDRDevices, enabled: open })
+  const panel = useRef<HTMLDivElement>(null)
+  const trigger = useRef<HTMLButtonElement>(null)
+  // The panel opens under the button: bring it into view and focus it (CLAUDE.md §5).
+  useLayoutEffect(() => {
+    if (open) {
+      panel.current?.scrollIntoView({ block: 'nearest' })
+      panel.current?.focus({ preventScroll: true })
+    }
+  }, [open])
+  const close = () => {
+    setOpen(false)
+    trigger.current?.focus()
+  }
+  if (!open) {
+    return (
+      <button ref={trigger} type="button" className="small" onClick={() => setOpen(true)}>
+        Derive order from device
+      </button>
+    )
+  }
+  const list = devices.data?.devices ?? []
+  return (
+    <div ref={panel} tabIndex={-1} className="hdr-devices" data-testid="hdr-devices" role="region" aria-label="Playback devices"
+      onKeyDown={(e) => {
+        if (e.key === 'Escape') {
+          e.preventDefault()
+          e.stopPropagation()
+          close()
+        }
+      }}>
+      <div className="hdr-devices-head">
+        <strong>Playback target · from Cinema</strong>
+        <button type="button" className="small" aria-label="Close devices" onClick={close}>×</button>
+      </div>
+      {devices.isPending && <p className="muted" role="status">Asking Cinema for its devices…</p>}
+      {devices.isError && <p className="warn-text">{(devices.error as Error).message}</p>}
+      {devices.data?.errors.map((e) => (
+        <p key={e.source} className="warn-text">{e.source}: {e.message}</p>
+      ))}
+      {devices.data && list.length === 0 && devices.data.errors.length === 0 && (
+        <p className="muted">
+          No device has reported yet. Each device reports what it decodes the first time it plays something; a
+          plurx connection needs the playback:read scope on its key.
+        </p>
+      )}
+      {list.map((d: HDRDevice) => (
+        <div key={`${d.source}-${d.id}`} className="hdr-device">
+          <div className="hdr-device-name">
+            {d.device || d.client || 'Device'} <span className="muted">· {d.user} · {d.client}</span>
+          </div>
+          <div className="hdr-device-facts">
+            <span className="muted">P7 FEL</span><span>{yes(d.fel, 'EL decoded', d.dolbyVision ? 'EL dropped' : 'base layer')}</span>
+            <span className="muted">P7 MEL / 8.1</span><span>{yes(d.dolbyVision, 'Dolby Vision', 'HDR10 base')}</span>
+            <span className="muted">P5</span><span>{yes(d.profile5, 'Yes', 'Wrong colours: rejected')}</span>
+            <span className="muted">HDR10+</span><span>{yes(d.hdr10plus, 'Dynamic', 'Static fallback')}</span>
+          </div>
+          <p className="muted">
+            {d.hdrTies.length
+              ? `Ties: ${d.hdrTies.map((g) => g.map((t) => labelOf(props.options, t)).join(' = ')).join('; ')} — Curator will not pay for an upgrade this device cannot show.`
+              : 'This device shows every tier differently.'}
+          </p>
+          <button type="button" onClick={() => { props.onApply({ hdrOrder: d.hdrOrder, hdrTies: d.hdrTies, hdrReject: d.hdrReject }); close() }}>
+            Use this device's order
+          </button>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+/**
+ * The order as the profile sentence prints it: tied neighbours merged into
+ * one "A = B" entry, so joining with " › " matches the server's sentence.
+ */
+export function orderLabels(d: Pick<HDRDraft, 'hdrOrder' | 'hdrTies'>, options?: HDRTierOption[]): string[] {
+  const out: string[] = []
+  d.hdrOrder.forEach((t, i) => {
+    const label = labelOf(options, t)
+    if (tiedWithPrevious(d, i)) out[out.length - 1] += ` = ${label}`
+    else out.push(label)
+  })
+  return out
 }

@@ -2208,6 +2208,38 @@ type GrabRequest struct {
 // GrabRequestIntent Manual acquisition always creates an independent additional copy.
 type GrabRequestIntent string
 
+// HDRDevice defines model for HDRDevice.
+type HDRDevice struct {
+	Client      string `json:"client"`
+	Device      string `json:"device"`
+	DolbyVision bool   `json:"dolbyVision"`
+
+	// Fel Decodes a profile 7 enhancement layer.
+	Fel        bool        `json:"fel"`
+	Hdr10      bool        `json:"hdr10"`
+	Hdr10plus  bool        `json:"hdr10plus"`
+	HdrOrder   []HDRTier   `json:"hdrOrder"`
+	HdrReject  []HDRTier   `json:"hdrReject"`
+	HdrTies    [][]HDRTier `json:"hdrTies"`
+	Hlg        bool        `json:"hlg"`
+	Id         string      `json:"id"`
+	LastSeenAt int64       `json:"lastSeenAt"`
+	Profile5   bool        `json:"profile5"`
+
+	// Source The plurx connection's name.
+	Source string `json:"source"`
+	User   string `json:"user"`
+}
+
+// HDRDevices defines model for HDRDevices.
+type HDRDevices struct {
+	Devices []HDRDevice `json:"devices"`
+	Errors  []struct {
+		Message string `json:"message"`
+		Source  string `json:"source"`
+	} `json:"errors"`
+}
+
 // HDRTier An HDR presentation (ADR 0026). Profiles name the first eight; dv-p7 (EL type unknown), dv (profile unknown) and the empty string (nothing known) appear only as observations.
 type HDRTier string
 
@@ -2877,7 +2909,10 @@ type ProfileInput struct {
 
 	// HdrReject HDR tiers to refuse, from GET /hdr-tiers.
 	HdrReject *[]HDRTier `json:"hdrReject,omitempty"`
-	Name      string     `json:"name"`
+
+	// HdrTies Groups of two or more tiers from hdrOrder that rank as one.
+	HdrTies *[][]HDRTier `json:"hdrTies,omitempty"`
+	Name    string       `json:"name"`
 
 	// Preflight How a profile measures releases before grabbing them (ADR 0026). It applies whenever the profile has an HDR order or refusal list.
 	Preflight       *PreflightPolicy `json:"preflight,omitempty"`
@@ -2940,7 +2975,10 @@ type QualityProfile struct {
 
 	// HdrReject HDR tiers the profile never takes. A release is refused only when measured, or named outright, as one of them.
 	HdrReject *[]HDRTier `json:"hdrReject,omitempty"`
-	Id        int64      `json:"id"`
+
+	// HdrTies Groups of tiers that rank as one -- tiers the playback device renders identically -- each at its best member's place in hdrOrder.
+	HdrTies *[][]HDRTier `json:"hdrTies,omitempty"`
+	Id      int64        `json:"id"`
 
 	// InUse How many items, copies and import lists reference this profile. Non-zero means DELETE will be refused with 409.
 	InUse *int   `json:"inUse,omitempty"`
@@ -4293,6 +4331,9 @@ type ServerInterface interface {
 	// ListHDRTiers List the HDR tiers a profile can order or refuse
 	// (GET /hdr-tiers)
 	ListHDRTiers(w http.ResponseWriter, r *http.Request)
+	// ListHDRDevices Playback devices and the HDR order each suggests
+	// (GET /hdr/devices)
+	ListHDRDevices(w http.ResponseWriter, r *http.Request)
 	// GetHealth Run health checks and report results
 	// (GET /health)
 	GetHealth(w http.ResponseWriter, r *http.Request)
@@ -5349,6 +5390,20 @@ func (siw *ServerInterfaceWrapper) ListHDRTiers(w http.ResponseWriter, r *http.R
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.ListHDRTiers(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListHDRDevices operation middleware
+func (siw *ServerInterfaceWrapper) ListHDRDevices(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListHDRDevices(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -8369,6 +8424,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/profiles", wrapper.CreateProfile)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/languages", wrapper.ListLanguages)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/hdr-tiers", wrapper.ListHDRTiers)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/hdr/devices", wrapper.ListHDRDevices)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/profiles/{id}", wrapper.DeleteProfile)
 	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/profiles/{id}", wrapper.UpdateProfile)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/indexers", wrapper.ListIndexers)

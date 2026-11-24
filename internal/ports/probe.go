@@ -3,6 +3,7 @@ package ports
 import (
 	"context"
 	"fmt"
+	"github.com/pjunod/monarr/internal/domain/hdr"
 )
 
 // ReleaseProber is an optional download-client capability (ADR 0026 §6): read
@@ -60,4 +61,21 @@ func (e *ProbeRefusal) Error() string {
 		return fmt.Sprintf("release probe: %s (%s)", e.Reason, e.Detail)
 	}
 	return "release probe: " + e.Reason
+}
+
+// PlaybackDeviceSource is an optional notifier capability (ADR 0026 §5): the
+// playback devices a media server knows and what each decodes. plurx answers
+// it from the capabilities its clients report with every playback decision.
+type PlaybackDeviceSource interface {
+	PlaybackDevices(ctx context.Context) ([]PlaybackDevice, error)
+}
+
+// PlaybackDevice is one signed-in playback device.
+type PlaybackDevice struct {
+	ID       string
+	User     string
+	Device   string
+	Client   string
+	LastSeen int64
+	Caps     hdr.DeviceCaps
 }

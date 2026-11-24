@@ -1320,6 +1320,23 @@ paths:
                 items:
                   $ref: "#/components/schemas/HDRTierOption"
 
+  /hdr/devices:
+    get:
+      operationId: listHDRDevices
+      summary: Playback devices and the HDR order each suggests
+      description: >
+        The signed-in devices each enabled plurx connection reports, what
+        each decodes, and the profile HDR order, ties and refusals derived
+        from it (ADR 0026). A connection that cannot answer is listed under
+        errors with the reason, so the editor can say what to fix.
+      responses:
+        "200":
+          description: Devices and per-connection errors.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HDRDevices"
+
   /profiles/{id}:
     parameters:
       - name: id
@@ -4582,6 +4599,14 @@ components:
           description: >
             HDR tiers the profile never takes. A release is refused only when
             measured, or named outright, as one of them.
+        hdrTies:
+          type: array
+          items:
+            type: array
+            items: { $ref: "#/components/schemas/HDRTier" }
+          description: >
+            Groups of tiers that rank as one -- tiers the playback device
+            renders identically -- each at its best member's place in hdrOrder.
         preflight:
           $ref: "#/components/schemas/PreflightPolicy"
         sentence:
@@ -4631,6 +4656,12 @@ components:
           type: array
           items: { $ref: "#/components/schemas/HDRTier" }
           description: HDR tiers to refuse, from GET /hdr-tiers.
+        hdrTies:
+          type: array
+          items:
+            type: array
+            items: { $ref: "#/components/schemas/HDRTier" }
+          description: Groups of two or more tiers from hdrOrder that rank as one.
         preflight:
           $ref: "#/components/schemas/PreflightPolicy"
 
@@ -4641,6 +4672,50 @@ components:
         (EL type unknown), dv (profile unknown) and the empty string (nothing
         known) appear only as observations.
       enum: [dv-p7-fel, dv-p7-mel, dv-p8, hdr10plus, hdr10, hlg, dv-p5, sdr, dv-p7, dv, ""]
+
+    HDRDevices:
+      type: object
+      required: [devices, errors]
+      properties:
+        devices:
+          type: array
+          items: { $ref: "#/components/schemas/HDRDevice" }
+        errors:
+          type: array
+          items:
+            type: object
+            required: [source, message]
+            properties:
+              source: { type: string }
+              message: { type: string }
+
+    HDRDevice:
+      type: object
+      required: [source, id, user, device, client, lastSeenAt, dolbyVision, fel, profile5, hdr10, hlg, hdr10plus, hdrOrder, hdrTies, hdrReject]
+      properties:
+        source: { type: string, description: The plurx connection's name. }
+        id: { type: string }
+        user: { type: string }
+        device: { type: string }
+        client: { type: string }
+        lastSeenAt: { type: integer, format: int64 }
+        dolbyVision: { type: boolean }
+        fel: { type: boolean, description: Decodes a profile 7 enhancement layer. }
+        profile5: { type: boolean }
+        hdr10: { type: boolean }
+        hlg: { type: boolean }
+        hdr10plus: { type: boolean }
+        hdrOrder:
+          type: array
+          items: { $ref: "#/components/schemas/HDRTier" }
+        hdrTies:
+          type: array
+          items:
+            type: array
+            items: { $ref: "#/components/schemas/HDRTier" }
+        hdrReject:
+          type: array
+          items: { $ref: "#/components/schemas/HDRTier" }
 
     HDRTierOption:
       type: object

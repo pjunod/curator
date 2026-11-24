@@ -36,6 +36,7 @@ type profileDef struct {
 	// empty for the same reason.
 	HDROrder  []hdr.Tier    `json:"hdrOrder,omitempty"`
 	HDRReject []hdr.Tier    `json:"hdrReject,omitempty"`
+	HDRTies   [][]hdr.Tier  `json:"hdrTies,omitempty"`
 	Preflight *preflightDef `json:"preflight,omitempty"`
 }
 
@@ -53,6 +54,26 @@ func validTiers(in []hdr.Tier) []hdr.Tier {
 	for _, t := range in {
 		if t.Valid() && !slices.Contains(out, t) {
 			out = append(out, t)
+		}
+	}
+	return out
+}
+
+// validTies keeps tie groups of two or more valid tiers, each tier in one
+// group at most.
+func validTies(in [][]hdr.Tier) [][]hdr.Tier {
+	var out [][]hdr.Tier
+	seen := map[hdr.Tier]bool{}
+	for _, group := range in {
+		var g []hdr.Tier
+		for _, t := range validTiers(group) {
+			if !seen[t] {
+				seen[t] = true
+				g = append(g, t)
+			}
+		}
+		if len(g) > 1 {
+			out = append(out, g)
 		}
 	}
 	return out
@@ -77,6 +98,7 @@ func profileFromRow(r sqlitegen.QualityProfile) (quality.Profile, error) {
 		Target: def.Target.quality(), DownloadPriority: def.DownloadPriority,
 		Languages: language.Normalize(def.Languages),
 		HDROrder:  validTiers(def.HDROrder), HDRReject: validTiers(def.HDRReject),
+		HDRTies: validTies(def.HDRTies),
 	}
 	if def.Preflight != nil {
 		p.Preflight = quality.Preflight{Top: def.Preflight.Top, Bytes: def.Preflight.Bytes, SkipUnreadable: def.Preflight.SkipUnreadable}
@@ -127,6 +149,7 @@ func profileDefinition(p quality.Profile) (string, error) {
 		Languages:        language.Normalize(p.Languages),
 		HDROrder:         validTiers(p.HDROrder),
 		HDRReject:        validTiers(p.HDRReject),
+		HDRTies:          validTies(p.HDRTies),
 	}
 	if p.Preflight != (quality.Preflight{}) {
 		def.Preflight = &preflightDef{Top: p.Preflight.Top, Bytes: p.Preflight.Bytes, SkipUnreadable: p.Preflight.SkipUnreadable}

@@ -14,7 +14,7 @@ import {
 } from '../api'
 import { DOWNLOAD_PRIORITIES, downloadPriorityLabel } from '../downloadPriority'
 import { buildProfileSentence } from '../profileSentence'
-import { HDRPreferences, labelOf, type HDRDraft } from '../HDRPreferences'
+import { HDRPreferences, labelOf, orderLabels, type HDRDraft } from '../HDRPreferences'
 
 // The quality vocabulary, worst to best on each axis. Kept here rather than
 // fetched because it is a property of the model, not of the deployment — and
@@ -77,7 +77,7 @@ const blankDraft = (): Draft => ({
   upgradesAllowed: true,
   downloadPriority: 0,
   audioLanguages: [],
-  hdr: { hdrOrder: [], hdrReject: [], preflight: {} },
+  hdr: { hdrOrder: [], hdrReject: [], hdrTies: [], preflight: {} },
 })
 
 interface Draft {
@@ -109,7 +109,7 @@ function draftOf(p: QualityProfile): Draft {
     upgradesAllowed: p.upgradesAllowed,
     downloadPriority: p.downloadPriority,
     audioLanguages: p.audioLanguages ?? [],
-    hdr: { hdrOrder: p.hdrOrder ?? [], hdrReject: p.hdrReject ?? [], preflight: p.preflight ?? {} },
+    hdr: { hdrOrder: p.hdrOrder ?? [], hdrReject: p.hdrReject ?? [], hdrTies: p.hdrTies ?? [], preflight: p.preflight ?? {} },
   }
 }
 
@@ -126,6 +126,7 @@ function toInput(d: Draft): ProfileInput {
     // A book has no picture: the same reasoning, for HDR.
     hdrOrder: d.axis === 'video' ? d.hdr.hdrOrder : [],
     hdrReject: d.axis === 'video' ? d.hdr.hdrReject : [],
+    hdrTies: d.axis === 'video' ? d.hdr.hdrTies : [],
     preflight: d.axis === 'video' ? d.hdr.preflight : {},
   }
   if (d.hasFloor) {
@@ -156,7 +157,7 @@ function previewSentence(d: Draft, languages?: LanguageOption[], tiers?: HDRTier
         : undefined,
       upgradesAllowed: d.upgradesAllowed,
       audioLanguages: d.axis === 'video' ? d.audioLanguages : [],
-      hdrOrder: d.axis === 'video' ? d.hdr.hdrOrder.map((t) => labelOf(tiers, t)) : [],
+      hdrOrder: d.axis === 'video' ? orderLabels(d.hdr, tiers) : [],
       hdrReject: d.axis === 'video' ? d.hdr.hdrReject.map((t) => labelOf(tiers, t)) : [],
     },
     languages,

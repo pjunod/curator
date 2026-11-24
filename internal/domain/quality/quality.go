@@ -249,6 +249,11 @@ type Profile struct {
 	// HDRReject lists tiers this profile never takes, such as Dolby Vision
 	// profile 5 for a library played on devices without Dolby Vision.
 	HDRReject []hdr.Tier
+	// HDRTies groups tiers that rank as one: tiers the playback device
+	// renders identically (ADR 0026 §5), so an upgrade between them is not
+	// one and a file is not replaced by its equal. Each group ranks at its
+	// best member's place in HDROrder.
+	HDRTies [][]hdr.Tier
 	// Preflight says how a release's HDR is measured before it is grabbed
 	// (ADR 0026 §6). It applies whenever the profile has an HDR order or
 	// refusal list — the only time a measurement can change a decision.
@@ -309,10 +314,11 @@ func (p Profile) HDRRank(t hdr.Tier) int {
 	worst := -1
 	for _, cand := range t.Possible() {
 		r := unlisted
-		for i, x := range p.HDROrder {
-			if x == cand {
-				r = i
-				break
+		for _, member := range p.tiedWith(cand) {
+			for i, x := range p.HDROrder {
+				if x == member && i < r {
+					r = i
+				}
 			}
 		}
 		if r > worst {
@@ -323,6 +329,16 @@ func (p Profile) HDRRank(t hdr.Tier) int {
 		return unlisted
 	}
 	return worst
+}
+
+// tiedWith returns the tiers ranked as one with t, t included.
+func (p Profile) tiedWith(t hdr.Tier) []hdr.Tier {
+	for _, group := range p.HDRTies {
+		if slices.Contains(group, t) {
+			return group
+		}
+	}
+	return []hdr.Tier{t}
 }
 
 // HDRAcceptable reports whether a release's HDR is one the profile would take.
@@ -495,11 +511,7 @@ func (p Profile) Sentence() string {
 		s += "; " + language.DisplayList(p.Languages) + " audio required"
 	}
 	if len(p.HDROrder) > 0 {
-		labels := make([]string, len(p.HDROrder))
-		for i, t := range p.HDROrder {
-			labels[i] = t.Label()
-		}
-		s += "; prefers " + strings.Join(labels, " › ")
+		s += "; prefers " + p.hdrOrderText()
 	}
 	if len(p.HDRReject) > 0 {
 		labels := make([]string, len(p.HDRReject))
@@ -512,6 +524,23 @@ func (p Profile) Sentence() string {
 		s += "; no upgrades once a file is present"
 	}
 	return s
+}
+
+// hdrOrderText renders the HDR order with ties joined by "=":
+// "DV P7 FEL › DV P7 MEL = DV P8 › HDR10".
+func (p Profile) hdrOrderText() string {
+	var b strings.Builder
+	for i, t := range p.HDROrder {
+		if i > 0 {
+			sep := " › "
+			if prev := p.HDROrder[i-1]; slices.Contains(p.tiedWith(prev), t) && len(p.tiedWith(t)) > 1 {
+				sep = " = "
+			}
+			b.WriteString(sep)
+		}
+		b.WriteString(t.Label())
+	}
+	return b.String()
 }
 
 // DefaultProfiles are seeded at migration time; IDs are stable because

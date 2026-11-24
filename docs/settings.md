@@ -574,6 +574,17 @@ profile 5 from 8.1, before anything downloads. The settings:
   missing articles, either ranks by its name below every measured release
   (default) or is skipped.
 
+**Derive order from device.** With a plurx connection under Notifications,
+Curator can read what each of the household's signed-in playback devices
+decodes (plurx reports what every client sends with its playback requests)
+and build the order from it: tiers the device shows identically are **tied**
+(written `DV P7 FEL = DV P7 MEL = DV P8`), so Curator neither hunts an
+upgrade the screen cannot show nor replaces a file with its equal, and tiers
+it shows wrongly (profile 5 on a screen without Dolby Vision) are refused.
+The plurx key needs the `playback:read` scope besides `scan:trigger`; the
+panel says so when it is missing. Editing the order by hand afterwards
+clears the ties.
+
 A probed remux also teaches Curator the title's **disc master**: once any
 remux measured FEL, the item says "FEL on disc", and a later MEL remux of it
 is flagged as a different master.

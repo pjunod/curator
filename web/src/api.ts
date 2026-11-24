@@ -789,6 +789,8 @@ export interface QualityProfile {
   hdrOrder?: HDRTier[]
   /** HDR tiers the profile never takes. */
   hdrReject?: HDRTier[]
+  /** Groups of tiers that rank as one: the device renders them identically. */
+  hdrTies?: HDRTier[][]
   /** How releases are measured before grabbing; applies with an HDR order or refusals. */
   preflight?: PreflightPolicy
   sentence: string
@@ -880,7 +882,33 @@ export interface ProfileInput {
   /** Tiers from GET /hdr-tiers, best first; empty for no opinion. */
   hdrOrder?: HDRTier[]
   hdrReject?: HDRTier[]
+  hdrTies?: HDRTier[][]
   preflight?: PreflightPolicy
+}
+
+/** One playback device a plurx connection reports, and the order it suggests (ADR 0026). */
+export interface HDRDevice {
+  source: string
+  id: string
+  user: string
+  device: string
+  client: string
+  lastSeenAt: number
+  dolbyVision: boolean
+  /** Decodes a profile 7 enhancement layer. */
+  fel: boolean
+  profile5: boolean
+  hdr10: boolean
+  hlg: boolean
+  hdr10plus: boolean
+  hdrOrder: HDRTier[]
+  hdrTies: HDRTier[][]
+  hdrReject: HDRTier[]
+}
+
+export interface HDRDevices {
+  devices: HDRDevice[]
+  errors: { source: string; message: string }[]
 }
 
 /** One selectable audio language, from GET /languages (ADR 0022). */
@@ -1102,6 +1130,8 @@ export const deleteProfile = (id: number) => send('DELETE', `/profiles/${id}`)
 export const listLanguages = () => get<LanguageOption[]>('/languages')
 /** The HDR tiers a profile may order or refuse, in default order (ADR 0026). */
 export const listHDRTiers = () => get<HDRTierOption[]>('/hdr-tiers')
+/** Playback devices from the plurx connections, each with its derived HDR order. */
+export const listHDRDevices = () => get<HDRDevices>('/hdr/devices')
 export const getIndexers = () => get<Indexer[]>('/indexers')
 export const updateIndexerBudget = (id: number, dailyRequestCap: number) => send<Indexer>('PATCH', `/indexers/${id}`, { dailyRequestCap })
 export const addIndexer = (i: IndexerInput) => send<Indexer>('POST', '/indexers', i)
