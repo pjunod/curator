@@ -4214,7 +4214,7 @@ type PreflightPolicy struct {
 	// SkipUnreadable Refuse a release whose head cannot be read instead of ranking it by its name.
 	SkipUnreadable *bool `json:"skipUnreadable,omitempty"`
 
-	// Top How many of the best-ranked releases to probe; 0 = default (5), 1000 = every one.
+	// Top How many of the best-ranked releases to probe; 0 = default (5), at most 10.
 	Top *int `json:"top,omitempty"`
 }
 
