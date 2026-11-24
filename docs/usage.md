@@ -958,6 +958,13 @@ first frame's RPU gives FEL versus MEL and the content-mapping version
 (CM 2.9 or 4.0). Files measured before this release are measured again by
 the next scan when they are HEVC, so an existing library fills in on its own.
 
+In **interactive search**, a release's HDR column shows what its name
+claims as a dashed badge with a question mark (`DV P7?`) and, when the
+profile ranks HDR, what a pre-flight probe measured as a solid badge
+(`DV P7 FEL`). Click the solid badge for the evidence: what Runner read, the
+configuration record, and the first RPU. A release Runner could not peek at
+says why ("Can't peek · encrypted") and ranks below measured ones.
+
 When a grabbed release turns out not to be what it claimed, the import
 still proceeds — the file is what it is — and a `quality_mismatch` event
 is recorded against the release with the measured truth beside the claim.

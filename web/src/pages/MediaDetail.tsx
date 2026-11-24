@@ -1,3 +1,4 @@
+import { DolbyVisionFacts } from '../HDRBadges'
 import { SERIES_MONITOR_MODES, monitorLabel, type SeriesMonitorMode } from '../monitoring'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { MouseEvent } from 'react'
@@ -802,6 +803,16 @@ function QualityFacts({ m, profile }: { m: MediaItemDetail; profile?: QualityPro
         </span>
       )}
 
+      {m.discEnhancementLayer && (
+        <span
+          className="hdr-badge claim disc-master"
+          data-testid="disc-master"
+          title="What measurement has shown about this title's Dolby Vision disc master. Remux searches expect it, and a release that measures otherwise is flagged as a different master."
+        >
+          {m.discEnhancementLayer.toUpperCase()} on disc
+        </span>
+      )}
+
       {s && (
         <span className={`qf-state ${s.cls}`} title={s.why}>
           {s.word}
@@ -1141,6 +1152,14 @@ function FilesPanel({ item: m, onChanged }: { item: MediaItemDetail; onChanged: 
                       <td className="mono">
                         {f.path}
                         {f.facts ? <div className="file-facts">{f.facts}</div> : null}
+                        {f.dolbyVision ? (
+                          <details className="file-dovi">
+                            <summary>Dolby Vision · {f.dolbyVision.label}</summary>
+                            <div className="probe-evidence">
+                              <DolbyVisionFacts dv={f.dolbyVision} />
+                            </div>
+                          </details>
+                        ) : null}
                         {/* The reason goes next to the file, not in a tooltip. A
                             badge saying "does not add up" without the arithmetic
                             is just a shrug with better typography. */}

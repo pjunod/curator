@@ -530,6 +530,54 @@ choose **Edit → Download priority**, and set an override. **Profile default**
 clears that override; future changes to the profile then apply again. An item
 override applies to its primary and additional quality copies.
 
+### HDR & Dolby Vision order
+
+A film or TV profile can rank HDR presentations (ADR 0026). **Rank by HDR
+and Dolby Vision** starts from the order most people want for a UHD
+library, which you can reorder, trim, or extend:
+
+| Tier | What it is |
+|---|---|
+| DV P7 FEL | Dual-layer Dolby Vision with a full enhancement layer: extra picture data. |
+| DV P7 MEL | Dual-layer with a minimal enhancement layer: the same picture as 8.1 on most players. |
+| DV P8 | Single-layer Dolby Vision over an HDR10 (8.1) or HLG (8.4) base. |
+| HDR10+ | Dynamic HDR10 metadata, no Dolby Vision. |
+| HDR10 | Static HDR metadata. |
+| HLG | Broadcast HDR. |
+| DV P5 | Dolby Vision with no HDR10 base: wrong colours on anything without Dolby Vision. |
+| SDR | No HDR. |
+
+The order **breaks ties after resolution and source**; it never trades them
+away, so a 2160p SDR release still beats a 1080p Dolby Vision one under a
+2160p target. A file below the first tier keeps the item wanted while
+upgrades are on, and a release that ranks higher on HDR at the same quality
+is an upgrade. A file whose HDR was never measured counts as fine, so
+nothing is replaced on a guess.
+
+**Reject** lists tiers the profile never takes. A release is refused only
+when it was *measured* as one, or its name states it outright ("DV.P5"):
+a web release tagged just "DV" is *probably* profile 5, and probably is
+not enough to refuse it on.
+
+**Pre-flight probe.** With an HDR order or a refusal list set, Curator asks
+Runner (nzbd with the `release-probe-v1` capability) for the first bytes of
+the best releases before grabbing, and measures them with the same prober it
+runs on imported files. That is how FEL is told from MEL, and a mislabelled
+profile 5 from 8.1, before anything downloads. The settings:
+
+- **Probe top candidates**: 5 (default), 10, or all the releases the
+  profile would take.
+- **Bytes per probe**: 4 MB reads the container headers and the first frame,
+  where the Dolby Vision RPU lives; 1 MB reads headers only (profile and
+  layers, not FEL versus MEL).
+- **When the probe can't read**: an encrypted or compressed archive, or
+  missing articles, either ranks by its name below every measured release
+  (default) or is skipped.
+
+A probed remux also teaches Curator the title's **disc master**: once any
+remux measured FEL, the item says "FEL on disc", and a later MEL remux of it
+is flagged as a different master.
+
 ### Defaults for new items
 
 Under the profile table, separate defaults for **Movies**, **Series**,

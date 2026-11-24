@@ -5,6 +5,7 @@ import type { LanguageOption, ReleaseCandidate } from '../api'
 import { fmtBytes, grabRelease, listLanguages, searchReleases } from '../api'
 import { releaseLanguagesLabel } from '../language'
 import { ActionDialog, ActionNotice, focusActionTrigger } from '../ActionDialog'
+import { HDRCell, ProbeEvidencePanel, probeSummary } from '../HDRBadges'
 import { PageSizePicker, Pager, clampPage, sliceForPage } from '../Pager'
 
 // ReleaseSearch is the interactive search panel.
@@ -181,6 +182,13 @@ export function ReleaseSearch(props: {
             <Pager page={current} size={size} total={filtered.length} onPage={setPage} />
           </div>
 
+          {probeSummary(all) && (
+            <p className="muted release-probe-summary" data-testid="probe-summary">
+              <span className="hdr-badge claim">DV P7?</span> inferred from name{' '}
+              <span className="hdr-badge measured">DV P7 FEL</span> measured by pre-flight probe · {probeSummary(all)}
+            </p>
+          )}
+
           {filtered.length === 0 ? (
             <p className="muted">
               Nothing matches that filter.{' '}
@@ -194,6 +202,7 @@ export function ReleaseSearch(props: {
                   <tr>
                     <th>Release</th>
                     <th>Quality</th>
+                    <th title="What the name claims (dashed, ?) and what a pre-flight probe measured (solid)">HDR</th>
                     <th className="num">Size</th>
                     <th className="num">Age</th>
                     <th className="num">Seed</th>
@@ -257,12 +266,19 @@ function ReleaseRow({
   onGrab: (event: SyntheticEvent<HTMLButtonElement>) => void
 }) {
   const [expanded, setExpanded] = useState(false)
+  const [evidence, setEvidence] = useState(false)
+  const evidenceTrigger = useRef<HTMLButtonElement>(null)
+  const closeEvidence = () => {
+    setEvidence(false)
+    evidenceTrigger.current?.focus()
+  }
   const [first, ...rest] = c.rejections
   // Only a release that advertises something other than plain English earns
   // a label — that is the ordinary case, and labelling it would be noise.
   const langs = releaseLanguagesLabel(c.languages, languages)
 
   return (
+    <>
     <tr className={c.accepted ? '' : 'row-rejected'}>
       <td className="release-description">
         <div className="release-title mono">
@@ -314,6 +330,9 @@ function ReleaseRow({
           </div>
         )}
       </td>
+      <td data-label="HDR">
+        <HDRCell c={c} open={evidence} onToggle={() => setEvidence((v) => !v)} triggerRef={evidenceTrigger} />
+      </td>
       <td className="muted num" data-label="Size">{fmtBytes(c.size)}</td>
       <td className="muted num" data-label="Age">{c.age || '—'}</td>
       <td className="muted num" data-label="Seed">{c.protocol === 'torrent' ? c.seeders : '—'}</td>
@@ -329,5 +348,13 @@ function ReleaseRow({
         </button>
       </td>
     </tr>
+    {evidence && c.probe && (
+      <tr className="probe-evidence-row">
+        <td colSpan={8}>
+          <ProbeEvidencePanel probe={c.probe} onClose={closeEvidence} />
+        </td>
+      </tr>
+    )}
+    </>
   )
 }

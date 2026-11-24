@@ -1,18 +1,20 @@
 import { ActionDialog, ActionNotice, focusActionTrigger } from '../ActionDialog'
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import type { DefaultProfiles, LanguageOption, ProfileInput, QualityProfile } from '../api'
+import type { DefaultProfiles, HDRTierOption, LanguageOption, ProfileInput, QualityProfile } from '../api'
 import {
   createProfile,
   deleteProfile,
   getProfiles,
   getSettings,
+  listHDRTiers,
   listLanguages,
   updateProfile,
   updateSettings,
 } from '../api'
 import { DOWNLOAD_PRIORITIES, downloadPriorityLabel } from '../downloadPriority'
 import { buildProfileSentence } from '../profileSentence'
+import { HDRPreferences, labelOf, type HDRDraft } from '../HDRPreferences'
 
 // The quality vocabulary, worst to best on each axis. Kept here rather than
 // fetched because it is a property of the model, not of the deployment — and
@@ -75,6 +77,7 @@ const blankDraft = (): Draft => ({
   upgradesAllowed: true,
   downloadPriority: 0,
   audioLanguages: [],
+  hdr: { hdrOrder: [], hdrReject: [], preflight: {} },
 })
 
 interface Draft {
@@ -89,6 +92,8 @@ interface Draft {
   downloadPriority: number
   /** Required audio languages, canonical codes; empty = no requirement (ADR 0022). */
   audioLanguages: string[]
+  /** HDR order, refusals and pre-flight policy (ADR 0026); video only. */
+  hdr: HDRDraft
 }
 
 function draftOf(p: QualityProfile): Draft {
@@ -104,6 +109,7 @@ function draftOf(p: QualityProfile): Draft {
     upgradesAllowed: p.upgradesAllowed,
     downloadPriority: p.downloadPriority,
     audioLanguages: p.audioLanguages ?? [],
+    hdr: { hdrOrder: p.hdrOrder ?? [], hdrReject: p.hdrReject ?? [], preflight: p.preflight ?? {} },
   }
 }
 
@@ -117,6 +123,10 @@ function toInput(d: Draft): ProfileInput {
     // Only video has soundtracks to require; a draft that switched kind must
     // not carry a stale requirement across.
     audioLanguages: d.axis === 'video' ? d.audioLanguages : [],
+    // A book has no picture: the same reasoning, for HDR.
+    hdrOrder: d.axis === 'video' ? d.hdr.hdrOrder : [],
+    hdrReject: d.axis === 'video' ? d.hdr.hdrReject : [],
+    preflight: d.axis === 'video' ? d.hdr.preflight : {},
   }
   if (d.hasFloor) {
     body.floor = {
@@ -132,7 +142,7 @@ function toInput(d: Draft): ProfileInput {
 // the authority — every saved profile renders the sentence the server sent —
 // but a picker whose consequence you only learn after saving is a guessing
 // game, and guessing games are how "Any" happened.
-function previewSentence(d: Draft, languages?: LanguageOption[]): string {
+function previewSentence(d: Draft, languages?: LanguageOption[], tiers?: HDRTierOption[]): string {
   const label = (source: string, resolution: number) => {
     const name = sourcesFor(d.axis).find((s) => s.value === source)?.label ?? source
     return resolution > 0 ? `${name} ${resolution}p` : name
@@ -146,6 +156,8 @@ function previewSentence(d: Draft, languages?: LanguageOption[]): string {
         : undefined,
       upgradesAllowed: d.upgradesAllowed,
       audioLanguages: d.axis === 'video' ? d.audioLanguages : [],
+      hdrOrder: d.axis === 'video' ? d.hdr.hdrOrder.map((t) => labelOf(tiers, t)) : [],
+      hdrReject: d.axis === 'video' ? d.hdr.hdrReject.map((t) => labelOf(tiers, t)) : [],
     },
     languages,
   )
@@ -310,6 +322,7 @@ function ProfileForm(props: {
   // The vocabulary is the server's (ADR 0022), fetched once and kept: it is a
   // property of the build, not of anything the user can change.
   const languages = useQuery({ queryKey: ['languages'], queryFn: listLanguages, staleTime: Infinity })
+  const hdrTiers = useQuery({ queryKey: ['hdr-tiers'], queryFn: listHDRTiers, staleTime: Infinity })
 
   return (
     <div className="profile-form">
@@ -455,8 +468,12 @@ function ProfileForm(props: {
         />
       )}
 
+      {d.axis === 'video' && hdrTiers.data && (
+        <HDRPreferences value={d.hdr} options={hdrTiers.data} onChange={(hdr) => set({ hdr })} />
+      )}
+
       <p className="profile-sentence" data-testid="profile-preview">
-        <strong>{d.name.trim() || 'This profile'}</strong> — {previewSentence(d, languages.data)}
+        <strong>{d.name.trim() || 'This profile'}</strong> — {previewSentence(d, languages.data, hdrTiers.data)}
       </p>
 
       <div className="form-actions">
