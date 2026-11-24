@@ -455,6 +455,10 @@ type Candidate struct {
 	// only an advertised size too small to hold what the name claims.
 	Warning         string `json:"warning,omitempty"`
 	BlacklistReason string `json:"blacklistReason,omitempty"`
+	// Probe is the pre-flight evidence (ADR 0026 §6), when one ran.
+	Probe *ProbeEvidence `json:"probe,omitempty"`
+
+	parsed parser.Parsed
 }
 
 type candidateRecord struct {
@@ -613,7 +617,7 @@ func (s *Service) SearchCopyDetailed(ctx context.Context, itemID, copyID int64, 
 	for _, r := range releases {
 		p := parser.Parse(r.Title)
 		c := Candidate{Release: r, Quality: p.Quality, QualityStr: p.Quality.Display(),
-			Languages: p.Languages, HDR: claimedHDR(p.HDR),
+			Languages: p.Languages, HDR: claimedHDR(p.HDR), parsed: p,
 			Score: format.Score(r.Title, formats), Formats: format.Matches(r.Title, formats)}
 		c.BlacklistReason, _, err = s.db.BlocklistReason(ctx, r.Title, r.Indexer)
 		if err != nil {
@@ -653,6 +657,17 @@ func (s *Service) SearchCopyDetailed(ctx context.Context, itemID, copyID int64, 
 		out = append(out, c)
 	}
 
+	sortCandidates(out, profile)
+	if top, bytes, ok := profile.Probes(); ok {
+		s.preflightCandidates(ctx, out, item, target, profile, top, bytes)
+		sortCandidates(out, profile)
+	}
+	return out, status, nil
+}
+
+// sortCandidates orders the search list: accepted first, then quality rank,
+// then the profile's HDR order (ADR 0026 §4), custom-format score, seeders.
+func sortCandidates(out []Candidate, profile quality.Profile) {
 	sort.SliceStable(out, func(i, j int) bool {
 		if out[i].Accepted != out[j].Accepted {
 			return out[i].Accepted
@@ -671,7 +686,6 @@ func (s *Service) SearchCopyDetailed(ctx context.Context, itemID, copyID int64, 
 		}
 		return out[i].Release.Seeders > out[j].Release.Seeders
 	})
-	return out, status, nil
 }
 
 // releaseOf is what the decision engine judges a parsed name by: the quality

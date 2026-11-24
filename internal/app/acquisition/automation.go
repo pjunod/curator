@@ -530,6 +530,7 @@ func (s *Service) searchAndGrabBestReserved(ctx context.Context, w domain.Wantab
 
 	type scored struct {
 		r        ports.Release
+		p        parser.Parsed
 		q        quality.Quality
 		hdr      hdr.Evidence
 		score    int
@@ -567,7 +568,7 @@ func (s *Service) searchAndGrabBestReserved(ctx context.Context, w domain.Wantab
 		}
 		return a.r.Seeders > b.r.Seeders
 	}
-	var best *scored
+	var accepted []*scored
 	for _, r := range deduplicateReleases(releases) {
 		tally.Seen++
 
@@ -591,14 +592,58 @@ func (s *Service) searchAndGrabBestReserved(ctx context.Context, w domain.Wantab
 			continue
 		}
 		tally.Accepted++
-		cand := &scored{r: r, q: p.Quality, hdr: hdr.Claimed(p.HDR), score: format.Score(r.Title, formats), evidence: matchEvidence(p, w, r, match)}
-		if best == nil || better(cand, best) {
-			best = cand
+		accepted = append(accepted, &scored{r: r, p: p, q: p.Quality, hdr: hdr.Claimed(p.HDR), score: format.Score(r.Title, formats), evidence: matchEvidence(p, w, r, match)})
+	}
+	sort.SliceStable(accepted, func(i, j int) bool { return better(accepted[i], accepted[j]) })
+	// Pre-flight (ADR 0026 §6): measure the best few before choosing, and
+	// choose on the measurement.
+	if top, bytes, ok := profile.Probes(); ok && len(accepted) > 0 {
+		if prober, ok := s.releaseProber(ctx); ok {
+			var picked []*scored
+			for _, c := range accepted {
+				if len(picked) < top && c.r.Protocol == ports.ProtocolUsenet {
+					picked = append(picked, c)
+				}
+			}
+			rels := make([]ports.Release, len(picked))
+			for i, c := range picked {
+				rels[i] = c.r
+			}
+			evidence := s.probeReleases(ctx, prober, rels, bytes)
+			drop := map[*scored]bool{}
+			for i, c := range picked {
+				ev := evidence[i]
+				if ev == nil {
+					continue
+				}
+				s.recordDiscMaster(ctx, w.MediaItemID(), ev)
+				switch {
+				case ev.measured():
+					if !decision.Decide(measuredRelease(c.p, ev), w, profile).Accepted {
+						s.log.Info("auto search: declined on the measured HDR", "release", c.r.Title, "tier", string(ev.Tier))
+						drop[c] = true
+						continue
+					}
+					c.hdr = hdr.Measure(ev.Tier)
+				case profile.Preflight.SkipUnreadable:
+					s.log.Info("auto search: declined, could not measure", "release", c.r.Title, "reason", ev.Reason)
+					drop[c] = true
+				}
+			}
+			kept := accepted[:0]
+			for _, c := range accepted {
+				if !drop[c] {
+					kept = append(kept, c)
+				}
+			}
+			accepted = kept
+			sort.SliceStable(accepted, func(i, j int) bool { return better(accepted[i], accepted[j]) })
 		}
 	}
-	if best == nil {
+	if len(accepted) == 0 {
 		return tally, nil
 	}
+	best := accepted[0]
 	if beforeGrab != nil {
 		if err := beforeGrab(); err != nil {
 			return tally, err

@@ -249,6 +249,51 @@ type Profile struct {
 	// HDRReject lists tiers this profile never takes, such as Dolby Vision
 	// profile 5 for a library played on devices without Dolby Vision.
 	HDRReject []hdr.Tier
+	// Preflight says how a release's HDR is measured before it is grabbed
+	// (ADR 0026 §6). It applies whenever the profile has an HDR order or
+	// refusal list — the only time a measurement can change a decision.
+	Preflight Preflight
+}
+
+// Preflight is the pre-flight probe policy of a profile.
+type Preflight struct {
+	// Top is how many of the best-ranked releases to probe; 0 means the
+	// default, ProbeAll every release the profile would take.
+	Top int
+	// Bytes is how much of each release's head to read; 0 means the default.
+	Bytes int64
+	// SkipUnreadable refuses a release whose head could not be read
+	// (encrypted, compressed, missing articles) instead of ranking it by its
+	// name below every measured one.
+	SkipUnreadable bool
+}
+
+// Pre-flight defaults: five releases, 4 MiB each — the container headers and
+// the first frame, where the Dolby Vision RPU lives.
+const (
+	DefaultProbeTop   = 5
+	DefaultProbeBytes = 4 << 20
+	ProbeAll          = 1000
+	MaxProbeBytes     = 16 << 20
+)
+
+// Probes reports whether pre-flight probing applies to this profile, and how
+// many releases and bytes each.
+func (p Profile) Probes() (top int, bytes int64, ok bool) {
+	if len(p.HDROrder) == 0 && len(p.HDRReject) == 0 {
+		return 0, 0, false
+	}
+	top, bytes = p.Preflight.Top, p.Preflight.Bytes
+	if top <= 0 {
+		top = DefaultProbeTop
+	}
+	if bytes <= 0 {
+		bytes = DefaultProbeBytes
+	}
+	if bytes > MaxProbeBytes {
+		bytes = MaxProbeBytes
+	}
+	return top, bytes, true
 }
 
 // HDRRank is a tier's place in the HDR order: 0 is best, and a tier the order

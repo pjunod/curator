@@ -34,8 +34,15 @@ type profileDef struct {
 	Languages []string `json:"languages,omitempty"`
 	// HDROrder and HDRReject are the ADR 0026 HDR preferences, omitted when
 	// empty for the same reason.
-	HDROrder  []hdr.Tier `json:"hdrOrder,omitempty"`
-	HDRReject []hdr.Tier `json:"hdrReject,omitempty"`
+	HDROrder  []hdr.Tier    `json:"hdrOrder,omitempty"`
+	HDRReject []hdr.Tier    `json:"hdrReject,omitempty"`
+	Preflight *preflightDef `json:"preflight,omitempty"`
+}
+
+type preflightDef struct {
+	Top            int   `json:"top,omitempty"`
+	Bytes          int64 `json:"bytes,omitempty"`
+	SkipUnreadable bool  `json:"skipUnreadable,omitempty"`
 }
 
 // validTiers keeps the tiers a profile may name, in order, once each. A tier
@@ -70,6 +77,9 @@ func profileFromRow(r sqlitegen.QualityProfile) (quality.Profile, error) {
 		Target: def.Target.quality(), DownloadPriority: def.DownloadPriority,
 		Languages: language.Normalize(def.Languages),
 		HDROrder:  validTiers(def.HDROrder), HDRReject: validTiers(def.HDRReject),
+	}
+	if def.Preflight != nil {
+		p.Preflight = quality.Preflight{Top: def.Preflight.Top, Bytes: def.Preflight.Bytes, SkipUnreadable: def.Preflight.SkipUnreadable}
 	}
 	if def.Floor != nil {
 		f := def.Floor.quality()
@@ -117,6 +127,9 @@ func profileDefinition(p quality.Profile) (string, error) {
 		Languages:        language.Normalize(p.Languages),
 		HDROrder:         validTiers(p.HDROrder),
 		HDRReject:        validTiers(p.HDRReject),
+	}
+	if p.Preflight != (quality.Preflight{}) {
+		def.Preflight = &preflightDef{Top: p.Preflight.Top, Bytes: p.Preflight.Bytes, SkipUnreadable: p.Preflight.SkipUnreadable}
 	}
 	if p.Floor != nil {
 		def.Floor = &qualityDef{Source: string(p.Floor.Source), Resolution: p.Floor.Resolution}

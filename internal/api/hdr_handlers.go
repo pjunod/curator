@@ -9,6 +9,7 @@ import (
 	"github.com/pjunod/monarr/internal/app/acquisition"
 	"github.com/pjunod/monarr/internal/domain/hdr"
 	"github.com/pjunod/monarr/internal/domain/mediainfo"
+	"github.com/pjunod/monarr/internal/domain/quality"
 )
 
 // ListHDRTiers implements GET /hdr-tiers: the ADR 0026 vocabulary in the
@@ -94,6 +95,75 @@ func dolbyVisionDTO(info mediainfo.Info) *apigen.DolbyVision {
 	if d.CMVersion != "" {
 		cm := apigen.DolbyVisionCmVersion(d.CMVersion)
 		out.CmVersion = &cm
+	}
+	return out
+}
+
+func preflightDTO(p quality.Preflight) *apigen.PreflightPolicy {
+	if p == (quality.Preflight{}) {
+		return nil
+	}
+	top, bytes, skip := p.Top, p.Bytes, p.SkipUnreadable
+	return &apigen.PreflightPolicy{Top: &top, Bytes: &bytes, SkipUnreadable: &skip}
+}
+
+func preflightFromInput(in *apigen.PreflightPolicy) (quality.Preflight, error) {
+	var p quality.Preflight
+	if in == nil {
+		return p, nil
+	}
+	if in.Top != nil {
+		p.Top = *in.Top
+	}
+	if in.Bytes != nil {
+		p.Bytes = *in.Bytes
+	}
+	if in.SkipUnreadable != nil {
+		p.SkipUnreadable = *in.SkipUnreadable
+	}
+	if p.Top < 0 || p.Top > quality.ProbeAll {
+		return p, fmt.Errorf("preflight.top must be between 0 and %d", quality.ProbeAll)
+	}
+	if p.Bytes < 0 || p.Bytes > quality.MaxProbeBytes {
+		return p, fmt.Errorf("preflight.bytes must be between 0 and %d", quality.MaxProbeBytes)
+	}
+	return p, nil
+}
+
+func probeEvidenceDTO(ev *acquisition.ProbeEvidence) *apigen.ProbeEvidence {
+	if ev == nil {
+		return nil
+	}
+	out := &apigen.ProbeEvidence{Status: apigen.ProbeEvidenceStatus(ev.Status)}
+	str := func(s string) *string {
+		if s == "" {
+			return nil
+		}
+		return &s
+	}
+	num := func(n int) *int {
+		if n == 0 {
+			return nil
+		}
+		return &n
+	}
+	out.Reason, out.Detail, out.File = str(ev.Reason), str(ev.Detail), str(ev.File)
+	out.Container, out.Facts = str(ev.Container), str(ev.Facts)
+	out.Articles, out.Missing, out.Bytes = num(ev.Articles), num(ev.Missing), num(ev.Bytes)
+	if len(ev.Path) > 0 {
+		path := append([]string(nil), ev.Path...)
+		out.Path = &path
+	}
+	if ev.Millis > 0 {
+		ms := ev.Millis
+		out.Millis = &ms
+	}
+	if ev.Tier != "" {
+		tier := apigen.HDRTier(ev.Tier)
+		out.Tier = &tier
+	}
+	if ev.DoVi != nil {
+		out.DolbyVision = dolbyVisionDTO(mediainfo.Info{Video: &mediainfo.VideoInfo{DoVi: ev.DoVi}})
 	}
 	return out
 }

@@ -797,6 +797,27 @@ func (e PlurxWatchedEventKind) Valid() bool {
 	}
 }
 
+// Defines values for ProbeEvidenceStatus.
+const (
+	ProbeEvidenceStatusFailed      ProbeEvidenceStatus = "failed"
+	ProbeEvidenceStatusMeasured    ProbeEvidenceStatus = "measured"
+	ProbeEvidenceStatusUnavailable ProbeEvidenceStatus = "unavailable"
+)
+
+// Valid indicates whether the value is a known member of the ProbeEvidenceStatus enum.
+func (e ProbeEvidenceStatus) Valid() bool {
+	switch e {
+	case ProbeEvidenceStatusFailed:
+		return true
+	case ProbeEvidenceStatusMeasured:
+		return true
+	case ProbeEvidenceStatusUnavailable:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ProposalConfidence.
 const (
 	ProposalConfidenceAmbiguous ProposalConfidence = "ambiguous"
@@ -2796,6 +2817,52 @@ type PlurxWatchedEvent struct {
 // PlurxWatchedEventKind defines model for PlurxWatchedEvent.Kind.
 type PlurxWatchedEventKind string
 
+// PreflightPolicy How a profile measures releases before grabbing them (ADR 0026). It applies whenever the profile has an HDR order or refusal list.
+type PreflightPolicy struct {
+	// Bytes Head size per probe; 0 = default (4 MiB), at most 16 MiB.
+	Bytes *int64 `json:"bytes,omitempty"`
+
+	// SkipUnreadable Refuse a release whose head cannot be read instead of ranking it by its name.
+	SkipUnreadable *bool `json:"skipUnreadable,omitempty"`
+
+	// Top How many of the best-ranked releases to probe; 0 = default (5), 1000 = every one.
+	Top *int `json:"top,omitempty"`
+}
+
+// ProbeEvidence What a pre-flight probe found (ADR 0026): Runner read the head of the release's main file and Curator measured it with the prober it runs on imported files.
+type ProbeEvidence struct {
+	Articles  *int    `json:"articles,omitempty"`
+	Bytes     *int    `json:"bytes,omitempty"`
+	Container *string `json:"container,omitempty"`
+	Detail    *string `json:"detail,omitempty"`
+
+	// DolbyVision The measured Dolby Vision record of a file (ADR 0026).
+	DolbyVision *DolbyVision `json:"dolbyVision,omitempty"`
+
+	// Facts The measured facts line
+	Facts *string `json:"facts,omitempty"`
+
+	// File The inner media file Runner read.
+	File    *string `json:"file,omitempty"`
+	Millis  *int64  `json:"millis,omitempty"`
+	Missing *int    `json:"missing,omitempty"`
+
+	// Path How the bytes were reached, e.g. ["yenc", "rar-store"].
+	Path *[]string `json:"path,omitempty"`
+
+	// Reason encrypted, compressed, missing_articles, no_media or unreadable.
+	Reason *string `json:"reason,omitempty"`
+
+	// Status unavailable = Runner said why it could not read the head; failed = no answer.
+	Status ProbeEvidenceStatus `json:"status"`
+
+	// Tier An HDR presentation (ADR 0026). Profiles name the first eight; dv-p7 (EL type unknown), dv (profile unknown) and the empty string (nothing known) appear only as observations.
+	Tier *HDRTier `json:"tier,omitempty"`
+}
+
+// ProbeEvidenceStatus unavailable = Runner said why it could not read the head; failed = no answer.
+type ProbeEvidenceStatus string
+
 // ProfileInput defines model for ProfileInput.
 type ProfileInput struct {
 	// AudioLanguages Required audio languages, any one of which satisfies (ADR 0022). Codes from GET /languages. Omit or send empty for no requirement.
@@ -2809,10 +2876,13 @@ type ProfileInput struct {
 	HdrOrder *[]HDRTier `json:"hdrOrder,omitempty"`
 
 	// HdrReject HDR tiers to refuse, from GET /hdr-tiers.
-	HdrReject       *[]HDRTier   `json:"hdrReject,omitempty"`
-	Name            string       `json:"name"`
-	Target          QualityInput `json:"target"`
-	UpgradesAllowed *bool        `json:"upgradesAllowed,omitempty"`
+	HdrReject *[]HDRTier `json:"hdrReject,omitempty"`
+	Name      string     `json:"name"`
+
+	// Preflight How a profile measures releases before grabbing them (ADR 0026). It applies whenever the profile has an HDR order or refusal list.
+	Preflight       *PreflightPolicy `json:"preflight,omitempty"`
+	Target          QualityInput     `json:"target"`
+	UpgradesAllowed *bool            `json:"upgradesAllowed,omitempty"`
 }
 
 // Proposal defines model for Proposal.
@@ -2875,6 +2945,9 @@ type QualityProfile struct {
 	// InUse How many items, copies and import lists reference this profile. Non-zero means DELETE will be refused with 409.
 	InUse *int   `json:"inUse,omitempty"`
 	Name  string `json:"name"`
+
+	// Preflight How a profile measures releases before grabbing them (ADR 0026). It applies whenever the profile has an HDR order or refusal list.
+	Preflight *PreflightPolicy `json:"preflight,omitempty"`
 
 	// Sentence The profile rendered as the one true sentence it now is -- "hunts the best release up to WEB-DL 1080p, then stops". Server-rendered so every client says exactly the same thing about a profile.
 	Sentence        string  `json:"sentence"`
@@ -3157,9 +3230,12 @@ type ReleaseCandidate struct {
 
 	// MeasuredHdr One description of a release's HDR: what its name claims, or what a pre-flight probe of its first bytes measured (ADR 0026).
 	MeasuredHdr *ReleaseHDR `json:"measuredHdr,omitempty"`
-	Protocol    string      `json:"protocol"`
-	Quality     string      `json:"quality"`
-	Rejections  []Rejection `json:"rejections"`
+
+	// Probe What a pre-flight probe found (ADR 0026): Runner read the head of the release's main file and Curator measured it with the prober it runs on imported files.
+	Probe      *ProbeEvidence `json:"probe,omitempty"`
+	Protocol   string         `json:"protocol"`
+	Quality    string         `json:"quality"`
+	Rejections []Rejection    `json:"rejections"`
 
 	// Score Custom-format score sum (Phase 5).
 	Score   int    `json:"score"`

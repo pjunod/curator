@@ -271,6 +271,7 @@ func profileDTO(p quality.Profile, inUse int64) apigen.QualityProfile {
 		qp.AudioLanguages = &langs
 	}
 	qp.HdrOrder, qp.HdrReject = hdrTiersDTO(p.HDROrder), hdrTiersDTO(p.HDRReject)
+	qp.Preflight = preflightDTO(p.Preflight)
 	if p.Floor != nil {
 		f := qualityDTO(*p.Floor)
 		qp.Floor = &f
@@ -342,6 +343,9 @@ func profileFromInput(in apigen.ProfileInput) (quality.Profile, error) {
 		}
 	}
 	p.HDROrder, p.HDRReject = order, reject
+	if p.Preflight, err = preflightFromInput(in.Preflight); err != nil {
+		return quality.Profile{}, err
+	}
 	if in.Floor != nil {
 		floor := quality.Quality{Source: quality.Source(strings.TrimSpace(in.Floor.Source))}
 		if in.Floor.Resolution != nil {
@@ -792,6 +796,7 @@ func (s *Server) SearchReleases(w http.ResponseWriter, r *http.Request, id int64
 			h := releaseHDRDTO(*c.MeasuredHDR)
 			rc.MeasuredHdr = &h
 		}
+		rc.Probe = probeEvidenceDTO(c.Probe)
 		if c.BlacklistReason != "" {
 			reason := c.BlacklistReason
 			rc.BlacklistReason = &reason

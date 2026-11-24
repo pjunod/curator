@@ -87,10 +87,13 @@ type ClientConfig struct {
 func ProtocolOfClient(clientType string) string {
 	switch clientType {
 	case "sabnzbd", "nzbget", "nzbd":
-		return "usenet"
+		return ProtocolUsenet
 	}
 	return "torrent"
 }
+
+// ProtocolUsenet is the protocol name of usenet releases and clients.
+const ProtocolUsenet = "usenet"
 
 // IsNativeRunnerClient keeps Runner custody guards independent of its protocol.
 func IsNativeRunnerClient(clientType string) bool {

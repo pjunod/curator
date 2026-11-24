@@ -4582,6 +4582,8 @@ components:
           description: >
             HDR tiers the profile never takes. A release is refused only when
             measured, or named outright, as one of them.
+        preflight:
+          $ref: "#/components/schemas/PreflightPolicy"
         sentence:
           type: string
           description: >
@@ -4629,6 +4631,8 @@ components:
           type: array
           items: { $ref: "#/components/schemas/HDRTier" }
           description: HDR tiers to refuse, from GET /hdr-tiers.
+        preflight:
+          $ref: "#/components/schemas/PreflightPolicy"
 
     HDRTier:
       type: string
@@ -4688,6 +4692,53 @@ components:
           enum: [config, rpu]
           description: How far the probe got.
         label: { type: string, description: '"DV P7 FEL", "DV 8.1", "DV P5".' }
+
+    ProbeEvidence:
+      type: object
+      required: [status]
+      description: >
+        What a pre-flight probe found (ADR 0026): Runner read the head of the
+        release's main file and Curator measured it with the prober it runs
+        on imported files.
+      properties:
+        status:
+          type: string
+          enum: [measured, unavailable, failed]
+          description: unavailable = Runner said why it could not read the head; failed = no answer.
+        reason:
+          type: string
+          description: encrypted, compressed, missing_articles, no_media or unreadable.
+        detail: { type: string }
+        file: { type: string, description: The inner media file Runner read. }
+        path:
+          type: array
+          items: { type: string }
+          description: How the bytes were reached, e.g. ["yenc", "rar-store"].
+        articles: { type: integer }
+        missing: { type: integer }
+        bytes: { type: integer }
+        millis: { type: integer, format: int64 }
+        container: { type: string }
+        facts: { type: string, description: The measured facts line, as for a library file. }
+        tier: { $ref: "#/components/schemas/HDRTier" }
+        dolbyVision: { $ref: "#/components/schemas/DolbyVision" }
+
+    PreflightPolicy:
+      type: object
+      description: >
+        How a profile measures releases before grabbing them (ADR 0026). It
+        applies whenever the profile has an HDR order or refusal list.
+      properties:
+        top:
+          type: integer
+          description: How many of the best-ranked releases to probe; 0 = default (5), 1000 = every one.
+        bytes:
+          type: integer
+          format: int64
+          description: Head size per probe; 0 = default (4 MiB), at most 16 MiB.
+        skipUnreadable:
+          type: boolean
+          description: Refuse a release whose head cannot be read instead of ranking it by its name.
 
     LanguageOption:
       type: object
@@ -4850,6 +4901,8 @@ components:
           $ref: "#/components/schemas/ReleaseHDR"
         measuredHdr:
           $ref: "#/components/schemas/ReleaseHDR"
+        probe:
+          $ref: "#/components/schemas/ProbeEvidence"
         score:
           type: integer
           description: Custom-format score sum (Phase 5).
