@@ -1303,6 +1303,23 @@ paths:
                 items:
                   $ref: "#/components/schemas/LanguageOption"
 
+  /hdr-tiers:
+    get:
+      operationId: listHDRTiers
+      summary: List the HDR tiers a profile can order or refuse
+      description: >
+        The vocabulary of ADR 0026, in the default preference order. Profile
+        editors pick from this rather than typing tiers.
+      responses:
+        "200":
+          description: HDR tiers.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/HDRTierOption"
+
   /profiles/{id}:
     parameters:
       - name: id
@@ -3776,6 +3793,10 @@ components:
           description: >
             The measured facts as one line, e.g. "1080p · HEVC · HDR10 ·
             TrueHD · 23 Mbps". Empty when the file was never probed.
+        hdrTier:
+          $ref: "#/components/schemas/HDRTier"
+        dolbyVision:
+          $ref: "#/components/schemas/DolbyVision"
         implausible:
           type: string
           description: >
@@ -4538,6 +4559,19 @@ components:
             file must carry at least one of them on an audio track or the
             item stays wanted at any quality; a release whose name advertises
             none of them is refused. Empty means no requirement.
+        hdrOrder:
+          type: array
+          items: { $ref: "#/components/schemas/HDRTier" }
+          description: >
+            Preferred HDR presentation, best first (ADR 0026). Breaks ties
+            after resolution and source; a file below the first tier keeps
+            the item wanted when upgrades are on. Empty means no opinion.
+        hdrReject:
+          type: array
+          items: { $ref: "#/components/schemas/HDRTier" }
+          description: >
+            HDR tiers the profile never takes. A release is refused only when
+            measured, or named outright, as one of them.
         sentence:
           type: string
           description: >
@@ -4577,6 +4611,73 @@ components:
           description: >
             Required audio languages, any one of which satisfies (ADR 0022).
             Codes from GET /languages. Omit or send empty for no requirement.
+        hdrOrder:
+          type: array
+          items: { $ref: "#/components/schemas/HDRTier" }
+          description: Preferred HDR tiers, best first, from GET /hdr-tiers. Empty for no opinion.
+        hdrReject:
+          type: array
+          items: { $ref: "#/components/schemas/HDRTier" }
+          description: HDR tiers to refuse, from GET /hdr-tiers.
+
+    HDRTier:
+      type: string
+      description: >
+        An HDR presentation (ADR 0026). Profiles name the first eight; dv-p7
+        (EL type unknown), dv (profile unknown) and the empty string (nothing
+        known) appear only as observations.
+      enum: [dv-p7-fel, dv-p7-mel, dv-p8, hdr10plus, hdr10, hlg, dv-p5, sdr, dv-p7, dv, ""]
+
+    HDRTierOption:
+      type: object
+      required: [tier, label]
+      properties:
+        tier: { $ref: "#/components/schemas/HDRTier" }
+        label: { type: string, description: 'Display name ("DV P7 FEL").' }
+
+    ReleaseHDR:
+      type: object
+      required: [tier, label, measured]
+      description: >
+        One description of a release's HDR: what its name claims, or what a
+        pre-flight probe of its first bytes measured (ADR 0026).
+      properties:
+        tier: { $ref: "#/components/schemas/HDRTier" }
+        label: { type: string }
+        dvProfile: { type: integer }
+        elType: { type: string, enum: ["", none, mel, fel] }
+        confidence:
+          type: string
+          enum: ["", high, medium, low]
+          description: How sure a claim is; empty for a measurement.
+        measured: { type: boolean }
+
+    DolbyVision:
+      type: object
+      required: [profile, rpu, el, bl, blCompatId, source, label]
+      description: The measured Dolby Vision record of a file (ADR 0026).
+      properties:
+        profile: { type: integer }
+        level: { type: integer }
+        rpu: { type: boolean }
+        el: { type: boolean }
+        bl: { type: boolean }
+        blCompatId:
+          type: integer
+          description: Base-layer compatibility; 0 none (P5), 1 HDR10, 2 SDR, 4 HLG, 6 UHD Blu-ray HDR10.
+        elType:
+          type: string
+          enum: ["", none, mel, fel]
+          description: Empty when the first RPU could not be read.
+        cmVersion: { type: string, enum: ["", "2.9", "4.0"] }
+        maxCll: { type: integer }
+        maxFall: { type: integer }
+        masteringMaxNits: { type: integer }
+        source:
+          type: string
+          enum: [config, rpu]
+          description: How far the probe got.
+        label: { type: string, description: '"DV P7 FEL", "DV 8.1", "DV P5".' }
 
     LanguageOption:
       type: object
@@ -4735,6 +4836,10 @@ components:
             Audio languages the release name advertises (ADR 0022), canonical
             codes; "mul" for a MULTi/DUAL release. A name that says nothing
             reads as English, the scene convention.
+        hdr:
+          $ref: "#/components/schemas/ReleaseHDR"
+        measuredHdr:
+          $ref: "#/components/schemas/ReleaseHDR"
         score:
           type: integer
           description: Custom-format score sum (Phase 5).

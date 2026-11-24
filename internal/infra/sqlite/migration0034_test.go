@@ -113,7 +113,7 @@ func TestWeakestRecordedLanguages(t *testing.T) {
 		{"old three-field rows: unknown", "webdl-1080~probe~high", false, nil},
 	}
 	for _, tc := range cases {
-		q, _, audio := weakestRecorded(tc.joined)
+		q, _, audio, _ := weakestRecorded(tc.joined)
 		if q.Resolution == 0 {
 			t.Errorf("%s: quality not read", tc.name)
 		}

@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/pjunod/monarr/internal/domain"
+	"github.com/pjunod/monarr/internal/domain/hdr"
 	"github.com/pjunod/monarr/internal/domain/mediainfo"
 	"github.com/pjunod/monarr/internal/domain/quality"
 )
@@ -351,3 +352,4 @@ func (stubWantable) CurrentQuality() (quality.Quality, bool) {
 func (stubWantable) OnDisk() bool                  { return false }
 func (stubWantable) SourceVerified() bool          { return false }
 func (stubWantable) AudioLanguages() quality.Audio { return quality.Audio{} }
+func (stubWantable) CurrentHDR() hdr.Tier          { return hdr.TierUnknown }

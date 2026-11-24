@@ -314,6 +314,11 @@ func detailDTO(m domain.MediaItem) apigen.MediaItemDetail {
 		verified := f.SourceVerified()
 		fi.Verified = &verified
 		fi.Facts = optStr(f.Info.Summary())
+		if f.Info.Measured() && f.Provenance != mediainfo.ProvenanceFailed {
+			tier := apigen.HDRTier(f.Info.HDRTier())
+			fi.HdrTier = &tier
+			fi.DolbyVision = dolbyVisionDTO(f.Info)
+		}
 		// Why we do not believe this file, in a sentence the UI can print.
 		// Recomputed from the stored measurement rather than persisted, so
 		// retuning a threshold re-grades the whole library for free — the

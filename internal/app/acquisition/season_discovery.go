@@ -812,7 +812,7 @@ func (s *Service) admitSeasonCandidates(ctx context.Context, p seasonCheckpoint,
 		if profile.Met(parsed.Quality, true) {
 			class = acquisitionplan.TargetMet
 		}
-		c := acquisitionplan.Candidate{Key: key, Pack: isPack, Pref: acquisitionplan.Preference{Class: class, QualityRank: quality.Rank(parsed.Quality), FormatScore: format.Score(r.Title, formats)}, SizeBytes: r.Size, SizeKnown: r.Size > 0, Protocol: r.Protocol, Seeders: r.Seeders, SeedersKnown: r.SeedersKnown}
+		c := acquisitionplan.Candidate{Key: key, Pack: isPack, Pref: acquisitionplan.Preference{Class: class, QualityRank: quality.Rank(parsed.Quality), FormatScore: format.Score(r.Title, formats), HDRRank: profile.HDRRank(parsed.HDR.Tier())}, SizeBytes: r.Size, SizeKnown: r.Size > 0, Protocol: r.Protocol, Seeders: r.Seeders, SeedersKnown: r.SeedersKnown}
 		if isPack {
 			for _, e := range pack.Episodes {
 				c.Payload = append(c.Payload, acquisitionplan.EpisodeKey(e.EpisodeID))

@@ -137,8 +137,9 @@ SELECT
     -- as 'und'; empty when the file was never probed or has no audio. It is
     -- written beside media_info at every probe (migration 0034 backfilled
     -- it) so this query never walks JSON.
+    -- The fifth field is media_files.hdr_tier (ADR 0026), on the same terms.
     (SELECT COALESCE(group_concat(
-              f2.quality || '~' || f2.quality_provenance || '~' || f2.quality_confidence || '~' || f2.audio_languages
+              f2.quality || '~' || f2.quality_provenance || '~' || f2.quality_confidence || '~' || f2.audio_languages || '~' || f2.hdr_tier
             ), '') FROM media_files f2
       WHERE f2.media_item_id = m.id AND f2.quality != ''
         -- The primary copy stores copy_id NULL, not 0; "= 0" matches nothing

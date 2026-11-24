@@ -4,6 +4,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pjunod/monarr/internal/domain/hdr"
 	"github.com/pjunod/monarr/internal/domain/mediainfo"
 	"github.com/pjunod/monarr/internal/domain/quality"
 )
@@ -182,6 +183,9 @@ type MediaItem struct {
 	// the other half of Upgrade — a file at the target in the wrong
 	// language is still being hunted.
 	Audio quality.Audio
+	// HDR is the primary copy's measured HDR tier (ADR 0026): the tier every
+	// measured file shares, or unknown when they differ or were not measured.
+	HDR hdr.Tier
 	// UpgradeReason says, when Upgrade is seeking, what is being sought
 	// beyond the quality target — "no English audio on disk (German only)".
 	// Empty when the quality target alone explains it.

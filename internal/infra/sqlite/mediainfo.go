@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pjunod/monarr/internal/domain/hdr"
 	"github.com/pjunod/monarr/internal/domain/mediainfo"
 	"github.com/pjunod/monarr/internal/domain/quality"
 	sqlitegen "github.com/pjunod/monarr/internal/infra/sqlite/gen"
@@ -93,6 +94,18 @@ type CopyDiskState struct {
 	// (ADR 0022). The zero value when Best is nil or the file was never
 	// probed, which never makes an item wanted.
 	Audio quality.Audio
+	// HDR is the measured HDR tier of the file behind Best (ADR 0026);
+	// unknown when Best is nil or the file was never probed.
+	HDR hdr.Tier
+}
+
+// HDROf reads the ADR 0026 HDR tier out of a file record. A file that was
+// never probed, or whose probe failed, is unknown — never SDR.
+func (f FileQuality) HDROf() hdr.Tier {
+	if !f.Probed || f.Provenance == mediainfo.ProvenanceFailed {
+		return hdr.TierUnknown
+	}
+	return f.Info.HDRTier()
 }
 
 // AudioOf reads the ADR 0022 language facts out of a file record.
@@ -207,6 +220,7 @@ func (d *DB) DiskStateForItem(ctx context.Context, itemID, copyID int64) (CopyDi
 		state.Best = &q
 		state.SourceVerified = bestRecord.SourceVerified()
 		state.Audio = bestRecord.AudioOf()
+		state.HDR = bestRecord.HDROf()
 	}
 	return state, nil
 }
@@ -260,9 +274,18 @@ func (d *DB) SetFileMediaInfo(ctx context.Context, fileID int64, info mediainfo.
 		conf = mediainfo.ConfidenceNone
 	}
 	return d.Write.SetFileMediaInfo(ctx, sqlitegen.SetFileMediaInfoParams{
-		MediaInfo: raw, AudioLanguages: audioLanguagesColumn(info), QualityProvenance: string(prov),
+		MediaInfo: raw, AudioLanguages: audioLanguagesColumn(info), HdrTier: hdrTierColumn(info, prov), QualityProvenance: string(prov),
 		QualityConfidence: string(conf), ProbedAt: at.UnixMilli(), ID: fileID,
 	})
+}
+
+// hdrTierColumn is media_files.hdr_tier (migration 0071): the measured HDR
+// tier, empty for a failed probe — the same rule as FileQuality.HDROf.
+func hdrTierColumn(info mediainfo.Info, prov mediainfo.Provenance) string {
+	if prov == mediainfo.ProvenanceFailed {
+		return ""
+	}
+	return string(info.HDRTier())
 }
 
 // audioLanguagesColumn renders media_files.audio_languages (ADR 0022,

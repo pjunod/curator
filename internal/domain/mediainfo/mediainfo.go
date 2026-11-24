@@ -28,6 +28,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/pjunod/monarr/internal/domain/hdr"
 	"github.com/pjunod/monarr/internal/domain/language"
 	"github.com/pjunod/monarr/internal/domain/mediainfo/dovi"
 )
@@ -243,6 +244,20 @@ func (i Info) Outdated() bool {
 	}
 	// Revision 2 reads the first HEVC access unit; nothing else gained.
 	return i.Video != nil && i.Video.Codec == "hevc"
+}
+
+// HDRTier reduces the measurement to the shared HDR vocabulary (ADR 0026).
+// A record that measured no video is unknown; one that measured video and no
+// HDR format is SDR, because the probe would have seen one.
+func (i Info) HDRTier() hdr.Tier {
+	if !i.Measured() {
+		return hdr.TierUnknown
+	}
+	profile, el := 0, ""
+	if d := i.Video.DoVi; d != nil {
+		profile, el = d.Profile, d.ELType
+	}
+	return hdr.Classify(i.Video.HDR, profile, el, true)
 }
 
 // Truncated reports whether the container declares more bytes than the file

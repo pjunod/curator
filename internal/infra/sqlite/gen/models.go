@@ -371,6 +371,7 @@ type MediaFile struct {
 	SourceGuid              string
 	SourceIndexerID         int64
 	SourceFileGeneration    string
+	HdrTier                 string
 }
 
 type MediaFileEpisode struct {

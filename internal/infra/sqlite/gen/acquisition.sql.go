@@ -1765,13 +1765,14 @@ func (q *Queries) SetDownloadHandle(ctx context.Context, arg SetDownloadHandlePa
 
 const setFileMediaInfo = `-- name: SetFileMediaInfo :exec
 UPDATE media_files
-SET media_info = ?, audio_languages = ?, quality_provenance = ?, quality_confidence = ?, probed_at = ?
+SET media_info = ?, audio_languages = ?, hdr_tier = ?, quality_provenance = ?, quality_confidence = ?, probed_at = ?
 WHERE id = ?
 `
 
 type SetFileMediaInfoParams struct {
 	MediaInfo         string
 	AudioLanguages    string
+	HdrTier           string
 	QualityProvenance string
 	QualityConfidence string
 	ProbedAt          int64
@@ -1785,6 +1786,7 @@ func (q *Queries) SetFileMediaInfo(ctx context.Context, arg SetFileMediaInfoPara
 	_, err := q.db.ExecContext(ctx, setFileMediaInfo,
 		arg.MediaInfo,
 		arg.AudioLanguages,
+		arg.HdrTier,
 		arg.QualityProvenance,
 		arg.QualityConfidence,
 		arg.ProbedAt,

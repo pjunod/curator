@@ -1,6 +1,10 @@
 package quality
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/pjunod/monarr/internal/domain/hdr"
+)
 
 // The restricted pack optimizer relies on nested authorization and target
 // interchangeability. Exercise the real policy over all supported video ranks,
@@ -23,8 +27,8 @@ func TestAcquisitionPlanMonotonicity(t *testing.T) {
 										if !p.Acceptable(a) || !p.Acceptable(b) || !p.LanguageAcceptable(offered) {
 											continue
 										}
-										aa := p.Upgrade(a, offered, base, verified, audio)
-										bb := p.Upgrade(b, offered, base, verified, audio)
+										aa := p.Upgrade(a, offered, hdr.Evidence{}, base, verified, audio, hdr.TierUnknown)
+										bb := p.Upgrade(b, offered, hdr.Evidence{}, base, verified, audio, hdr.TierUnknown)
 										if Rank(a) >= Rank(b) && bb && !aa {
 											t.Fatalf("nonmonotone: %+v base %v a %v b %v", p, base, a, b)
 										}

@@ -18,6 +18,7 @@ import (
 
 	"github.com/pjunod/monarr/internal/domain"
 	"github.com/pjunod/monarr/internal/domain/filename"
+	"github.com/pjunod/monarr/internal/domain/hdr"
 	"github.com/pjunod/monarr/internal/domain/mediainfo"
 	"github.com/pjunod/monarr/internal/domain/parser"
 	"github.com/pjunod/monarr/internal/domain/quality"
@@ -869,15 +870,15 @@ func (s *Service) deliveryRedundantLibraryProof(ctx context.Context, r sqlite.De
 		if err != nil || !before.Mode().IsRegular() || before.Mode()&os.ModeSymlink != 0 {
 			continue
 		}
-		candidateQuality, candidateAudio, sourceGeneration, ok := freshDeliveryVideoQuality(f.absolute, candidate, item.Runtime)
+		candidateQuality, candidateAudio, candidateHDR, sourceGeneration, ok := freshDeliveryVideoQuality(f.absolute, candidate, item.Runtime)
 		if !ok || sourceGeneration != f.generation || !profile.LanguageAcceptable(candidateAudio.Languages) || !profile.LanguageMet(candidateAudio) {
 			continue
 		}
-		currentQuality, currentAudio, _, ok := freshDeliveryVideoQuality(existing.Path, existing.Quality, item.Runtime)
+		currentQuality, currentAudio, currentHDR, _, ok := freshDeliveryVideoQuality(existing.Path, existing.Quality, item.Runtime)
 		if !ok {
 			continue
 		}
-		if profile.Upgrade(candidateQuality, candidateAudio.Languages, currentQuality, true, currentAudio) {
+		if profile.Upgrade(candidateQuality, candidateAudio.Languages, hdr.Measure(candidateHDR), currentQuality, true, currentAudio, currentHDR) {
 			continue
 		}
 		after, statErr := os.Lstat(existing.Path)
@@ -1070,32 +1071,32 @@ func replacementFileMarkedBad(ctx context.Context, db *sqlite.DB, fileID int64, 
 	return count != 0
 }
 
-func freshDeliveryVideoQuality(path string, hint quality.Quality, runtimeMinutes int) (quality.Quality, quality.Audio, string, bool) {
+func freshDeliveryVideoQuality(path string, hint quality.Quality, runtimeMinutes int) (quality.Quality, quality.Audio, hdr.Tier, string, bool) {
 	before, err := os.Lstat(path)
 	if err != nil || !before.Mode().IsRegular() || before.Mode()&os.ModeSymlink != 0 {
-		return quality.Quality{}, quality.Audio{}, "", false
+		return quality.Quality{}, quality.Audio{}, hdr.TierUnknown, "", false
 	}
 	generation := deliveryFileGeneration(before)
 	if generation == "" {
-		return quality.Quality{}, quality.Audio{}, "", false
+		return quality.Quality{}, quality.Audio{}, hdr.TierUnknown, "", false
 	}
 	info, err := probe.NativeFile(path)
 	if err != nil || !info.Measured() || info.Truncated() {
-		return quality.Quality{}, quality.Audio{}, "", false
+		return quality.Quality{}, quality.Audio{}, hdr.TierUnknown, "", false
 	}
 	if _, implausible := mediainfo.DurationImplausible(info, runtimeMinutes); implausible {
-		return quality.Quality{}, quality.Audio{}, "", false
+		return quality.Quality{}, quality.Audio{}, hdr.TierUnknown, "", false
 	}
 	measured, provenance, confidence := mediainfo.Resolve(info, hint, mediainfo.ProvenanceFilename)
 	if measured.Source == quality.SourceUnknown || !provenance.Verified(confidence) || provenance == mediainfo.ProvenanceImplausible || provenance == mediainfo.ProvenanceFailed {
-		return quality.Quality{}, quality.Audio{}, "", false
+		return quality.Quality{}, quality.Audio{}, hdr.TierUnknown, "", false
 	}
 	after, err := os.Lstat(path)
 	if err != nil || !os.SameFile(before, after) || generation != deliveryFileGeneration(after) {
-		return quality.Quality{}, quality.Audio{}, "", false
+		return quality.Quality{}, quality.Audio{}, hdr.TierUnknown, "", false
 	}
 	languages, known := info.AudioLanguages()
-	return measured, quality.Audio{Languages: languages, Known: known}, generation, true
+	return measured, quality.Audio{Languages: languages, Known: known}, info.HDRTier(), generation, true
 }
 
 func (s *Service) scheduleDeliveryFileCleanup(ctx context.Context, cfg ports.ClientConfig) {

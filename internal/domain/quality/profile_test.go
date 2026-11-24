@@ -3,6 +3,7 @@ package quality_test
 import (
 	"testing"
 
+	"github.com/pjunod/monarr/internal/domain/hdr"
 	"github.com/pjunod/monarr/internal/domain/quality"
 )
 
@@ -160,7 +161,7 @@ func TestProfileLattice(t *testing.T) {
 		}
 		for _, tc := range cases {
 			t.Run(tc.name, func(t *testing.T) {
-				got := tc.profile.Upgrade(tc.release, nil, tc.current, tc.verified, quality.Audio{})
+				got := tc.profile.Upgrade(tc.release, nil, hdr.Evidence{}, tc.current, tc.verified, quality.Audio{}, hdr.TierUnknown)
 				if got != tc.want {
 					t.Errorf("Upgrade(%v over %v, verified=%v) = %v, want %v%s",
 						tc.release, tc.current, tc.verified, got, tc.want, because(tc.why))
@@ -204,13 +205,13 @@ func TestLanguageRequirement(t *testing.T) {
 
 	t.Run("Satisfied needs both axes", func(t *testing.T) {
 		at := q(quality.SourceWEBDL, 1080)
-		if !english.Satisfied(at, true, englishToo) {
+		if !english.Satisfied(at, true, englishToo, hdr.TierUnknown) {
 			t.Error("at target with English should be satisfied")
 		}
-		if english.Satisfied(at, true, germanOnly) {
+		if english.Satisfied(at, true, germanOnly, hdr.TierUnknown) {
 			t.Error("at target without English must NOT be satisfied -- this is the whole point")
 		}
-		if !plain.Satisfied(at, true, germanOnly) {
+		if !plain.Satisfied(at, true, germanOnly, hdr.TierUnknown) {
 			t.Error("a profile with no requirement is unchanged")
 		}
 	})
@@ -254,7 +255,7 @@ func TestLanguageRequirement(t *testing.T) {
 				"the language rule relaxes rank, never the floor"},
 		}
 		for _, tc := range cases {
-			got := tc.profile.Upgrade(tc.release, tc.langs, tc.current, true, tc.audio)
+			got := tc.profile.Upgrade(tc.release, tc.langs, hdr.Evidence{}, tc.current, true, tc.audio, hdr.TierUnknown)
 			if got != tc.want {
 				t.Errorf("%s: Upgrade = %v, want %v%s", tc.name, got, tc.want, because(tc.why))
 			}

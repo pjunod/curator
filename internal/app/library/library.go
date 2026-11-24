@@ -1216,7 +1216,7 @@ func upgradeState(m domain.MediaItem, p quality.Profile) domain.UpgradeState {
 		return domain.UpgradeUnknown
 	}
 	switch {
-	case p.Satisfied(m.Quality, m.QualityVerified, m.Audio):
+	case p.Satisfied(m.Quality, m.QualityVerified, m.Audio, m.HDR):
 		return domain.UpgradeMet
 	case p.UpgradesAllowed:
 		return domain.UpgradeSeeking

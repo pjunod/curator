@@ -13,7 +13,17 @@ const TargetMet = math.MaxInt
 
 type EpisodeKey int64
 type CandidateKey string
-type Preference struct{ Class, QualityRank, FormatScore int }
+
+// Preference orders candidates: Class first, then QualityRank (higher wins),
+// then the profile's HDR order (HDRRank, lower wins, a measurement beating
+// an equal claim — ADR 0026 §4), then the custom-format score. A zero
+// HDRRank everywhere, which is every profile without an HDR order, leaves
+// the older ordering exactly as it was.
+type Preference struct {
+	Class, QualityRank, FormatScore int
+	HDRRank                         int
+	HDRMeasured                     bool
+}
 type Candidate struct {
 	Key               CandidateKey
 	Pack              bool
@@ -262,6 +272,18 @@ func slotLess(a, b Candidate) bool {
 func tie(a, b Candidate) int {
 	if a.Pref.QualityRank != b.Pref.QualityRank {
 		if a.Pref.QualityRank > b.Pref.QualityRank {
+			return -1
+		}
+		return 1
+	}
+	if a.Pref.HDRRank != b.Pref.HDRRank {
+		if a.Pref.HDRRank < b.Pref.HDRRank {
+			return -1
+		}
+		return 1
+	}
+	if a.Pref.HDRMeasured != b.Pref.HDRMeasured {
+		if a.Pref.HDRMeasured {
 			return -1
 		}
 		return 1

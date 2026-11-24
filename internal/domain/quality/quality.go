@@ -6,9 +6,11 @@ package quality
 
 import (
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 
+	"github.com/pjunod/monarr/internal/domain/hdr"
 	"github.com/pjunod/monarr/internal/domain/language"
 )
 
@@ -239,6 +241,74 @@ type Profile struct {
 	// a release that offers the language is an upgrade over it at any
 	// acceptable quality.
 	Languages []string
+	// HDROrder is the preferred HDR presentation, best first (ADR 0026 §4).
+	// Empty means no opinion, which is every profile that existed before it.
+	// It breaks ties after resolution and source: a 2160p SDR release still
+	// outranks a 1080p Dolby Vision one under a 2160p target.
+	HDROrder []hdr.Tier
+	// HDRReject lists tiers this profile never takes, such as Dolby Vision
+	// profile 5 for a library played on devices without Dolby Vision.
+	HDRReject []hdr.Tier
+}
+
+// HDRRank is a tier's place in the HDR order: 0 is best, and a tier the order
+// does not list ranks below every listed one. A partly-known tier ranks as the
+// worst of what it could be (hdr.Tier.Possible), so not knowing whether a
+// profile 7 release is FEL never ranks it with FEL. With no order, every tier
+// ranks alike.
+func (p Profile) HDRRank(t hdr.Tier) int {
+	if len(p.HDROrder) == 0 {
+		return 0
+	}
+	unlisted := len(p.HDROrder)
+	worst := -1
+	for _, cand := range t.Possible() {
+		r := unlisted
+		for i, x := range p.HDROrder {
+			if x == cand {
+				r = i
+				break
+			}
+		}
+		if r > worst {
+			worst = r
+		}
+	}
+	if worst < 0 {
+		return unlisted
+	}
+	return worst
+}
+
+// HDRAcceptable reports whether a release's HDR is one the profile would take.
+// Only sure evidence (measured, or stated outright in the name) refuses: an
+// inference such as "DV on a web release is probably profile 5" ranks low but
+// never rejects, because the pre-flight probe or the import can prove it
+// wrong (ADR 0013 §5).
+func (p Profile) HDRAcceptable(e hdr.Evidence) bool {
+	if len(p.HDRReject) == 0 || e.Tier == hdr.TierUnknown {
+		return true
+	}
+	possible := e.Tier.Possible()
+	if !e.Sure() && len(possible) == 1 {
+		return true
+	}
+	for _, cand := range possible {
+		if !slices.Contains(p.HDRReject, cand) {
+			return true
+		}
+	}
+	return false
+}
+
+// HDRMet reports whether what is on disk is at the top of the HDR order. A
+// tier that was never measured counts as met: the don't-churn rule on a new
+// axis.
+func (p Profile) HDRMet(current hdr.Tier) bool {
+	if len(p.HDROrder) == 0 || current == hdr.TierUnknown {
+		return true
+	}
+	return p.HDRRank(current) == 0
 }
 
 // Audio is what is known about the audio languages of what is on disk.
@@ -276,10 +346,12 @@ func (p Profile) LanguageAcceptable(offered []string) bool {
 	return language.Satisfies(offered, p.Languages)
 }
 
-// Satisfied is Met on both axes: the quality target is reached AND the
-// language requirement is met. It is the question the wanted index asks.
-func (p Profile) Satisfied(current Quality, sourceVerified bool, a Audio) bool {
-	return p.Met(current, sourceVerified) && p.LanguageMet(a)
+// Satisfied is Met on every axis: the quality target is reached, the
+// language requirement is met, and what is on disk is at the top of the HDR
+// order (or its HDR was never measured). It is the question the wanted index
+// asks.
+func (p Profile) Satisfied(current Quality, sourceVerified bool, a Audio, h hdr.Tier) bool {
+	return p.Met(current, sourceVerified) && p.LanguageMet(a) && p.HDRMet(h)
 }
 
 // Met reports whether what is on disk satisfies the profile — the point at
@@ -347,14 +419,24 @@ func (p Profile) Acceptable(release Quality) bool {
 // is an upgrade — a lower-ranked release included, because a file in the
 // wrong language ranks below every file in the right one. When the language
 // is fine (or unknowable), it is the quality rule of ADR 0014 unchanged.
-func (p Profile) Upgrade(release Quality, releaseLangs []string, current Quality, sourceVerified bool, audio Audio) bool {
-	if !p.Acceptable(release) || !p.LanguageAcceptable(releaseLangs) {
+//
+// The HDR axis (ADR 0026 §4) comes last and never trades quality away: a
+// release at no lower quality rank whose HDR ranks above a measured file below
+// the top of the order is an upgrade. releaseHDR and currentHDR may be zero,
+// which means unknown and leaves the ADR 0014 rule untouched.
+func (p Profile) Upgrade(release Quality, releaseLangs []string, releaseHDR hdr.Evidence,
+	current Quality, sourceVerified bool, audio Audio, currentHDR hdr.Tier) bool {
+	if !p.Acceptable(release) || !p.LanguageAcceptable(releaseLangs) || !p.HDRAcceptable(releaseHDR) {
 		return false
 	}
 	if !p.LanguageMet(audio) {
 		return true
 	}
-	return Rank(release) > Rank(current) && !p.Met(current, sourceVerified)
+	if Rank(release) > Rank(current) && !p.Met(current, sourceVerified) {
+		return true
+	}
+	return !p.HDRMet(currentHDR) && Rank(release) >= Rank(current) &&
+		releaseHDR.Tier != hdr.TierUnknown && p.HDRRank(releaseHDR.Tier) < p.HDRRank(currentHDR)
 }
 
 // Sentence renders the profile as the thing it now is — one true sentence,
@@ -366,6 +448,20 @@ func (p Profile) Sentence() string {
 	}
 	if len(p.Languages) > 0 {
 		s += "; " + language.DisplayList(p.Languages) + " audio required"
+	}
+	if len(p.HDROrder) > 0 {
+		labels := make([]string, len(p.HDROrder))
+		for i, t := range p.HDROrder {
+			labels[i] = t.Label()
+		}
+		s += "; prefers " + strings.Join(labels, " › ")
+	}
+	if len(p.HDRReject) > 0 {
+		labels := make([]string, len(p.HDRReject))
+		for i, t := range p.HDRReject {
+			labels[i] = t.Label()
+		}
+		s += "; never " + strings.Join(labels, ", ")
 	}
 	if !p.UpgradesAllowed {
 		s += "; no upgrades once a file is present"

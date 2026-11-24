@@ -1155,7 +1155,7 @@ func (q *Queries) ListAllMediaCopies(ctx context.Context) ([]MediaCopy, error) {
 }
 
 const listAllMediaFiles = `-- name: ListAllMediaFiles :many
-SELECT id, media_item_id, path, size, added_at, quality, copy_id, media_info, quality_provenance, quality_confidence, probed_at, source_release, source_indexer, audio_languages, file_generation, source_generation, source_transfer, source_payload_generation, source_guid, source_indexer_id, source_file_generation FROM media_files ORDER BY path
+SELECT id, media_item_id, path, size, added_at, quality, copy_id, media_info, quality_provenance, quality_confidence, probed_at, source_release, source_indexer, audio_languages, file_generation, source_generation, source_transfer, source_payload_generation, source_guid, source_indexer_id, source_file_generation, hdr_tier FROM media_files ORDER BY path
 `
 
 func (q *Queries) ListAllMediaFiles(ctx context.Context) ([]MediaFile, error) {
@@ -1189,6 +1189,7 @@ func (q *Queries) ListAllMediaFiles(ctx context.Context) ([]MediaFile, error) {
 			&i.SourceGuid,
 			&i.SourceIndexerID,
 			&i.SourceFileGeneration,
+			&i.HdrTier,
 		); err != nil {
 			return nil, err
 		}
@@ -1409,7 +1410,7 @@ func (q *Queries) ListMediaCopies(ctx context.Context, mediaItemID int64) ([]Med
 }
 
 const listMediaFilesForItem = `-- name: ListMediaFilesForItem :many
-SELECT id, media_item_id, path, size, added_at, quality, copy_id, media_info, quality_provenance, quality_confidence, probed_at, source_release, source_indexer, audio_languages, file_generation, source_generation, source_transfer, source_payload_generation, source_guid, source_indexer_id, source_file_generation FROM media_files WHERE media_item_id = ? ORDER BY path
+SELECT id, media_item_id, path, size, added_at, quality, copy_id, media_info, quality_provenance, quality_confidence, probed_at, source_release, source_indexer, audio_languages, file_generation, source_generation, source_transfer, source_payload_generation, source_guid, source_indexer_id, source_file_generation, hdr_tier FROM media_files WHERE media_item_id = ? ORDER BY path
 `
 
 func (q *Queries) ListMediaFilesForItem(ctx context.Context, mediaItemID sql.NullInt64) ([]MediaFile, error) {
@@ -1443,6 +1444,7 @@ func (q *Queries) ListMediaFilesForItem(ctx context.Context, mediaItemID sql.Nul
 			&i.SourceGuid,
 			&i.SourceIndexerID,
 			&i.SourceFileGeneration,
+			&i.HdrTier,
 		); err != nil {
 			return nil, err
 		}
@@ -1485,8 +1487,9 @@ SELECT
     -- as 'und'; empty when the file was never probed or has no audio. It is
     -- written beside media_info at every probe (migration 0034 backfilled
     -- it) so this query never walks JSON.
+    -- The fifth field is media_files.hdr_tier (ADR 0026), on the same terms.
     (SELECT COALESCE(group_concat(
-              f2.quality || '~' || f2.quality_provenance || '~' || f2.quality_confidence || '~' || f2.audio_languages
+              f2.quality || '~' || f2.quality_provenance || '~' || f2.quality_confidence || '~' || f2.audio_languages || '~' || f2.hdr_tier
             ), '') FROM media_files f2
       WHERE f2.media_item_id = m.id AND f2.quality != ''
         -- The primary copy stores copy_id NULL, not 0; "= 0" matches nothing

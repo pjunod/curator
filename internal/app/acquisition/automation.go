@@ -12,6 +12,7 @@ import (
 	"github.com/pjunod/monarr/internal/domain/acquisitionplan"
 	"github.com/pjunod/monarr/internal/domain/decision"
 	"github.com/pjunod/monarr/internal/domain/format"
+	"github.com/pjunod/monarr/internal/domain/hdr"
 	"github.com/pjunod/monarr/internal/domain/language"
 	"github.com/pjunod/monarr/internal/domain/mediainfo"
 	"github.com/pjunod/monarr/internal/domain/parser"
@@ -530,6 +531,7 @@ func (s *Service) searchAndGrabBestReserved(ctx context.Context, w domain.Wantab
 	type scored struct {
 		r        ports.Release
 		q        quality.Quality
+		hdr      hdr.Evidence
 		score    int
 		evidence domain.MatchEvidence
 	}
@@ -541,7 +543,7 @@ func (s *Service) searchAndGrabBestReserved(ctx context.Context, w domain.Wantab
 				if profile.Met(c.q, true) {
 					class = acquisitionplan.TargetMet
 				}
-				return acquisitionplan.Candidate{Key: acquisitionplan.CandidateKey(k), Pref: acquisitionplan.Preference{Class: class, QualityRank: quality.Rank(c.q), FormatScore: c.score}, Eligible: []acquisitionplan.EpisodeKey{key}, Payload: []acquisitionplan.EpisodeKey{key}, SizeBytes: c.r.Size, SizeKnown: c.r.Size > 0, Protocol: c.r.Protocol, Seeders: c.r.Seeders, SeedersKnown: c.r.SeedersKnown}
+				return acquisitionplan.Candidate{Key: acquisitionplan.CandidateKey(k), Pref: acquisitionplan.Preference{Class: class, QualityRank: quality.Rank(c.q), FormatScore: c.score, HDRRank: profile.HDRRank(c.hdr.Tier), HDRMeasured: c.hdr.Measured}, Eligible: []acquisitionplan.EpisodeKey{key}, Payload: []acquisitionplan.EpisodeKey{key}, SizeBytes: c.r.Size, SizeKnown: c.r.Size > 0, Protocol: c.r.Protocol, Seeders: c.r.Seeders, SeedersKnown: c.r.SeedersKnown}
 			}
 			ka, kb := a.r.Title+"|"+a.r.GUID, b.r.Title+"|"+b.r.GUID
 			if ka == kb {
@@ -556,6 +558,9 @@ func (s *Service) searchAndGrabBestReserved(ctx context.Context, w domain.Wantab
 		}
 		if quality.Rank(a.q) != quality.Rank(b.q) {
 			return quality.Rank(a.q) > quality.Rank(b.q)
+		}
+		if hdrBetter(profile, a.hdr, b.hdr) || hdrBetter(profile, b.hdr, a.hdr) {
+			return hdrBetter(profile, a.hdr, b.hdr)
 		}
 		if a.score != b.score {
 			return a.score > b.score
@@ -586,7 +591,7 @@ func (s *Service) searchAndGrabBestReserved(ctx context.Context, w domain.Wantab
 			continue
 		}
 		tally.Accepted++
-		cand := &scored{r: r, q: p.Quality, score: format.Score(r.Title, formats), evidence: matchEvidence(p, w, r, match)}
+		cand := &scored{r: r, q: p.Quality, hdr: hdr.Claimed(p.HDR), score: format.Score(r.Title, formats), evidence: matchEvidence(p, w, r, match)}
 		if best == nil || better(cand, best) {
 			best = cand
 		}
