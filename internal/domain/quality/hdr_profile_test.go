@@ -83,6 +83,9 @@ func TestHDRMetIsTheDontChurnRule(t *testing.T) {
 	if p.HDRMet(hdr.TierDVP8) {
 		t.Error("8.1 under a FEL-first order is met")
 	}
+	if !p.HDRMet(hdr.TierDV) || !p.HDRMet(hdr.TierDVP7) {
+		t.Error("a partly-known DV file on disk, which may be FEL, made the item wanted")
+	}
 	if !(quality.Profile{}).HDRMet(hdr.TierSDR) {
 		t.Error("a profile with no HDR order hunts HDR")
 	}
@@ -105,8 +108,14 @@ func TestUpgradeOnTheHDRAxis(t *testing.T) {
 		want    bool
 	}{
 		{"measured FEL remux over an 8.1 remux", remux, hdr.Measure(hdr.TierDVP7FEL), remux, hdr.TierDVP8, true},
-		// MEL ranks above 8.1 in this order, and an unknown-EL P7 ranks as MEL.
-		{"named P7 remux over an 8.1 remux", remux, hdr.Evidence{Tier: hdr.TierDVP7, Confidence: hdr.ConfidenceMedium}, remux, hdr.TierDVP8, true},
+		// A guess never outranks a measurement: "REMUX DV" inferred as P7 waits
+		// for the pre-flight probe, whose measurement can then upgrade.
+		{"inferred P7 remux over a measured 8.1 remux", remux, hdr.Evidence{Tier: hdr.TierDVP7, Confidence: hdr.ConfidenceMedium}, remux, hdr.TierDVP8, false},
+		{"measured MEL remux over a measured 8.1 remux", remux, hdr.Measure(hdr.TierDVP7MEL), remux, hdr.TierDVP8, true},
+		// A file known only as "Dolby Vision" may be FEL: never replaced by
+		// HDR10, nor by anything that cannot beat its best case.
+		{"HDR10 over a file known only as DV", remux, hdr.Measure(hdr.TierHDR10), remux, hdr.TierDV, false},
+		{"FEL over a file known only as DV", remux, hdr.Measure(hdr.TierDVP7FEL), remux, hdr.TierDV, false},
 		{"8.1 over FEL", remux, hdr.Measure(hdr.TierDVP8), remux, hdr.TierDVP7FEL, false},
 		// HDR never trades quality away.
 		{"FEL web over an 8.1 remux", webdl, hdr.Measure(hdr.TierDVP7FEL), remux, hdr.TierDVP8, false},

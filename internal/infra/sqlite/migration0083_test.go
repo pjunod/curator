@@ -28,7 +28,13 @@ func TestMigration83BootstrapCannotTrustLaterScanFiles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	id, err := db.CreateMediaItem(ctx, domain.MediaItem{Kind: domain.KindMovie, Title: "Legacy", RootFolderID: root.ID, Path: "/legacy/movie", IDs: domain.ExternalIDs{TMDB: 1}})
+	// The row is written in the version-82 shape: the typed queries describe
+	// the current schema (ADR 0031 added media_items.disc_el in 0093).
+	res, err := db.W.ExecContext(ctx, `INSERT INTO media_items (kind, title, sort_title, root_folder_id, path, tmdb_id, source, added_at, updated_at) VALUES ('movie', 'Legacy', 'legacy', ?, '/legacy/movie', 1, 'tmdb', ?, ?)`, root.ID, time.Now().UnixMilli(), time.Now().UnixMilli())
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, err := res.LastInsertId()
 	if err != nil {
 		t.Fatal(err)
 	}

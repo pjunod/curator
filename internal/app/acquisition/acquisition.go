@@ -165,6 +165,7 @@ type Service struct {
 	seasonRetryCursor atomic.Int64
 	newIndexer        IndexerFactory
 	newClient         ClientFactory
+	probes            probeCache // pre-flight results per release (preflight.go)
 
 	// searchTimeout bounds each indexer call.
 	searchTimeout time.Duration

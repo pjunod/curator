@@ -9,6 +9,7 @@ import (
 	"github.com/pjunod/monarr/internal/domain"
 	"github.com/pjunod/monarr/internal/domain/decision"
 	"github.com/pjunod/monarr/internal/domain/hdr"
+	"github.com/pjunod/monarr/internal/domain/parser"
 	"github.com/pjunod/monarr/internal/domain/quality"
 	"github.com/pjunod/monarr/internal/infra/bus"
 	"github.com/pjunod/monarr/internal/infra/sqlite"
@@ -191,5 +192,102 @@ func TestEvidenceOfMeasuresWhatRunnerRead(t *testing.T) {
 	}
 	if note := discMasterNote(hdr.ELFEL, &ProbeEvidence{Status: ProbeMeasured, Tier: hdr.TierDVP7MEL}); note == "" {
 		t.Error("a MEL remux of an FEL disc carries no different-master note")
+	}
+}
+
+// A probe that could not run (Runner or the network failed, or Runner said
+// "unreadable", which includes no news server answering) says nothing about
+// the release, so even a skip-unreadable profile keeps it on its claim.
+func TestPreflightNeverRefusesForAProbeThatCouldNotRun(t *testing.T) {
+	client := &probingClient{refusals: map[string]string{"nzb://u": ports.ProbeUnreadable}}
+	p := fel()
+	p.Preflight.SkipUnreadable = true
+	svc, _, itemID := preflightSetup(t, []ports.Release{
+		remux("Title.2021.2160p.BluRay.REMUX.DV.HDR.HEVC-F", "nzb://failed"), // no fixture: the probe errors
+		remux("Title.2021.2160p.BluRay.REMUX.DV.HDR.HEVC-U", "nzb://u"),
+	}, client, p)
+	cands, err := svc.Search(context.Background(), itemID, 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range cands {
+		if !c.Accepted || c.Probe == nil {
+			t.Errorf("%s accepted=%v probe=%+v rejections=%+v, want kept on its claim", c.Release.Title, c.Accepted, c.Probe, c.Rejections)
+		}
+	}
+}
+
+// A post does not change: a second search reuses the measurement instead of
+// fetching the NZB from the indexer and reading its articles again.
+func TestPreflightReusesWhatItLearnedAboutARelease(t *testing.T) {
+	client := &probingClient{heads: map[string]string{"nzb://a": "mkv-64p-hevc-dv-p7-fel.mkv"}}
+	svc, _, itemID := preflightSetup(t, []ports.Release{remux("Title.2021.2160p.BluRay.REMUX.DV.HDR.HEVC-A", "nzb://a")}, client, fel())
+	for range 2 {
+		cands, err := svc.Search(context.Background(), itemID, 0, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(cands) != 1 || cands[0].MeasuredHDR == nil || cands[0].MeasuredHDR.Tier != hdr.TierDVP7FEL {
+			t.Fatalf("candidates = %+v", cands)
+		}
+	}
+	if len(client.probed) != 1 {
+		t.Errorf("probed %v, want one probe across two searches", client.probed)
+	}
+}
+
+// A usenet client that cannot probe is passed over for one that can.
+func TestPreflightFindsTheClientThatCanProbe(t *testing.T) {
+	client := &probingClient{heads: map[string]string{"nzb://a": "mkv-64p-hevc-dv-p7-fel.mkv"}}
+	svc, db, itemID := preflightSetup(t, []ports.Release{remux("Title.2021.2160p.BluRay.REMUX.DV.HDR.HEVC-A", "nzb://a")}, client, fel())
+	svc.newClient = func(cfg ports.ClientConfig) ports.DownloadClient {
+		if cfg.Type == "sabnzbd" {
+			return &fakeClient{}
+		}
+		return client
+	}
+	ctx := context.Background()
+	clients, err := db.ListDownloadClients(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range clients {
+		if err := db.DeleteDownloadClient(ctx, c.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, cfg := range []ports.ClientConfig{
+		{Type: "sabnzbd", Name: "sab", URL: "http://sab", Enabled: true},
+		{Type: "nzbd", Name: "runner", URL: "http://runner", Enabled: true},
+	} {
+		if _, err := db.AddDownloadClient(ctx, cfg); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cands, err := svc.Search(ctx, itemID, 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cands) != 1 || cands[0].MeasuredHDR == nil {
+		t.Fatalf("candidates = %+v, want the release measured through Runner", cands)
+	}
+}
+
+// RSS and season grabs pass through the same pre-flight: a WEB-DL named "DV"
+// (guessed profile 5 at medium confidence, which never refuses on its own)
+// that measures profile 5 is declined before the grab.
+func TestPreflightOneDeclinesAGrabOnTheMeasurement(t *testing.T) {
+	r := ports.Release{Title: "Title.2021.2160p.WEB-DL.DV.HEVC-W", DownloadURL: "nzb://w", Indexer: "idx", Protocol: "usenet", Size: 20 << 30}
+	client := &probingClient{heads: map[string]string{"nzb://w": "mp4-2160p-hevc-dv-p5.mp4"}}
+	svc, db, itemID := preflightSetup(t, []ports.Release{r}, client, fel())
+	ctx := context.Background()
+	profile, err := db.GetProfile(ctx, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := domain.MovieWantable{Item: itemID, Profile: 3, Mon: true}
+	ok, why := svc.preflightOne(ctx, w, profile, r, parser.Parse(r.Title))
+	if ok || why.Code != decision.CodeHDRRejected {
+		t.Fatalf("preflightOne = %v, %+v; want declined as hdr_rejected", ok, why)
 	}
 }

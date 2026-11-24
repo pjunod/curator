@@ -122,8 +122,8 @@ func preflightFromInput(in *apigen.PreflightPolicy) (quality.Preflight, error) {
 	if in.SkipUnreadable != nil {
 		p.SkipUnreadable = *in.SkipUnreadable
 	}
-	if p.Top < 0 || p.Top > quality.ProbeAll {
-		return p, fmt.Errorf("preflight.top must be between 0 and %d", quality.ProbeAll)
+	if p.Top < 0 || p.Top > quality.MaxProbeTop {
+		return p, fmt.Errorf("preflight.top must be between 0 and %d", quality.MaxProbeTop)
 	}
 	if p.Bytes < 0 || p.Bytes > quality.MaxProbeBytes {
 		return p, fmt.Errorf("preflight.bytes must be between 0 and %d", quality.MaxProbeBytes)

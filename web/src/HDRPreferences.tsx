@@ -47,9 +47,9 @@ export function labelOf(options: HDRTierOption[] | undefined, tier: HDRTier): st
 }
 
 const PROBE_TOPS = [
+  { value: 3, label: '3' },
   { value: 0, label: '5 (default)' },
-  { value: 10, label: '10' },
-  { value: 1000, label: 'All' },
+  { value: 10, label: '10 (most)' },
 ]
 const PROBE_BYTES = [
   { value: 0, label: '4 MB · header and first frame (default)' },
@@ -76,110 +76,142 @@ export function HDRPreferences(props: {
   const unused = options.filter((o) => !order.includes(o.tier) && !reject.includes(o.tier))
   const enabled = order.length > 0 || reject.length > 0
 
-  if (!enabled) {
-    return (
-      <fieldset className="hdr-prefs" aria-label="HDR and Dolby Vision">
-        <legend>HDR &amp; Dolby Vision</legend>
-        <p className="muted">
-          No HDR preference: releases rank on resolution, source and custom formats alone.
-        </p>
-        <button type="button" onClick={() => set({ hdrOrder: SUGGESTED_ORDER, hdrReject: SUGGESTED_REJECT, hdrTies: [] })}>
-          Rank by HDR and Dolby Vision
-        </button>
-        <DeviceDerivation options={options} onApply={(d) => set(d)} />
-      </fieldset>
-    )
+  // A button that removes itself hands focus to what takes its place, never
+  // to the page body (CLAUDE.md §5): the next row, the chip that replaced it,
+  // or the button that turns the preference back on.
+  const root = useRef<HTMLFieldSetElement>(null)
+  const [focusKey, setFocusKey] = useState<string | null>(null)
+  useLayoutEffect(() => {
+    if (!focusKey) return
+    const el = root.current?.querySelector<HTMLElement>(`[data-focus="${focusKey}"]`) ?? root.current
+    el?.focus()
+    setFocusKey(null)
+  }, [focusKey, value])
+  const then = (key: string | null, patch: Partial<HDRDraft>) => {
+    set(patch)
+    setFocusKey(key ?? 'fieldset')
+  }
+  const removeTier = (i: number) => {
+    const next = order[i + 1] ?? order[i - 1]
+    const rest = order.filter((_, k) => k !== i)
+    then(next ? `remove-${next}` : rest.length || reject.length ? null : 'enable', { hdrOrder: rest, hdrTies: [] })
+  }
+  const unreject = (t: HDRTier) => {
+    const k = reject.indexOf(t)
+    const next = reject[k + 1] ?? reject[k - 1]
+    const rest = reject.filter((x) => x !== t)
+    then(next ? `unreject-${next}` : order.length || rest.length ? null : 'enable', { hdrReject: rest })
   }
 
+  // One tree for both states, so the device panel keeps its place and its
+  // trigger stays mounted when applying a device turns the preference on.
   return (
-    <fieldset className="hdr-prefs" aria-label="HDR and Dolby Vision">
-      <legend>HDR &amp; Dolby Vision order</legend>
-      <p className="muted">Higher wins when resolution and source tie. It never trades resolution or source away.</p>
-      <ol className="hdr-order" data-testid="hdr-order">
-        {order.map((t, i) => (
-          <li key={t} className={tiedWithPrevious(value, i) ? 'tied' : ''}>
-            <span className="hdr-rank" title={tiedWithPrevious(value, i) ? 'Same picture on the device: ranks with the tier above' : undefined}>
-              {tiedWithPrevious(value, i) ? '=' : i + 1}
-            </span>
-            <span className="hdr-tier">{labelOf(options, t)}</span>
-            <span className="hdr-note">{TIER_NOTES[t]}</span>
-            <span className="hdr-actions">
-              <button type="button" className="small" aria-label={`Move ${labelOf(options, t)} up`} disabled={i === 0} onClick={() => move(i, -1)}>
-                ↑
-              </button>
-              <button type="button" className="small" aria-label={`Move ${labelOf(options, t)} down`} disabled={i === order.length - 1} onClick={() => move(i, 1)}>
-                ↓
-              </button>
-              <button type="button" className="small" aria-label={`Remove ${labelOf(options, t)}`} onClick={() => set({ hdrOrder: order.filter((x) => x !== t), hdrTies: [] })}>
-                ×
-              </button>
-            </span>
-          </li>
-        ))}
-      </ol>
-
-      <div className="hdr-chips">
-        <span className="muted">Reject</span>
-        {reject.map((t) => (
-          <button type="button" key={t} className="hdr-chip reject" aria-label={`Stop rejecting ${labelOf(options, t)}`}
-            onClick={() => set({ hdrReject: reject.filter((x) => x !== t) })}>
-            {labelOf(options, t)} ×
+    <fieldset ref={root} tabIndex={-1} className="hdr-prefs" aria-label="HDR and Dolby Vision">
+      <legend>{enabled ? 'HDR & Dolby Vision order' : 'HDR & Dolby Vision'}</legend>
+      {!enabled ? (
+        <>
+          <p className="muted">
+            No HDR preference: releases rank on resolution, source and custom formats alone.
+          </p>
+          <button type="button" data-focus="enable"
+            onClick={() => then(`remove-${SUGGESTED_ORDER[0]}`, { hdrOrder: SUGGESTED_ORDER, hdrReject: SUGGESTED_REJECT, hdrTies: [] })}>
+            Rank by HDR and Dolby Vision
           </button>
-        ))}
-        {reject.length === 0 && <span className="muted">nothing</span>}
-      </div>
+        </>
+      ) : (
+        <>
+          <p className="muted">Higher wins when resolution and source tie. It never trades resolution or source away.</p>
+          <ol className="hdr-order" data-testid="hdr-order">
+            {order.map((t, i) => (
+              <li key={t} className={tiedWithPrevious(value, i) ? 'tied' : ''}>
+                <span className="hdr-rank" title={tiedWithPrevious(value, i) ? 'Same picture on the device: ranks with the tier above' : undefined}>
+                  {tiedWithPrevious(value, i) ? '=' : i + 1}
+                </span>
+                <span className="hdr-tier">{labelOf(options, t)}</span>
+                <span className="hdr-note">{TIER_NOTES[t]}</span>
+                <span className="hdr-actions">
+                  <button type="button" className="small" aria-label={`Move ${labelOf(options, t)} up`} disabled={i === 0} onClick={() => move(i, -1)}>
+                    ↑
+                  </button>
+                  <button type="button" className="small" aria-label={`Move ${labelOf(options, t)} down`} disabled={i === order.length - 1} onClick={() => move(i, 1)}>
+                    ↓
+                  </button>
+                  <button type="button" className="small" data-focus={`remove-${t}`} aria-label={`Remove ${labelOf(options, t)}`} onClick={() => removeTier(i)}>
+                    ×
+                  </button>
+                </span>
+              </li>
+            ))}
+          </ol>
 
-      {unused.length > 0 && (
-        <div className="hdr-chips">
-          <span className="muted">Not ranked</span>
-          {unused.map((o) => (
-            <span key={o.tier} className="hdr-chip">
-              {o.label}
-              <button type="button" className="small" aria-label={`Prefer ${o.label}`} onClick={() => set({ hdrOrder: [...order, o.tier] })}>
-                + prefer
+          <div className="hdr-chips">
+            <span className="muted">Reject</span>
+            {reject.map((t) => (
+              <button type="button" key={t} className="hdr-chip reject" data-focus={`unreject-${t}`} aria-label={`Stop rejecting ${labelOf(options, t)}`}
+                onClick={() => unreject(t)}>
+                {labelOf(options, t)} ×
               </button>
-              <button type="button" className="small" aria-label={`Reject ${o.label}`} onClick={() => set({ hdrReject: [...reject, o.tier] })}>
-                reject
-              </button>
-            </span>
-          ))}
-        </div>
+            ))}
+            {reject.length === 0 && <span className="muted">nothing</span>}
+          </div>
+
+          {unused.length > 0 && (
+            <div className="hdr-chips">
+              <span className="muted">Not ranked</span>
+              {unused.map((o) => (
+                <span key={o.tier} className="hdr-chip">
+                  {o.label}
+                  <button type="button" className="small" aria-label={`Prefer ${o.label}`} onClick={() => then(`remove-${o.tier}`, { hdrOrder: [...order, o.tier] })}>
+                    + prefer
+                  </button>
+                  <button type="button" className="small" aria-label={`Reject ${o.label}`} onClick={() => then(`unreject-${o.tier}`, { hdrReject: [...reject, o.tier] })}>
+                    reject
+                  </button>
+                </span>
+              ))}
+            </div>
+          )}
+        </>
       )}
 
       <DeviceDerivation options={options} onApply={(d) => set(d)} />
 
-      <h4>Pre-flight probe</h4>
-      <p className="muted">
-        Before grabbing, Runner reads the first bytes of the best releases and Curator measures them, so a
-        release is ranked on what it is rather than what its name says.
-      </p>
-      <div className="form-row">
-        <label>
-          Probe top candidates
-          <select value={value.preflight.top ?? 0}
-            onChange={(e) => set({ preflight: { ...value.preflight, top: Number(e.target.value) } })}>
-            {PROBE_TOPS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-          </select>
-        </label>
-        <label>
-          Bytes per probe
-          <select value={value.preflight.bytes ?? 0}
-            onChange={(e) => set({ preflight: { ...value.preflight, bytes: Number(e.target.value) } })}>
-            {PROBE_BYTES.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-          </select>
-        </label>
-        <label>
-          When the probe can't read
-          <select value={value.preflight.skipUnreadable ? 'skip' : 'rank'}
-            onChange={(e) => set({ preflight: { ...value.preflight, skipUnreadable: e.target.value === 'skip' } })}>
-            <option value="rank">Rank by name, below measured</option>
-            <option value="skip">Skip the release</option>
-          </select>
-        </label>
-      </div>
-      <button type="button" className="small" onClick={() => set({ hdrOrder: [], hdrReject: [], hdrTies: [], preflight: {} })}>
-        Remove HDR preference
-      </button>
+      {enabled && (
+        <>
+          <h4>Pre-flight probe</h4>
+          <p className="muted">
+            Before grabbing, Runner reads the first bytes of the best releases and Curator measures them, so a
+            release is ranked on what it is rather than what its name says.
+          </p>
+          <div className="form-row">
+            <label>
+              Probe top candidates
+              <select value={value.preflight.top ?? 0}
+                onChange={(e) => set({ preflight: { ...value.preflight, top: Number(e.target.value) } })}>
+                {PROBE_TOPS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+              </select>
+            </label>
+            <label>
+              Bytes per probe
+              <select value={value.preflight.bytes ?? 0}
+                onChange={(e) => set({ preflight: { ...value.preflight, bytes: Number(e.target.value) } })}>
+                {PROBE_BYTES.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+              </select>
+            </label>
+            <label>
+              When the probe can't read
+              <select value={value.preflight.skipUnreadable ? 'skip' : 'rank'}
+                onChange={(e) => set({ preflight: { ...value.preflight, skipUnreadable: e.target.value === 'skip' } })}>
+                <option value="rank">Rank by name, below measured</option>
+                <option value="skip">Skip an encrypted, compressed or incomplete release</option>
+              </select>
+            </label>
+          </div>
+          <button type="button" className="small" onClick={() => then('enable', { hdrOrder: [], hdrReject: [], hdrTies: [], preflight: {} })}>
+            Remove HDR preference
+          </button>
+        </>
+      )}
     </fieldset>
   )
 }
@@ -208,16 +240,17 @@ function DeviceDerivation(props: { options: HDRTierOption[]; onApply: (d: Pick<H
     setOpen(false)
     trigger.current?.focus()
   }
-  if (!open) {
-    return (
-      <button ref={trigger} type="button" className="small" onClick={() => setOpen(true)}>
-        Derive order from device
-      </button>
-    )
-  }
   const list = devices.data?.devices ?? []
+  // The trigger stays mounted while the panel is open, so closing it (×,
+  // Escape, or applying a device) has somewhere to return focus.
   return (
-    <div ref={panel} tabIndex={-1} className="hdr-devices" data-testid="hdr-devices" role="region" aria-label="Playback devices"
+    <>
+    <button ref={trigger} type="button" className="small" aria-expanded={open} aria-controls="hdr-devices"
+      onClick={() => (open ? close() : setOpen(true))}>
+      Derive order from device
+    </button>
+    {open && (
+    <div ref={panel} id="hdr-devices" tabIndex={-1} className="hdr-devices" data-testid="hdr-devices" role="region" aria-label="Playback devices"
       onKeyDown={(e) => {
         if (e.key === 'Escape') {
           e.preventDefault()
@@ -262,6 +295,8 @@ function DeviceDerivation(props: { options: HDRTierOption[]; onApply: (d: Pick<H
         </div>
       ))}
     </div>
+    )}
+    </>
   )
 }
 

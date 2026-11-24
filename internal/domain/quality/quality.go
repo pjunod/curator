@@ -263,13 +263,14 @@ type Profile struct {
 // Preflight is the pre-flight probe policy of a profile.
 type Preflight struct {
 	// Top is how many of the best-ranked releases to probe; 0 means the
-	// default, ProbeAll every release the profile would take.
+	// default, at most MaxProbeTop.
 	Top int
 	// Bytes is how much of each release's head to read; 0 means the default.
 	Bytes int64
-	// SkipUnreadable refuses a release whose head could not be read
-	// (encrypted, compressed, missing articles) instead of ranking it by its
-	// name below every measured one.
+	// SkipUnreadable refuses a release the probe showed cannot be measured
+	// (encrypted, compressed, missing articles, no media) instead of ranking
+	// it by its name below every measured one. A probe that could not run
+	// never refuses.
 	SkipUnreadable bool
 }
 
@@ -278,8 +279,11 @@ type Preflight struct {
 const (
 	DefaultProbeTop   = 5
 	DefaultProbeBytes = 4 << 20
-	ProbeAll          = 1000
-	MaxProbeBytes     = 16 << 20
+	// MaxProbeTop bounds the releases one search probes: each costs an NZB
+	// fetch from the indexer (against its API limits) and a few articles from
+	// the news servers, and an interactive search waits on them.
+	MaxProbeTop   = 10
+	MaxProbeBytes = 16 << 20
 )
 
 // Probes reports whether pre-flight probing applies to this profile, and how
@@ -291,6 +295,9 @@ func (p Profile) Probes() (top int, bytes int64, ok bool) {
 	top, bytes = p.Preflight.Top, p.Preflight.Bytes
 	if top <= 0 {
 		top = DefaultProbeTop
+	}
+	if top > MaxProbeTop {
+		top = MaxProbeTop
 	}
 	if bytes <= 0 {
 		bytes = DefaultProbeBytes
@@ -307,28 +314,50 @@ func (p Profile) Probes() (top int, bytes int64, ok bool) {
 // profile 7 release is FEL never ranks it with FEL. With no order, every tier
 // ranks alike.
 func (p Profile) HDRRank(t hdr.Tier) int {
+	worst, _ := p.hdrRankRange(t)
+	return worst
+}
+
+// hdrRankRange is the worst and best rank a tier could have: one value for a
+// fully known tier, a span for a partly-known one.
+func (p Profile) hdrRankRange(t hdr.Tier) (worst, best int) {
 	if len(p.HDROrder) == 0 {
-		return 0
+		return 0, 0
 	}
 	unlisted := len(p.HDROrder)
-	worst := -1
+	worst, best = -1, unlisted
 	for _, cand := range t.Possible() {
-		r := unlisted
-		for _, member := range p.tiedWith(cand) {
-			for i, x := range p.HDROrder {
-				if x == member && i < r {
-					r = i
-				}
-			}
-		}
-		if r > worst {
-			worst = r
-		}
+		r := p.tierRank(cand)
+		worst, best = max(worst, r), min(best, r)
 	}
 	if worst < 0 {
-		return unlisted
+		return unlisted, unlisted
 	}
-	return worst
+	return worst, best
+}
+
+// tierRank is one fully known tier's place, ties taking their best member's.
+func (p Profile) tierRank(t hdr.Tier) int {
+	r := len(p.HDROrder)
+	for _, member := range p.tiedWith(t) {
+		for i, x := range p.HDROrder {
+			if x == member && i < r {
+				r = i
+			}
+		}
+	}
+	return r
+}
+
+// heldRank is where a file already on disk stands: the best it could be. A
+// file measured only as "Dolby Vision" (no configuration record or RPU
+// decoded, or measured before prober revision 2) may well be profile 7 FEL;
+// not knowing it is not P5 is no evidence that it is, so the don't-churn rule
+// (ADR 0013 §5) reads a partly-known tier on disk at its best, while a release
+// being judged is read at its worst.
+func (p Profile) heldRank(t hdr.Tier) int {
+	_, best := p.hdrRankRange(t)
+	return best
 }
 
 // tiedWith returns the tiers ranked as one with t, t included.
@@ -363,13 +392,13 @@ func (p Profile) HDRAcceptable(e hdr.Evidence) bool {
 }
 
 // HDRMet reports whether what is on disk is at the top of the HDR order. A
-// tier that was never measured counts as met: the don't-churn rule on a new
-// axis.
+// tier that was never measured counts as met, and a partly-known one counts
+// as met when its best case is: the don't-churn rule on a new axis.
 func (p Profile) HDRMet(current hdr.Tier) bool {
 	if len(p.HDROrder) == 0 || current == hdr.TierUnknown {
 		return true
 	}
-	return p.HDRRank(current) == 0
+	return p.heldRank(current) == 0
 }
 
 // Audio is what is known about the audio languages of what is on disk.
@@ -483,8 +512,12 @@ func (p Profile) Acceptable(release Quality) bool {
 //
 // The HDR axis (ADR 0031 §4) comes last and never trades quality away: a
 // release at no lower quality rank whose HDR ranks above a measured file below
-// the top of the order is an upgrade. releaseHDR and currentHDR may be zero,
-// which means unknown and leaves the ADR 0014 rule untouched.
+// the top of the order is an upgrade. Only sure evidence about the release
+// (measured, or stated outright) can make an HDR-only upgrade, and it must
+// beat the best the file on disk could be: a guess never outranks a
+// measurement (ADR 0013 §5), so an inferred "REMUX DV is probably P7" waits
+// for the pre-flight probe. releaseHDR and currentHDR may be zero, which
+// means unknown and leaves the ADR 0014 rule untouched.
 func (p Profile) Upgrade(release Quality, releaseLangs []string, releaseHDR hdr.Evidence,
 	current Quality, sourceVerified bool, audio Audio, currentHDR hdr.Tier) bool {
 	if !p.Acceptable(release) || !p.LanguageAcceptable(releaseLangs) || !p.HDRAcceptable(releaseHDR) {
@@ -497,7 +530,8 @@ func (p Profile) Upgrade(release Quality, releaseLangs []string, releaseHDR hdr.
 		return true
 	}
 	return !p.HDRMet(currentHDR) && Rank(release) >= Rank(current) &&
-		releaseHDR.Tier != hdr.TierUnknown && p.HDRRank(releaseHDR.Tier) < p.HDRRank(currentHDR)
+		releaseHDR.Tier != hdr.TierUnknown && releaseHDR.Sure() &&
+		p.HDRRank(releaseHDR.Tier) < p.heldRank(currentHDR)
 }
 
 // Sentence renders the profile as the thing it now is — one true sentence,

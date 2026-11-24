@@ -227,6 +227,12 @@ func (s *Service) SyncRSS(ctx context.Context) error {
 					unlock()
 					continue
 				}
+				// RSS grabs are measured like searched ones (ADR 0031 §6).
+				if ok, why := s.preflightOne(ctx, fresh, freshProfile, r, p); !ok {
+					unlock()
+					s.log.Info("rss: declined on pre-flight", "release", r.Title, "why", why.Reason)
+					continue
+				}
 				evidence := matchEvidence(p, fresh, r, match)
 				id, err := s.autoGrab(ctx, fresh, r, evidence)
 				if err != nil {
@@ -735,7 +741,7 @@ func (s *Service) searchAndGrabBestReserved(ctx context.Context, w domain.Wantab
 						continue
 					}
 					c.hdr = hdr.Measure(ev.Tier)
-				case profile.Preflight.SkipUnreadable:
+				case ev.refusesUnder(profile):
 					s.log.Info("auto search: declined, could not measure", "release", c.r.Title, "reason", ev.Reason)
 					refused.add(CodeProbeUnreadable, unreadableReason(ev))
 					drop[c] = true
@@ -747,6 +753,7 @@ func (s *Service) searchAndGrabBestReserved(ctx context.Context, w domain.Wantab
 					kept = append(kept, c)
 				}
 			}
+			tally.Accepted -= len(accepted) - len(kept)
 			accepted = kept
 			sort.SliceStable(accepted, func(i, j int) bool { return better(accepted[i], accepted[j]) })
 		}

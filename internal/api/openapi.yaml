@@ -6144,7 +6144,7 @@ components:
       properties:
         top:
           type: integer
-          description: How many of the best-ranked releases to probe; 0 = default (5), 1000 = every one.
+          description: How many of the best-ranked releases to probe; 0 = default (5), at most 10.
         bytes:
           type: integer
           format: int64

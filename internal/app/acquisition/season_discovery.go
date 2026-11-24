@@ -933,6 +933,8 @@ func (s *Service) admitSeasonCandidates(ctx context.Context, p seasonCheckpoint,
 	releases := map[acquisitionplan.CandidateKey]ports.Release{}
 	evidence := map[acquisitionplan.CandidateKey]domain.MatchEvidence{}
 	titles := map[acquisitionplan.CandidateKey]string{}
+	parsedOf := map[acquisitionplan.CandidateKey]parser.Parsed{}
+	wantOf := map[acquisitionplan.CandidateKey]domain.Wantable{}
 	for _, r := range p.Releases {
 		excluded := false
 		for _, sc := range p.Scopes {
@@ -1032,7 +1034,11 @@ func (s *Service) admitSeasonCandidates(ctx context.Context, p seasonCheckpoint,
 		releases[key] = r
 		evidence[key] = matchEvidence(parsed, w, r, match)
 		titles[key] = r.Title
+		parsedOf[key], wantOf[key] = parsed, w
 	}
+	// Season packs and singles are measured before the plan is built, as a
+	// single-title search measures before it chooses (ADR 0031 §6).
+	in.Candidates = s.preflightPlan(ctx, profile, in.Candidates, releases, parsedOf, wantOf, item.ID)
 	plan, err := acquisitionplan.Build(in)
 	if err != nil {
 		return tally, err

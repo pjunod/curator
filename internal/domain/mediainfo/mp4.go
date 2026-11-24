@@ -682,6 +682,7 @@ const (
 	tfhdSampleDescIndex  = 0x000002
 	tfhdDefaultDuration  = 0x000008
 	tfhdDefaultSize      = 0x000010
+	tfhdDefaultBaseMoof  = 0x020000
 	trunDataOffset       = 0x000001
 	trunFirstSampleFlags = 0x000004
 	trunSampleDuration   = 0x000100
@@ -689,14 +690,20 @@ const (
 )
 
 // moofFirstSample reads the track fragment for trackID. The data base is the
-// tfhd base_data_offset when given, else the start of the moof (which is what
-// both the default-base-is-moof flag and the first-fragment rule say).
+// tfhd base_data_offset when given, else the start of the moof: the
+// default-base-is-moof flag says so, and so does the rule for the first track
+// fragment. A later track fragment with neither starts where the previous
+// one's data ended, which this does not compute; it answers "could not tell"
+// rather than an offset into another track's samples.
 func moofFirstSample(moof []byte, moofStart int64, trackID uint32) (int64, int64) {
 	var off, size int64
+	first := true
 	boxes(moof, func(typ string, traf []byte) {
 		if typ != "traf" || size > 0 {
 			return
 		}
+		firstTraf := first
+		first = false
 		base := moofStart
 		var defaultSize int64
 		mine := false
@@ -718,6 +725,9 @@ func moofFirstSample(moof []byte, moofStart int64, trackID uint32) (int64, int64
 						return
 					}
 					base = int64(v)
+				} else if !firstTraf && flags&tfhdDefaultBaseMoof == 0 {
+					mine = false
+					return
 				}
 				if flags&tfhdSampleDescIndex != 0 {
 					r.skip(4)

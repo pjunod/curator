@@ -244,8 +244,8 @@ export function ReleaseSearch(props: {
 
           {probeSummary(all) && (
             <p className="muted release-probe-summary" data-testid="probe-summary">
-              <span className="hdr-badge claim">DV P7?</span> inferred from name{' '}
-              <span className="hdr-badge measured">DV P7 FEL</span> measured by pre-flight probe · {probeSummary(all)}
+              <span className="hdr-badge claim">dashed?</span> claimed by the name{' '}
+              <span className="hdr-badge measured">solid</span> measured by pre-flight probe · {probeSummary(all)}
             </p>
           )}
 
@@ -261,8 +261,7 @@ export function ReleaseSearch(props: {
                 <thead>
                   <tr>
                     <th>Release</th>
-                    <th>Quality</th>
-                    <th title="What the name claims (dashed, ?) and what a pre-flight probe measured (solid)">HDR</th>
+                    <th title="HDR badges: what the name claims (dashed, ?) and what a pre-flight probe measured (solid)">Quality</th>
                     <th className="num">Size</th>
                     <th className="num">Age</th>
                     <th className="num">Seed</th>
@@ -389,8 +388,8 @@ function ReleaseRow({
             {c.score}
           </div>
         )}
-      </td>
-      <td data-label="HDR">
+        {/* HDR is part of the quality: in its cell, the table keeps the
+            column widths the title needs at every width. */}
         <HDRCell c={c} open={evidence} onToggle={() => setEvidence((v) => !v)} triggerRef={evidenceTrigger} />
       </td>
       <td className="muted num" data-label="Size">{fmtBytes(c.size)}</td>
@@ -410,7 +409,7 @@ function ReleaseRow({
     </tr>
     {evidence && c.probe && (
       <tr className="probe-evidence-row">
-        <td colSpan={8}>
+        <td colSpan={7}>
           <ProbeEvidencePanel probe={c.probe} onClose={closeEvidence} />
         </td>
       </tr>

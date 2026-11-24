@@ -69,3 +69,25 @@ func TestReleaseProbeNotAdvertised(t *testing.T) {
 		t.Fatalf("SupportsReleaseProbe = %v, %v; want false without the capability", ok, err)
 	}
 }
+
+// The largest head a profile may ask for (16 MiB) is about 21.4 MiB as
+// base64 JSON: past the adapter's default 8 MiB response bound, which once
+// failed every probe above about 6 MiB.
+func TestReleaseProbeAcceptsTheLargestHead(t *testing.T) {
+	head := make([]byte, 16<<20)
+	copy(head, []byte{0x1a, 0x45, 0xdf, 0xa3})
+	body := `{"status":"ok","file":"Title.mkv","file_size":1,"path":["yenc"],"articles":22,"head":"` +
+		base64.StdEncoding.EncodeToString(head) + `"}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(body))
+	}))
+	defer srv.Close()
+	c := New(ports.ClientConfig{Type: "nzbd", URL: srv.URL, Password: "token"})
+	h, err := c.ProbeRelease(context.Background(), "https://indexer/a", 16<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(h.Bytes) != len(head) {
+		t.Fatalf("head = %d bytes, want %d", len(h.Bytes), len(head))
+	}
+}

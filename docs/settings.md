@@ -618,14 +618,17 @@ the best releases before grabbing, and measures them with the same prober it
 runs on imported files. That is how FEL is told from MEL, and a mislabelled
 profile 5 from 8.1, before anything downloads. The settings:
 
-- **Probe top candidates**: 5 (default), 10, or all the releases the
-  profile would take.
+- **Probe top candidates**: 3, 5 (default) or 10, the most: each probe
+  fetches the release's NZB from the indexer. What a probe learns about a
+  release is remembered for a day, so repeated searches do not probe it
+  again. RSS grabs and season plans are probed too.
 - **Bytes per probe**: 4 MB reads the container headers and the first frame,
   where the Dolby Vision RPU lives; 1 MB reads headers only (profile and
   layers, not FEL versus MEL).
-- **When the probe can't read**: an encrypted or compressed archive, or
-  missing articles, either ranks by its name below every measured release
-  (default) or is skipped.
+- **When the probe can't read**: an encrypted or compressed archive,
+  missing articles or no media file either ranks by its name below every
+  measured release (default) or is skipped. A probe that could not run at
+  all (Runner or its news servers did not answer) never skips a release.
 
 **Derive order from device.** With a plurx connection under Notifications,
 Curator can read what each of the household's signed-in playback devices

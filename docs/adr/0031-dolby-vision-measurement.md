@@ -224,11 +224,18 @@ What the first slice settled while building §1–§2:
   measurements and profiles: `dv-p7-fel`, `dv-p7-mel`, `dv-p8`,
   `hdr10plus`, `hdr10`, `hlg`, `dv-p5`, `sdr`, plus the partly-known
   `dv-p7` (EL not read) and `dv` (profile not known). A partly-known tier
-  ranks as the worst tier it could be.
+  on a release being judged ranks as the worst tier it could be; on a file
+  already on disk it counts as the best it could be, so a file known only as
+  "Dolby Vision" (no configuration record or RPU decoded, or measured before
+  prober revision 2) is never replaced by HDR10 on the chance that it is
+  profile 5 (the don't-churn rule of ADR 0013 §5).
 - **Only sure evidence refuses.** A measurement, or a name stating the
   profile outright, can put a release on the profile's refusal list; an
   inferred profile ("DV on a web release is probably P5") only ranks. The
-  pre-flight probe is what turns the guess into a refusal.
+  pre-flight probe is what turns the guess into a refusal. The same holds
+  for upgrades: an HDR-only upgrade over a file on disk needs sure evidence
+  about the release, so an inferred "REMUX DV is probably P7" never replaces
+  a measured 8.1 file until the probe measures it.
 - **Every decision path judges HDR**, not only search: the wanted index,
   imports (which measure the incoming file once, for the truncation check
   and the HDR evidence together), the placement policy and delivery
@@ -239,13 +246,26 @@ What the first slice settled while building §1–§2:
   the HDR axis.
 - **Pre-flight applies whenever a profile has an HDR order or a refusal
   list**: that is when a measurement can change a decision, so there is no
-  separate switch. The profile sets how many releases to probe (default 5),
-  how many bytes (default 4 MiB) and whether an unreadable release is ranked
-  by its name or skipped. Runner's answer is one stateless call carrying the
-  head as base64.
+  separate switch. The profile sets how many releases to probe (default 5,
+  at most 10: each costs an NZB fetch against the indexer's limits), how
+  many bytes (default 4 MiB, at most 16 MiB) and whether an unreadable
+  release is ranked by its name or skipped. Runner's answer is one
+  stateless call carrying the head as base64.
+- **Every grab path probes**: interactive and automatic search, RSS, and
+  season plans (packs and singles, measured before the plan is built).
+- **Only the release can refuse itself.** Skipping applies to what the
+  probe learned about the release — encrypted, compressed, missing
+  articles, no media. A probe that could not run (a timeout, a Runner
+  error, no news server answering, the pass running out of time) leaves the
+  release to its name, so without a working probe search behaves as it did
+  before.
+- **A post does not change**, so a measurement or a release-attributable
+  refusal is cached for a day (by indexer, GUID, title and size, never the
+  URL with its API key); an item searched every few hours does not probe
+  the same releases again. Failures are not cached.
 - **The disc master** (`media_items.disc_el`) is written inside the same
   database writes that store a measurement, so no path forgets it; FEL is
-  sticky.
+  sticky. Pre-flight records it only from a release matched to the title.
 
 ## Consequences
 

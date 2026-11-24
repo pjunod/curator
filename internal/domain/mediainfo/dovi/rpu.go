@@ -398,7 +398,8 @@ func extBlocks(r *bitReader, out *RPU) (int, error) {
 	if n > maxExtBlocks {
 		return 0, fmt.Errorf("%w: ext blocks", ErrNotRPU)
 	}
-	for !r.aligned() {
+	// libdovi aligns only before a non-empty list (ext_metadata_block()).
+	for n > 0 && !r.aligned() {
 		if r.flag() {
 			return 0, fmt.Errorf("%w: dm alignment", ErrNotRPU)
 		}

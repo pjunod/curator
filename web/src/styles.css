@@ -4323,6 +4323,7 @@ a.pill-info:hover {
   cursor: pointer;
 }
 .hdr-cell {
+  margin-top: 4px;
   display: flex;
   flex-wrap: wrap;
   gap: 4px;

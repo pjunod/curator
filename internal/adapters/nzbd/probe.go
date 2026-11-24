@@ -43,7 +43,12 @@ type probeResponse struct {
 	Articles        int      `json:"articles"`
 	ArticlesMissing int      `json:"articles_missing"`
 	Head            string   `json:"head"` // base64
+
+	maxBytes int64
 }
+
+// responseLimit is the head base64-encoded (4/3) plus room for the fields.
+func (r *probeResponse) responseLimit() int64 { return r.maxBytes/3*4 + 8 + 64<<10 }
 
 // ProbeRelease implements ports.ReleaseProber. Runner fetches the NZB from the
 // URL itself, exactly as it does for an add, so Curator never handles NZB
@@ -52,7 +57,7 @@ func (c *Client) ProbeRelease(ctx context.Context, downloadURL string, maxBytes 
 	q := url.Values{}
 	q.Set("url", downloadURL)
 	q.Set("bytes", strconv.FormatInt(maxBytes, 10))
-	var out probeResponse
+	out := probeResponse{maxBytes: maxBytes}
 	if err := c.do(ctx, http.MethodPost, "/api/v1/probe?"+q.Encode(), &out); err != nil {
 		return ports.ReleaseHead{}, err
 	}

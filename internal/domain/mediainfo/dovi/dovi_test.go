@@ -128,7 +128,7 @@ func TestHeaderProfile(t *testing.T) {
 
 func TestParseConfig(t *testing.T) {
 	// Profile 7, level 6, RPU+EL+BL, compatibility 6: the UHD Blu-ray record.
-	p7 := []byte{1, 0, 7<<1 | 0, 6<<3 | 0x07, 6 << 4}
+	p7 := []byte{1, 0, 7 << 1, 6<<3 | 0x07, 6 << 4} // level 6: top bit 0 in byte 2, low 5 bits in byte 3
 	c, ok := ParseConfig(p7)
 	if !ok || c.Profile != 7 || c.Level != 6 || !c.RPU || !c.EL || !c.BL || c.BLCompatID != 6 {
 		t.Errorf("P7 record = %+v ok=%v", c, ok)
