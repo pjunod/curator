@@ -104,7 +104,7 @@ trunc l.mp4 mp4-480p-h264-ac3.mp4 64
 SIZE=1280x720 gen m.avi -c:v mpeg4 -pix_fmt yuv420p -c:a ac3 -ac 2 -f avi
 trunc m.avi avi-720p-mpeg4-ac3.avi 32
 
-# HDR10+ (ADR 0026): x265 writes SMPTE ST 2094-40 SEI from a dynamic-metadata
+# HDR10+ (ADR 0031): x265 writes SMPTE ST 2094-40 SEI from a dynamic-metadata
 # JSON. HDR10+ lives in the frames, not the headers, so these stay whole
 # (a few KiB): the probe reads the first access unit.
 cat > "$tmp/hdr10plus.json" <<'JSON'
