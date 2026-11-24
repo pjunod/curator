@@ -55,6 +55,7 @@ func itemToDomain(r sqlitegen.MediaItem) domain.MediaItem {
 		Year:      int(r.Year),
 		Author:    r.Author,
 		BookType:  quality.BookType(r.BookType),
+		DiscEL:    r.DiscEl,
 		IDs: domain.ExternalIDs{
 			TMDB: r.TmdbID, IMDB: r.ImdbID, TVDB: r.TvdbID,
 			ISBN13: r.Isbn13, OLID: r.Olid, ASIN: r.Asin,

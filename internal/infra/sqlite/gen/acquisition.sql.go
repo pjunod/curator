@@ -1742,6 +1742,23 @@ func (q *Queries) MarkPayloadRemoved(ctx context.Context, arg MarkPayloadRemoved
 	return err
 }
 
+const recordDiscEnhancementLayer = `-- name: RecordDiscEnhancementLayer :exec
+UPDATE media_items SET disc_el = ? WHERE id = ? AND disc_el != 'fel'
+`
+
+type RecordDiscEnhancementLayerParams struct {
+	DiscEl string
+	ID     int64
+}
+
+// ADR 0026 section 6: a measured profile 7 enhancement layer for a title.
+// The caller passes only fel or mel. An FEL already recorded is never
+// overwritten, so FEL is sticky and MEL holds only until an FEL is seen.
+func (q *Queries) RecordDiscEnhancementLayer(ctx context.Context, arg RecordDiscEnhancementLayerParams) error {
+	_, err := q.db.ExecContext(ctx, recordDiscEnhancementLayer, arg.DiscEl, arg.ID)
+	return err
+}
+
 const setDownloadHandle = `-- name: SetDownloadHandle :exec
 UPDATE downloads SET handle = ?, transfer = ?, updated_at = ? WHERE id = ?
 `

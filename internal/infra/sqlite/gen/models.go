@@ -449,6 +449,7 @@ type MediaItem struct {
 	Monitor          string
 	MonitorSince     string
 	MonitorSeason    int64
+	DiscEl           string
 }
 
 type Notifier struct {

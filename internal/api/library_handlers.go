@@ -371,6 +371,14 @@ func detailDTO(m domain.MediaItem) apigen.MediaItemDetail {
 	if quality.Rank(m.QualityTarget) > 0 {
 		d.QualityTarget = optStr(m.QualityTarget.Display())
 	}
+	if m.HDR != "" {
+		tier := apigen.HDRTier(m.HDR)
+		d.HdrTier = &tier
+	}
+	if m.DiscEL != "" {
+		el := apigen.MediaItemDetailDiscEnhancementLayer(m.DiscEL)
+		d.DiscEnhancementLayer = &el
+	}
 	if m.Upgrade != domain.UpgradeUnknown {
 		u := apigen.MediaItemDetailUpgrade(m.Upgrade)
 		d.Upgrade = &u

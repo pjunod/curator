@@ -183,6 +183,11 @@ type MediaItem struct {
 	// the other half of Upgrade — a file at the target in the wrong
 	// language is still being hunted.
 	Audio quality.Audio
+	// DiscEL is the title's disc master as measurement has shown it (ADR
+	// 0026 §6): "fel" once any profile 7 measurement of this title found a
+	// full enhancement layer, "mel" while only minimal ones were seen, empty
+	// before any.
+	DiscEL string
 	// HDR is the primary copy's measured HDR tier (ADR 0026): the tier every
 	// measured file shares, or unknown when they differ or were not measured.
 	HDR hdr.Tier

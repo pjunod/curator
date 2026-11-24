@@ -3904,6 +3904,16 @@ components:
             today the audio-language rule (ADR 0022) -- the reason, server
             rendered: "no English audio on disk (German only)". Empty
             otherwise.
+        hdrTier:
+          $ref: "#/components/schemas/HDRTier"
+        discEnhancementLayer:
+          type: string
+          enum: ["", fel, mel]
+          description: >
+            The title's Dolby Vision disc master as measurement has shown it
+            (ADR 0026): fel once any profile 7 file or pre-flight probe of the
+            title measured a full enhancement layer, mel while only minimal
+            ones were seen, empty before any.
         audioLanguages:
           type: array
           items: { type: string }

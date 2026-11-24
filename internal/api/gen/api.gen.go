@@ -563,6 +563,27 @@ func (e MediaFileInfoProvenance) Valid() bool {
 	}
 }
 
+// Defines values for MediaItemDetailDiscEnhancementLayer.
+const (
+	MediaItemDetailDiscEnhancementLayerEmpty MediaItemDetailDiscEnhancementLayer = ""
+	MediaItemDetailDiscEnhancementLayerFel   MediaItemDetailDiscEnhancementLayer = "fel"
+	MediaItemDetailDiscEnhancementLayerMel   MediaItemDetailDiscEnhancementLayer = "mel"
+)
+
+// Valid indicates whether the value is a known member of the MediaItemDetailDiscEnhancementLayer enum.
+func (e MediaItemDetailDiscEnhancementLayer) Valid() bool {
+	switch e {
+	case MediaItemDetailDiscEnhancementLayerEmpty:
+		return true
+	case MediaItemDetailDiscEnhancementLayerFel:
+		return true
+	case MediaItemDetailDiscEnhancementLayerMel:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for MediaItemDetailUpgrade.
 const (
 	MediaItemDetailUpgradeCapped  MediaItemDetailUpgrade = "capped"
@@ -2519,18 +2540,24 @@ type MediaItemDetail struct {
 	Copies    []MediaCopy       `json:"copies"`
 	Countries []CountryEvidence `json:"countries"`
 
+	// DiscEnhancementLayer The title's Dolby Vision disc master as measurement has shown it (ADR 0026): fel once any profile 7 file or pre-flight probe of the title measured a full enhancement layer, mel while only minimal ones were seen, empty before any.
+	DiscEnhancementLayer *MediaItemDetailDiscEnhancementLayer `json:"discEnhancementLayer,omitempty"`
+
 	// DownloadPriority Effective scheduler priority after applying the per-item override or inheriting the selected quality profile. Supported values are -100, -50, 0, 50, 100, and 900 (force).
 	DownloadPriority int `json:"downloadPriority"`
 
 	// DownloadPriorityOverride NULL means inherit downloadPriority from the quality profile.
-	DownloadPriorityOverride *int                   `json:"downloadPriorityOverride"`
-	Ended                    bool                   `json:"ended"`
-	Files                    []MediaFileInfo        `json:"files"`
-	Genres                   []string               `json:"genres"`
-	Id                       int64                  `json:"id"`
-	IdentitySources          []IdentitySourceStatus `json:"identitySources"`
-	Ids                      ExternalIds            `json:"ids"`
-	Kind                     MediaKind              `json:"kind"`
+	DownloadPriorityOverride *int            `json:"downloadPriorityOverride"`
+	Ended                    bool            `json:"ended"`
+	Files                    []MediaFileInfo `json:"files"`
+	Genres                   []string        `json:"genres"`
+
+	// HdrTier An HDR presentation (ADR 0026). Profiles name the first eight; dv-p7 (EL type unknown), dv (profile unknown) and the empty string (nothing known) appear only as observations.
+	HdrTier         *HDRTier               `json:"hdrTier,omitempty"`
+	Id              int64                  `json:"id"`
+	IdentitySources []IdentitySourceStatus `json:"identitySources"`
+	Ids             ExternalIds            `json:"ids"`
+	Kind            MediaKind              `json:"kind"`
 
 	// Monitor Persistent series policy. Applying a mode resets existing selections. All selects everything; latest selects the latest and later seasons; future selects episodes airing today or later; new_seasons selects seasons after the last season started before today; none clears selections. Specials start unmonitored. Refresh preserves manual selections.
 	Monitor    *SeriesMonitorMode `json:"monitor,omitempty"`
@@ -2571,6 +2598,9 @@ type MediaItemDetail struct {
 	UpgradeReason *string `json:"upgradeReason,omitempty"`
 	Year          int     `json:"year"`
 }
+
+// MediaItemDetailDiscEnhancementLayer The title's Dolby Vision disc master as measurement has shown it (ADR 0026): fel once any profile 7 file or pre-flight probe of the title measured a full enhancement layer, mel while only minimal ones were seen, empty before any.
+type MediaItemDetailDiscEnhancementLayer string
 
 // MediaItemDetailUpgrade missing = nothing on disk · seeking = below the cutoff and being hunted · met = cutoff reached · capped = below the cutoff with upgrades switched off.
 type MediaItemDetailUpgrade string

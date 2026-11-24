@@ -24,6 +24,15 @@ UPDATE media_files
    AND COALESCE(json_extract(media_info, '$.video.height'), 0) > 0
    AND quality_provenance != 'failed';
 
+-- The title's disc master, as far as measurement has shown it: 'fel' once
+-- any Dolby Vision profile 7 file or pre-flight probe of this title measured
+-- a full enhancement layer, 'mel' while only minimal ones were seen, empty
+-- before any. FEL never reverts: a MEL remux of a title known to be FEL on
+-- disc is a different master, not evidence the disc changed (ADR 0026 §6).
+ALTER TABLE media_items ADD COLUMN disc_el TEXT NOT NULL DEFAULT '';
+
 -- +goose Down
 -- Derived from media_info, which stays; nothing older reads the column.
 ALTER TABLE media_files DROP COLUMN hdr_tier;
+-- Derived from measurements, which re-derive it on the next probe.
+ALTER TABLE media_items DROP COLUMN disc_el;

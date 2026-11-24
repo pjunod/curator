@@ -273,10 +273,48 @@ func (d *DB) SetFileMediaInfo(ctx context.Context, fileID int64, info mediainfo.
 	if !conf.Valid() {
 		conf = mediainfo.ConfidenceNone
 	}
-	return d.Write.SetFileMediaInfo(ctx, sqlitegen.SetFileMediaInfoParams{
+	if err := d.Write.SetFileMediaInfo(ctx, sqlitegen.SetFileMediaInfoParams{
 		MediaInfo: raw, AudioLanguages: audioLanguagesColumn(info), HdrTier: hdrTierColumn(info, prov), QualityProvenance: string(prov),
 		QualityConfidence: string(conf), ProbedAt: at.UnixMilli(), ID: fileID,
-	})
+	}); err != nil {
+		return err
+	}
+	if el := discEnhancementLayer(info, prov); el != "" {
+		f, err := d.Read.GetMediaFile(ctx, fileID)
+		if err != nil || !f.MediaItemID.Valid {
+			return err
+		}
+		return d.RecordDiscEnhancementLayer(ctx, f.MediaItemID.Int64, el)
+	}
+	return nil
+}
+
+// discEnhancementLayer is what a measurement says about the title's disc
+// master (migration 0071, ADR 0026 §6): "fel" or "mel" for a profile 7
+// stream whose first RPU was read, empty otherwise. Only profile 7 is a disc
+// master: an encode re-made the picture and carries no enhancement layer.
+func discEnhancementLayer(info mediainfo.Info, prov mediainfo.Provenance) string {
+	if prov == mediainfo.ProvenanceFailed || prov == mediainfo.ProvenanceImplausible {
+		return ""
+	}
+	switch info.HDRTier() {
+	case hdr.TierDVP7FEL:
+		return hdr.ELFEL
+	case hdr.TierDVP7MEL:
+		return hdr.ELMEL
+	}
+	return ""
+}
+
+// RecordDiscEnhancementLayer records a measured profile 7 enhancement layer
+// for a title, from an imported file or a pre-flight probe of a release. An
+// FEL, once recorded, stays: a MEL remux of an FEL disc is a different
+// master, not news about the disc.
+func (d *DB) RecordDiscEnhancementLayer(ctx context.Context, itemID int64, el string) error {
+	if itemID == 0 || (el != hdr.ELFEL && el != hdr.ELMEL) {
+		return nil
+	}
+	return d.Write.RecordDiscEnhancementLayer(ctx, sqlitegen.RecordDiscEnhancementLayerParams{DiscEl: el, ID: itemID})
 }
 
 // hdrTierColumn is media_files.hdr_tier (migration 0071): the measured HDR
