@@ -218,6 +218,35 @@ What the first slice settled while building §1–§2:
   files), and the scan's `NeedsProbe` queues those like any unprobed file
   (ADR 0013 §4). Manual qualities are never re-measured.
 
+### 9. Built: ranking and pre-flight (v0.39.0)
+
+- **One tier vocabulary** (`internal/domain/hdr`) serves name claims,
+  measurements and profiles: `dv-p7-fel`, `dv-p7-mel`, `dv-p8`,
+  `hdr10plus`, `hdr10`, `hlg`, `dv-p5`, `sdr`, plus the partly-known
+  `dv-p7` (EL not read) and `dv` (profile not known). A partly-known tier
+  ranks as the worst tier it could be.
+- **Only sure evidence refuses.** A measurement, or a name stating the
+  profile outright, can put a release on the profile's refusal list; an
+  inferred profile ("DV on a web release is probably P5") only ranks. The
+  pre-flight probe is what turns the guess into a refusal.
+- **Every decision path judges HDR**, not only search: the wanted index,
+  imports (which measure the incoming file once, for the truncation check
+  and the HDR evidence together), the placement policy and delivery
+  cleanup. Without that, a grab meant to replace an 8.1 file with FEL would
+  import beside it — the two-files failure of ADR 0013.
+- **Seasons and the list view** carry an HDR tier only when every file
+  measured the same one; a mixed season is unknown and is never hunted on
+  the HDR axis.
+- **Pre-flight applies whenever a profile has an HDR order or a refusal
+  list**: that is when a measurement can change a decision, so there is no
+  separate switch. The profile sets how many releases to probe (default 5),
+  how many bytes (default 4 MiB) and whether an unreadable release is ranked
+  by its name or skipped. Runner's answer is one stateless call carrying the
+  head as base64.
+- **The disc master** (`media_items.disc_el`) is written inside the same
+  database writes that store a measurement, so no path forgets it; FEL is
+  sticky.
+
 ## Consequences
 
 - One more binary format we own (the DV config record and enough RPU to
