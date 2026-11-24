@@ -4332,6 +4332,10 @@ a.pill-info:hover {
 .release-probe-summary .hdr-badge { margin: 0 2px; }
 .probe-evidence-row td { padding: 0 8px 10px; }
 .probe-evidence {
+  /* scrollIntoView({block:'nearest'}) lands it flush with the viewport
+     edge, and scroll positions are whole pixels: a margin keeps the whole
+     panel inside the viewport rather than a fraction of a pixel past it. */
+  scroll-margin: 12px;
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--bg-raised);
