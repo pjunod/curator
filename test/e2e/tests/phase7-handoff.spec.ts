@@ -1,5 +1,6 @@
 import { mkdtempSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { attempt, mockActivity } from '../activity-fixture'
 import { expect, test } from '@playwright/test'
 
 // The explicit, controllable handoff (runs after phase2/phase3 have grabbed
@@ -9,27 +10,17 @@ test.describe.configure({ mode: 'serial' })
 
 const MOVIE_RELEASE = 'The.Test.Movie.2024.1080p.WEB-DL.x264-E2E'
 
-test('an imported download lays out its handoff step by step', async ({ page }) => {
-  await page.goto('/activity')
-  await page.getByTestId('toggle-imported').click() // finished rows start collapsed
-  const row = page.locator('tr', { hasText: MOVIE_RELEASE }).filter({
-    has: page.locator('.pill-ok', { hasText: 'imported' }),
-  }).first()
-  await expect(row).toBeVisible()
-
-  await row.getByRole('button', { name: 'Show handoff' }).click()
-
-  const trace = page.locator('.handoff-trace').first()
-  await expect(trace).toBeVisible()
-  // The trace opens at grab and ends at import.
-  await expect(page.locator('.handoff-step[data-step="grabbed"]').first()).toBeVisible()
-  await expect(page.locator('.handoff-step[data-step="imported"]').first()).toBeVisible()
-  // The paths Monarr used are shown (no more black box).
-  await expect(page.locator('.handoff .path-chip').first()).toBeVisible()
+test('an imported download offers its correlated job log', async ({ page }) => {
+  await page.goto('/activity#history')
+  const row = page.locator('.activity-attempt').filter({ hasText: MOVIE_RELEASE }).first()
+  await row.getByRole('button', { name: 'Job log', exact: true }).click()
+  const log = page.getByRole('dialog', { name: /^Job log/ })
+  await expect(log.locator('.activity-job-log')).toBeVisible()
+  await expect(log.locator('.activity-job-log li').first()).toBeVisible()
 })
 
 test('the approve-imports toggle on a client persists', async ({ page, request }) => {
-  await page.goto('/settings')
+  await page.goto('/settings#downloadclients')
   const clientRow = page.locator('#downloadclients tr', { hasText: 'fakeqb' }).first()
   await expect(clientRow).toBeVisible()
 
@@ -58,13 +49,13 @@ test('manual import scans a folder and skips samples', async ({ page, request })
   writeFileSync(join(dir, 'sample.mkv'), 's')
 
   const learnedDefault = await (await request.get('/api/v1/import/default-path')).json()
-  await page.goto('/activity')
   let submitted: any
   await page.route('**/api/v1/import/manual', async (route) => {
     submitted = route.request().postDataJSON()
     await route.fulfill({ status: 202, contentType: 'application/json', body: '{"downloadId":991}' })
   })
-  await page.getByRole('button', { name: 'Resolve', exact: true }).click()
+  await page.goto('/activity')
+  await page.getByRole('button', { name: 'Import files…', exact: true }).click()
 
   const panel = page.locator('.manual-import')
   await expect(panel).toBeVisible()
@@ -93,34 +84,10 @@ test('manual import scans a folder and skips samples', async ({ page, request })
 })
 
 test('an accepted import waiting for a worker is shown as queued, not interrupted', async ({ page }) => {
-  await page.route('**/api/v1/queue/summary', async (route) => {
-    await route.fulfill({
-      contentType: 'application/json',
-      body: JSON.stringify({ total: 1, active: 1, counts: { downloaded: 1 }, retentionDays: 30 }),
-    })
-  })
-  await page.route('**/api/v1/queue?*', async (route) => {
-    await route.fulfill({
-      contentType: 'application/json',
-      body: JSON.stringify([{
-        id: 991,
-        mediaItemId: 1,
-        title: 'Waiting.Release.2026.1080p.WEB-DL',
-        state: 'downloaded',
-        importState: 'queued',
-        progress: 1,
-        protocol: 'usenet',
-        quality: 'WEB-DL 1080p',
-        addedAt: new Date().toISOString(),
-      }]),
-    })
-  })
-
+  await mockActivity(page, () => [{ id:991,mediaItemId:1,title:'Waiting.Release.2026.1080p.WEB-DL',state:'downloaded',importState:'queued',progress:1,protocol:'usenet',quality:'1080p',addedAt:new Date().toISOString(),importControl:{generationKey:'g',epoch:'1',outcome:'',pendingPublications:0,retainedPublications:0,heldStages:0} }])
   await page.goto('/activity')
-  await expect(page.getByText('Waiting to copy')).toBeVisible()
-  const row = page.locator('tr', { hasText: 'Waiting.Release.2026' })
-  await expect(row.getByText('queued', { exact: true })).toBeVisible()
-  await expect(row.getByText('Waiting for an import worker')).toBeVisible()
-  await expect(row.getByRole('button', { name: 'Cancel import' })).toBeVisible()
-  await expect(row.getByRole('button', { name: 'Restart import' })).toHaveCount(0)
+  await expect(page.locator('[data-activity-id="991"]')).toContainText('Waiting for an import worker')
+  const queued = attempt(page, 991)
+  await expect(queued.getByRole('button', { name: 'Delete', exact: true })).toBeVisible()
+  await expect(queued.getByRole('button', { name: 'Retry', exact: true })).toHaveCount(0)
 })

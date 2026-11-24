@@ -6,7 +6,7 @@ import (
 	"github.com/pjunod/monarr/internal/domain/hdr"
 )
 
-// ReleaseProber is an optional download-client capability (ADR 0026 §6): read
+// ReleaseProber is an optional download-client capability (ADR 0031 §6): read
 // the first bytes of a release's main media file without downloading the
 // release. The client returns bytes, never an opinion about them — Curator
 // measures them with the same prober it runs on imported files, so a
@@ -63,7 +63,7 @@ func (e *ProbeRefusal) Error() string {
 	return "release probe: " + e.Reason
 }
 
-// PlaybackDeviceSource is an optional notifier capability (ADR 0026 §5): the
+// PlaybackDeviceSource is an optional notifier capability (ADR 0031 §5): the
 // playback devices a media server knows and what each decodes. plurx answers
 // it from the capabilities its clients report with every playback decision.
 type PlaybackDeviceSource interface {

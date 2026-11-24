@@ -47,28 +47,35 @@ type runnerDeliveryWire struct {
 	FileOutcomes          []ports.RunnerFileOutcome    `json:"fileOutcomes,omitempty"`
 	ReadyAt               json.Number                  `json:"readyAt"`
 	SourceCleanup         json.RawMessage              `json:"sourceCleanup,omitempty"`
+	Kind                  string                       `json:"kind,omitempty"`
 }
 
 type runnerRequestAdmissionWire struct {
-	ProtocolVersion     int    `json:"protocolVersion"`
-	RequestToken        string `json:"requestToken"`
-	JobID               uint32 `json:"jobId"`
-	Generation          string `json:"generation"`
-	RunnerInstanceID    string `json:"runnerInstanceId"`
-	Outcome             string `json:"outcome"`
-	TerminalOutcome     string `json:"terminalOutcome,omitempty"`
-	PublicationPath     string `json:"publicationPath,omitempty"`
-	SourceArtifactID    string `json:"sourceArtifactId,omitempty"`
-	SourceGeneration    string `json:"sourceGeneration,omitempty"`
-	FailureStage        string `json:"failureStage,omitempty"`
-	FailureCause        string `json:"failureCause,omitempty"`
-	CustodyState        string `json:"custodyState,omitempty"`
-	KeepSourceOnFailure bool   `json:"keepSourceOnFailure,omitempty"`
-	SourceCleanupStatus string `json:"sourceCleanupStatus,omitempty"`
+	Fetched             ports.Fetched `json:"fetched"`
+	ProtocolVersion     int           `json:"protocolVersion"`
+	RequestToken        string        `json:"requestToken"`
+	JobID               uint32        `json:"jobId"`
+	Generation          string        `json:"generation"`
+	RunnerInstanceID    string        `json:"runnerInstanceId"`
+	Outcome             string        `json:"outcome"`
+	TerminalOutcome     string        `json:"terminalOutcome,omitempty"`
+	PublicationPath     string        `json:"publicationPath,omitempty"`
+	SourceArtifactID    string        `json:"sourceArtifactId,omitempty"`
+	SourceGeneration    string        `json:"sourceGeneration,omitempty"`
+	FailureStage        string        `json:"failureStage,omitempty"`
+	FailureCause        string        `json:"failureCause,omitempty"`
+	CustodyState        string        `json:"custodyState,omitempty"`
+	KeepSourceOnFailure bool          `json:"keepSourceOnFailure,omitempty"`
+	SourceCleanupStatus string        `json:"sourceCleanupStatus,omitempty"`
+	FailureReason       string        `json:"failureReason,omitempty"`
+	FetchCause          string        `json:"fetchCause,omitempty"`
+	BlamesRelease       *bool         `json:"blamesRelease,omitempty"`
+	Salvage             string        `json:"salvage,omitempty"`
 }
 
 func (w runnerRequestAdmissionWire) portValue() ports.RequestAdmission {
 	return ports.RequestAdmission{
+		Fetched:         w.Fetched,
 		ProtocolVersion: w.ProtocolVersion, RequestToken: w.RequestToken,
 		JobID: strconv.FormatUint(uint64(w.JobID), 10), Generation: w.Generation,
 		RunnerInstanceID: w.RunnerInstanceID, Outcome: w.Outcome,
@@ -77,6 +84,7 @@ func (w runnerRequestAdmissionWire) portValue() ports.RequestAdmission {
 		FailureStage: w.FailureStage, FailureCause: w.FailureCause,
 		CustodyState: w.CustodyState, KeepSourceOnFailure: w.KeepSourceOnFailure,
 		SourceCleanupStatus: w.SourceCleanupStatus,
+		FailureReason:       w.FailureReason, FetchCause: w.FetchCause, BlamesRelease: w.BlamesRelease, Salvage: w.Salvage,
 	}
 }
 
@@ -146,7 +154,7 @@ func convertRunnerDelivery(d runnerDeliveryWire) (ports.RunnerDelivery, error) {
 	if err := validateRunnerEvidence(d.RunnerStages, d.SourceCopies, d.LifecycleTiming); err != nil {
 		return ports.RunnerDelivery{}, err
 	}
-	return ports.RunnerDelivery{RunnerStages: d.RunnerStages, SourceCopies: d.SourceCopies, LifecycleTiming: d.LifecycleTiming, ProtocolVersion: 1, Sequence: d.Sequence, DeliveryID: d.DeliveryID, PublicationGeneration: d.PublicationGeneration, SourceArtifactID: d.SourceArtifactID, SourceGeneration: d.SourceGeneration, ArtifactID: d.ArtifactID, JobID: strconv.FormatUint(uint64(d.JobID), 10), RequestToken: d.RequestToken, RunnerInstanceID: d.RunnerInstanceID, PublicationPath: d.PublicationPath, ManifestDigest: d.ManifestDigest, Files: d.Files, TerminalOutcome: d.TerminalOutcome, FailureStage: d.FailureStage, FailureCause: d.FailureCause, KeepSourceOnFailure: d.KeepSourceOnFailure, FileOutcomes: d.FileOutcomes, ReadyAt: time.Unix(whole, nanos).UTC(), SourceCleanup: d.SourceCleanup}, nil
+	return ports.RunnerDelivery{RunnerStages: d.RunnerStages, SourceCopies: d.SourceCopies, LifecycleTiming: d.LifecycleTiming, ProtocolVersion: 1, Sequence: d.Sequence, DeliveryID: d.DeliveryID, PublicationGeneration: d.PublicationGeneration, SourceArtifactID: d.SourceArtifactID, SourceGeneration: d.SourceGeneration, ArtifactID: d.ArtifactID, JobID: strconv.FormatUint(uint64(d.JobID), 10), RequestToken: d.RequestToken, RunnerInstanceID: d.RunnerInstanceID, PublicationPath: d.PublicationPath, ManifestDigest: d.ManifestDigest, Files: d.Files, TerminalOutcome: d.TerminalOutcome, FailureStage: d.FailureStage, FailureCause: d.FailureCause, KeepSourceOnFailure: d.KeepSourceOnFailure, FileOutcomes: d.FileOutcomes, ReadyAt: time.Unix(whole, nanos).UTC(), SourceCleanup: d.SourceCleanup, Kind: d.Kind}, nil
 }
 
 // AcceptDelivery implements ports.DeliveryProtocol. Repeating the same
@@ -192,6 +200,29 @@ func (c *Client) deliveryRequest(ctx context.Context, method, path string, body 
 	}
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, (8<<20)+1))
 	closeErr := resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		// The status stands even when the body could not be read, closed or
+		// bounded: callers branch on it (404 means unsupported, 429 and 503
+		// carry a retry deadline), so a body failure only adds detail.
+		var bodyErr error
+		switch {
+		case err != nil:
+			bodyErr = err
+		case closeErr != nil:
+			bodyErr = fmt.Errorf("close: %w", closeErr)
+		case len(raw) > 8<<20:
+			bodyErr = fmt.Errorf("exceeds 8 MiB")
+		}
+		if bodyErr != nil {
+			message := "unexpected delivery response; body unreadable"
+			if resp.StatusCode == http.StatusUnauthorized {
+				message = "authentication rejected; body unreadable"
+			}
+			// Joined, not flattened into text, so a cancellation or deadline
+			// while reading stays recognisable to errors.Is.
+			return errors.Join(apiError(resp, message), fmt.Errorf("nzbd: read delivery error body: %w", bodyErr))
+		}
+	}
 	if err != nil {
 		return fmt.Errorf("nzbd: read delivery response: %w", err)
 	}

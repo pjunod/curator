@@ -16,19 +16,7 @@ import (
 	"github.com/pjunod/monarr/internal/ports"
 )
 
-// ---- wanted search: conflict error, results paging, job wiring, coordinator ----
-
-func TestGapAcqWantedSearchConflictUnwrapsToTheSentinel(t *testing.T) {
-	conflict := &WantedSearchConflict{ActiveRunID: "abc", Message: "busy"}
-	if conflict.Error() != "busy" {
-		t.Fatalf("Error() = %q", conflict.Error())
-	}
-	var err error = conflict
-	if !errors.Is(err, ErrWantedSearchConflict) {
-		t.Fatal("conflict does not unwrap to ErrWantedSearchConflict")
-	}
-
-	// And the real thing: a second, different scope while one run is active.
+func TestWantedSearchAcceptsDifferentActiveScopes(t *testing.T) {
 	svc, db, _ := autoSetup(t, nil, &fakeClient{})
 	svc.WithWantedSearchQueue(wantedDBQueue{db: db})
 	ctx := context.Background()
@@ -36,10 +24,9 @@ func TestGapAcqWantedSearchConflictUnwrapsToTheSentinel(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = svc.StartWantedSearch(ctx, WantedSearchRequest{Scope: "reason", Reason: WantedMissing})
-	var got *WantedSearchConflict
-	if !errors.As(err, &got) || got.ActiveRunID != first.RunID || !errors.Is(err, ErrWantedSearchConflict) {
-		t.Fatalf("second scope = %v, want conflict naming run %s", err, first.RunID)
+	second, err := svc.StartWantedSearch(ctx, WantedSearchRequest{Scope: "reason", Reason: WantedMissing})
+	if err != nil || second.RunID == first.RunID {
+		t.Fatalf("second scope = %+v, %v; want independent run", second, err)
 	}
 	// The same scope again is idempotent rather than a conflict.
 	again, err := svc.StartWantedSearch(ctx, WantedSearchRequest{Scope: "all"})

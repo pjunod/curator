@@ -19,6 +19,7 @@ import (
 	"github.com/pjunod/monarr/internal/app/acquisition"
 	"github.com/pjunod/monarr/internal/app/health"
 	"github.com/pjunod/monarr/internal/app/library"
+	appnotify "github.com/pjunod/monarr/internal/app/notify"
 	"github.com/pjunod/monarr/internal/domain"
 	"github.com/pjunod/monarr/internal/domain/downloadpriority"
 	"github.com/pjunod/monarr/internal/domain/format"
@@ -51,6 +52,10 @@ func (s *Server) acqErr(w http.ResponseWriter, err error) {
 		writeCodedError(w, http.StatusConflict, "blacklist_confirmation_required", err.Error())
 	case errors.Is(err, sqlite.ErrManualGrabRequestRetained):
 		writeCodedError(w, http.StatusConflict, "request_retained", "this manual request has already completed and its Activity row was dismissed; use a new requestId for a new action")
+	case errors.Is(err, acquisition.ErrDiscardedButKept):
+		writeCodedError(w, http.StatusConflict, "discarded_kept", err.Error())
+	case errors.Is(err, acquisition.ErrHistoricalCohort):
+		writeCodedError(w, http.StatusConflict, "historical_cohort", err.Error())
 	case errors.Is(err, acquisition.ErrNotFound), errors.Is(err, sqlite.ErrNotFound):
 		writeError(w, http.StatusNotFound, "not found")
 	default:
@@ -881,7 +886,34 @@ func (s *Server) ListQueue(w http.ResponseWriter, r *http.Request, params apigen
 		s.acqErr(w, err)
 		return
 	}
+	out, err := s.queueItems(r.Context(), rows)
+	if err != nil {
+		s.acqErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+func (s *Server) queueItems(ctx context.Context, rows []sqlite.Download) ([]apigen.QueueItem, error) {
 	out := make([]apigen.QueueItem, 0, len(rows))
+	ids := make([]int64, 0, len(rows))
+	for _, d := range rows {
+		ids = append(ids, d.ID)
+	}
+	publications, err := s.deps.Store.ListPublicationsForDownloads(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
+	var pubIDs []int64
+	for _, ps := range publications {
+		for _, p := range ps {
+			pubIDs = append(pubIDs, p.ID)
+		}
+	}
+	publicationFiles, err := s.deps.Store.ListPublicationFilesFor(ctx, pubIDs)
+	if err != nil {
+		return nil, err
+	}
 	for _, d := range rows {
 		copyID, clientID := d.CopyID, d.ClientID
 		save, imp := d.SavePath, d.ImportPath
@@ -903,9 +935,12 @@ func (s *Server) ListQueue(w http.ResponseWriter, r *http.Request, params apigen
 		phase, parked := apigen.QueueItemSubmissionPhase(d.SubmissionPhase), d.ParkedReason
 		item.SubmissionPhase = &phase
 		item.ParkedReason = &parked
+		reservationActionable := !d.Superseded && !d.CleanupPending && d.State != "imported" && d.State != "importing" && (d.SubmissionPhase == "uncertain" || d.ParkedAt.UnixMilli() > 0)
+		item.ReservationActionable = &reservationActionable
+		s.fillPipelineV2(&item, d, publications[d.ID], publicationFiles)
 		if d.PlanID != 0 {
 			item.PlanId = &d.PlanID
-			if plan, e := s.deps.Store.GetAcquisitionPlan(r.Context(), d.PlanID); e == nil {
+			if plan, e := s.deps.Store.GetAcquisitionPlan(ctx, d.PlanID); e == nil {
 				item.PlanState = &plan.State
 				var facts map[string]interface{}
 				if json.Unmarshal(plan.Decision, &facts) == nil {
@@ -964,7 +999,7 @@ func (s *Server) ListQueue(w http.ResponseWriter, r *http.Request, params apigen
 			since := live.StartedAt
 			item.StageSince = &since
 		}
-		a, e := s.deps.Store.GetImportAttempt(r.Context(), d.ID, d.GenerationKey)
+		a, e := s.deps.Store.GetImportAttempt(ctx, d.ID, d.GenerationKey)
 		if errors.Is(e, sql.ErrNoRows) {
 			a = sqlite.ImportAttempt{ImportAttemptKey: sqlite.ImportAttemptKey{DownloadID: d.ID, GenerationKey: d.GenerationKey}}
 			e = nil
@@ -973,8 +1008,7 @@ func (s *Server) ListQueue(w http.ResponseWriter, r *http.Request, params apigen
 			}
 		}
 		if e != nil {
-			s.acqErr(w, e)
-			return
+			return nil, e
 		}
 		status := importStatus(a)
 		item.ImportControl = &status
@@ -996,13 +1030,19 @@ func (s *Server) ListQueue(w http.ResponseWriter, r *http.Request, params apigen
 		}
 		out = append(out, item)
 	}
-	writeJSON(w, http.StatusOK, out)
+	return out, nil
 }
 
 // RemoveQueueItem implements DELETE /queue/{id}.
 func (s *Server) RemoveQueueItem(w http.ResponseWriter, r *http.Request, id int64, params apigen.RemoveQueueItemParams) {
 	fromClient := params.FromClient != nil && *params.FromClient
-	if err := s.deps.Acquisition.RemoveDownload(r.Context(), id, fromClient); err != nil {
+	remove := s.deps.Acquisition.RemoveDownload
+	if fromClient && params.Blocklist != nil && *params.Blocklist {
+		remove = func(ctx context.Context, id int64, _ bool) error {
+			return s.deps.Acquisition.CancelAndBlocklist(ctx, id)
+		}
+	}
+	if err := remove(r.Context(), id, fromClient); err != nil {
 		s.acqErr(w, err)
 		return
 	}
@@ -1062,7 +1102,15 @@ func (s *Server) BlocklistQueueItem(w http.ResponseWriter, r *http.Request, id i
 // ScanImportPath implements GET /import/scan: list the media files Monarr
 // can see under a path (the manual-import preview).
 func (s *Server) ScanImportPath(w http.ResponseWriter, r *http.Request, params apigen.ScanImportPathParams) {
-	files, err := s.deps.Acquisition.ScanImportPath(r.Context(), params.Path)
+	scan := s.deps.Acquisition.ScanImportPath
+	if params.Depth != nil {
+		if *params.Depth != 1 {
+			writeError(w, http.StatusBadRequest, "depth must be 1 (one folder) or absent (the whole tree)")
+			return
+		}
+		scan = s.deps.Acquisition.ScanImportFolder
+	}
+	files, err := scan(r.Context(), params.Path)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -1077,9 +1125,65 @@ func (s *Server) ScanImportPath(w http.ResponseWriter, r *http.Request, params a
 		out = append(out, apigen.ScannedFile{
 			Path: f.Path, Name: f.Name, Size: f.Size, Kind: f.Kind,
 			Quality: f.Quality, Season: f.Season, Episodes: eps, SnapshotIdentity: &snapshotIdentity,
+			Publication: scannedPublicationDTO(f.Publication),
 		})
+		if f.Subtitles > 0 {
+			n := f.Subtitles
+			out[len(out)-1].Subtitles = &n
+		}
+		if f.Skipped != "" {
+			skipped := f.Skipped
+			out[len(out)-1].Skipped = &skipped
+		}
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+func scannedPublicationDTO(p *acquisition.ScannedPublication) *apigen.ScannedPublication {
+	if p == nil {
+		return nil
+	}
+	return &apigen.ScannedPublication{DownloadId: p.DownloadID, PublicationId: p.PublicationID, Path: p.Path, Outcome: p.Outcome}
+}
+
+// PlanImport implements POST /import/plan: the Import file… confirm step.
+func (s *Server) PlanImport(w http.ResponseWriter, r *http.Request) {
+	var in apigen.ImportPlanRequest
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&in); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	req := acquisition.ItemImportPlanRequest{MediaItemID: in.MediaItemId}
+	if in.CopyId != nil {
+		req.CopyID = *in.CopyId
+	}
+	if in.RemoveOriginal != nil {
+		req.RemoveOriginal = *in.RemoveOriginal
+	}
+	for _, f := range in.Files {
+		file := acquisition.ItemImportFile{Path: f.Path, Season: -1}
+		if f.Season != nil {
+			file.Season = *f.Season
+		}
+		if f.Episodes != nil {
+			file.Episodes = *f.Episodes
+		}
+		req.Files = append(req.Files, file)
+	}
+	plan, err := s.deps.Acquisition.PlanItemImport(r.Context(), req)
+	switch {
+	case err == nil:
+	case errors.Is(err, acquisition.ErrNotFound), errors.Is(err, sqlite.ErrNotFound), errors.Is(err, sql.ErrNoRows):
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	case errors.Is(err, acquisition.ErrInvalidImportPlan), errors.Is(err, acquisition.ErrNoLibraryFolder):
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	default:
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, plan)
 }
 
 // GetManualImportDefaultPath implements GET /import/default-path.
@@ -1121,6 +1225,15 @@ func (s *Server) ManualImport(w http.ResponseWriter, r *http.Request) {
 	}
 	if in.DownloadId != nil {
 		req.DownloadID = *in.DownloadId
+	}
+	if in.EpisodeTargets != nil {
+		req.EpisodeTargets = make(map[string]sqlite.HandoffEpisodeTarget, len(*in.EpisodeTargets))
+		for _, t := range *in.EpisodeTargets {
+			req.EpisodeTargets[t.Path] = sqlite.HandoffEpisodeTarget{Season: t.Season, Episodes: t.Episodes}
+		}
+	}
+	if in.RemoveOriginal != nil {
+		req.RemoveOriginal = *in.RemoveOriginal
 	}
 	id, err := s.deps.Acquisition.QueueManualImport(r.Context(), req)
 	if err != nil {
@@ -1193,6 +1306,9 @@ func (s *Server) CreateWantedSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	req := acquisition.WantedSearchRequest{Scope: string(body.Scope), TargetDelay: body.TargetDelayMs}
+	if body.RequestId != nil {
+		req.RequestID = *body.RequestId
+	}
 	if body.Reason != nil {
 		req.Reason = acquisition.WantedReason(*body.Reason)
 	}
@@ -1204,11 +1320,9 @@ func (s *Server) CreateWantedSearch(w http.ResponseWriter, r *http.Request) {
 	}
 	run, err := s.deps.Acquisition.StartWantedSearch(r.Context(), req)
 	if err != nil {
-		var conflict *acquisition.WantedSearchConflict
 		switch {
-		case errors.As(err, &conflict):
-			writeJSON(w, http.StatusConflict, apigen.WantedSearchConflict{
-				ActiveRunId: conflict.ActiveRunID, CanCancel: true, Message: conflict.Message})
+		case errors.Is(err, sqlite.ErrWantedSearchRequestConflict):
+			writeError(w, http.StatusConflict, err.Error())
 		case errors.Is(err, acquisition.ErrInvalidWantedSearch):
 			writeError(w, http.StatusBadRequest, err.Error())
 		case errors.Is(err, acquisition.ErrNotFound):
@@ -1219,6 +1333,19 @@ func (s *Server) CreateWantedSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusAccepted, wantedSearchDTO(run))
+}
+
+func (s *Server) ListWantedSearches(w http.ResponseWriter, r *http.Request) {
+	runs, err := s.deps.Acquisition.WantedSearches(r.Context())
+	if err != nil {
+		s.acqErr(w, err)
+		return
+	}
+	items := make([]apigen.WantedSearchRun, 0, len(runs))
+	for _, run := range runs {
+		items = append(items, wantedSearchDTO(run))
+	}
+	writeJSON(w, http.StatusOK, apigen.WantedSearchRunsPage{Items: items})
 }
 
 func (s *Server) GetWantedSearch(w http.ResponseWriter, r *http.Request, runID apigen.WantedSearchRunId) {
@@ -1447,12 +1574,17 @@ func notifierDTO(cfg ports.NotifierConfig) apigen.Notifier {
 	if settings == nil {
 		settings = map[string]string{}
 	}
-	return apigen.Notifier{
+	out := apigen.Notifier{
 		Id: cfg.ID, Type: apigen.NotifierType(cfg.Type), Name: cfg.Name,
 		Settings: &settings,
 		OnGrab:   &cfg.OnGrab, OnImport: &cfg.OnImport,
 		OnFailed: &cfg.OnFailed, OnHealth: &cfg.OnHealth, Enabled: &cfg.Enabled,
 	}
+	if cfg.FeaturesAt != 0 {
+		features, at := append([]string{}, cfg.Features...), cfg.FeaturesAt
+		out.Features, out.FeaturesReadAt = &features, &at
+	}
+	return out
 }
 
 // ListNotifiers implements GET /notifiers.
@@ -1501,11 +1633,51 @@ func (s *Server) TestNotifier(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "unknown notifier type")
 		return
 	}
-	if err := s.deps.NotifierFactory(notifierFromInput(body)).Test(r.Context()); err != nil {
+	s.runNotifierTest(w, r, 0, s.deps.NotifierFactory(notifierFromInput(body)))
+}
+
+// runNotifierTest runs a notifier's Test and writes the answer. A notifier
+// that can check paths (Cinema, contract section 4.3) is handed the library
+// roots Curator places files under, so a root it cannot see fails the Test
+// here instead of one import at a time.
+func (s *Server) runNotifierTest(w http.ResponseWriter, r *http.Request, id int64, n ports.Notifier) {
+	var note string
+	var err error
+	if pt, ok := n.(ports.PathTester); ok {
+		var roots []string
+		if s.deps.Store != nil {
+			folders, ferr := s.deps.Store.ListRootFolders(r.Context())
+			if ferr != nil {
+				s.acqErr(w, ferr)
+				return
+			}
+			for _, f := range folders {
+				roots = append(roots, f.Path)
+			}
+		}
+		if len(roots) > 0 {
+			note, err = pt.TestPaths(r.Context(), roots)
+		} else {
+			err = n.Test(r.Context())
+			if err == nil {
+				note = "connected; no library roots are configured to check"
+			}
+		}
+	} else {
+		err = n.Test(r.Context())
+	}
+	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	w.WriteHeader(http.StatusOK)
+	// A saved notifier keeps what its far side said it supports (Cinema's
+	// removed_paths, contract amendment 5.3).
+	if fr, ok := n.(ports.FeatureReporter); ok && id != 0 && s.deps.Store != nil && fr.LearnedFeatures() != nil {
+		if ferr := s.deps.Store.SetNotifierFeatures(r.Context(), id, fr.LearnedFeatures()); ferr != nil {
+			s.deps.Log.Warn("notifier test: could not store features", "notifier", id, "err", ferr)
+		}
+	}
+	writeJSON(w, http.StatusOK, apigen.NotifierTestResult{Message: ptrIfText(note)})
 }
 
 // TestNotifierByID implements POST /notifiers/{id}/test — the same probe,
@@ -1521,11 +1693,7 @@ func (s *Server) TestNotifierByID(w http.ResponseWriter, r *http.Request, id int
 		s.acqErr(w, err)
 		return
 	}
-	if err := s.deps.NotifierFactory(cfg).Test(r.Context()); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	w.WriteHeader(http.StatusOK)
+	s.runNotifierTest(w, r, id, s.deps.NotifierFactory(cfg))
 }
 
 // UpdateNotifier implements PUT /notifiers/{id}.
@@ -1626,7 +1794,7 @@ func (s *Server) retryableNotifier(w http.ResponseWriter, r *http.Request, id in
 }
 
 func deliveryDTO(d sqlite.Delivery) apigen.Delivery {
-	return apigen.Delivery{
+	out := apigen.Delivery{
 		Id: d.ID, NotifierId: d.NotifierID, DownloadId: ptrIfSet(d.DownloadID),
 		Event: d.Event, Attempts: d.Attempts,
 		LastError: ptrIfText(d.LastError), Result: ptrIfText(d.Result),
@@ -1634,6 +1802,37 @@ func deliveryDTO(d sqlite.Delivery) apigen.Delivery {
 		NextAt:    ptrIfSet(d.NextAt),
 		CreatedAt: d.CreatedAt, UpdatedAt: d.UpdatedAt,
 	}
+	if d.IdempotencyKey == "" {
+		return out
+	}
+	// A sub-delivery: one directory, read back from Cinema.
+	attempt := d.Attempt
+	out.Attempt = &attempt
+	out.Directory = ptrIfText(d.Directory)
+	out.PublicationId = ptrIfSet(d.PublicationID)
+	out.RequestKey = ptrIfText(d.RequestKey())
+	out.RemoteRequestId = ptrIfText(d.RemoteRequestID)
+	out.RemoteState = ptrIfText(d.RemoteState)
+	out.WaitingOn = ptrIfText(d.WaitingOn)
+	out.VisibleAt = ptrIfSet(d.VisibleAt)
+	if len(d.ItemIDs) > 0 {
+		ids := append([]int64(nil), d.ItemIDs...)
+		out.ItemIds = &ids
+	}
+	if len(d.ExpectedFiles) > 0 {
+		files := make([]apigen.ExpectedFile, 0, len(d.ExpectedFiles))
+		for _, f := range d.ExpectedFiles {
+			files = append(files, apigen.ExpectedFile{Path: f.Path, Bytes: f.Bytes, MtimeNs: f.MtimeNs})
+		}
+		out.ExpectedFiles = &files
+	}
+	// Surfaced, never given up on: still not visible half an hour after
+	// the import wrote it.
+	if d.Status == "pending" && time.Since(time.UnixMilli(d.CreatedAt)) >= appnotify.WarningAfter {
+		warn := true
+		out.Warning = &warn
+	}
+	return out
 }
 
 func ptrIfSet(v int64) *int64 {
@@ -1977,17 +2176,26 @@ func (s *Server) BulkEditLibrary(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	updated := 0
+	// An item that refuses (an offloaded title cannot be monitored: 409
+	// `offloaded`) is reported with its reason, never swallowed.
+	failed := []map[string]any{}
 	for _, id := range body.Ids {
 		if _, err := s.deps.Library.UpdateItem(r.Context(), id, library.UpdateRequest{
 			Monitored: body.Monitored, QualityProfileID: body.QualityProfileId,
 		}); err == nil {
 			updated++
+		} else {
+			code := "error"
+			if errors.Is(err, library.ErrOffloaded) {
+				code = "offloaded"
+			}
+			failed = append(failed, map[string]any{"id": id, "code": code, "reason": err.Error()})
 		}
 	}
 	if s.deps.Acquisition != nil {
 		s.deps.Acquisition.InvalidateWanted()
 	}
-	writeJSON(w, http.StatusOK, map[string]int{"updated": updated})
+	writeJSON(w, http.StatusOK, map[string]any{"updated": updated, "failed": failed})
 }
 
 // AutoSearchLibraryItem implements POST /library/{id}/autosearch: the
@@ -2237,6 +2445,158 @@ func (s *Server) ResolveQueueReservation(w http.ResponseWriter, r *http.Request,
 	}
 	if err := s.deps.Acquisition.ResolveReservation(r.Context(), id); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// fillPipelineV2 carries the reducer's view of a row (pipeline contract v2):
+// the recorded terminal, whether it is provisional, the state's deadline, the
+// hold, and every publication with its per-file outcomes.
+func (s *Server) fillPipelineV2(item *apigen.QueueItem, d sqlite.Download, pubs []sqlite.Publication, publicationFiles map[int64][]sqlite.PublicationFile) {
+	if d.RunnerOutcome != "" {
+		outcome, reason := d.RunnerOutcome, d.RunnerOutcomeReason
+		blames, provisional := d.RunnerBlamesRelease, d.Provisional
+		item.RunnerOutcome, item.RunnerReason = &outcome, &reason
+		item.BlamesRelease, item.Provisional = &blames, &provisional
+		if d.RunnerFetchCause != "" {
+			cause := d.RunnerFetchCause
+			item.FetchCause = &cause
+		}
+	}
+	if !d.DeadlineAt.IsZero() {
+		deadline := d.DeadlineAt
+		item.DeadlineAt = &deadline
+	}
+	if !d.StateEnteredAt.IsZero() {
+		entered := d.StateEnteredAt
+		item.StateEnteredAt = &entered
+	}
+	if d.State == "held" {
+		reason := d.Error
+		stale := !d.DeadlineAt.IsZero() && time.Now().After(d.DeadlineAt)
+		item.HeldReason, item.Stale = &reason, &stale
+	}
+	if len(pubs) == 0 {
+		return
+	}
+	list := make([]apigen.QueuePublication, 0, len(pubs))
+	for _, p := range pubs {
+		gen, source, errMsg := p.Generation, p.ManifestSource, p.Error
+		qp := apigen.QueuePublication{Id: p.ID, Kind: p.Kind, State: p.State, Cohort: p.Cohort, Path: p.Path,
+			Generation: &gen, ManifestSource: &source, Files: []apigen.QueuePublicationFile{}}
+		if errMsg != "" {
+			qp.Error = &errMsg
+		}
+		if !p.CleanupApprovedAt.IsZero() {
+			approved := p.CleanupApprovedAt
+			qp.CleanupApprovedAt = &approved
+		}
+		if !p.CleanupPausedAt.IsZero() {
+			paused := p.CleanupPausedAt
+			qp.CleanupPausedAt = &paused
+		}
+		if p.Held() {
+			held, reason, since := true, p.Error, p.HeldSince
+			qp.Held, qp.HeldReason = &held, &reason
+			if !since.IsZero() {
+				qp.HeldSince = &since
+			}
+		}
+		if s.deps.Acquisition != nil {
+			if state, why := s.deps.Acquisition.PublicationCleanupState(p.ID); state != "" {
+				st := apigen.QueuePublicationCleanupState(state)
+				qp.CleanupState, qp.CleanupReason = &st, &why
+			}
+		}
+		for _, f := range publicationFiles[p.ID] {
+			bytes, reason, lib, discard := f.Bytes, f.Reason, f.LibraryPath, f.DiscardReason
+			qf := apigen.QueuePublicationFile{Path: f.Path, Outcome: f.Outcome, Bytes: &bytes}
+			if reason != "" {
+				qf.Reason = &reason
+			}
+			if lib != "" {
+				qf.LibraryPath = &lib
+			}
+			if discard != "" {
+				qf.DiscardReason = &discard
+			}
+			if !f.RemovedAt.IsZero() {
+				removed := true
+				qf.Removed = &removed
+			}
+			qp.Files = append(qp.Files, qf)
+		}
+		list = append(list, qp)
+	}
+	item.Publications = &list
+}
+
+// PlacePublicationFiles implements POST /queue/{id}/publications/{publicationId}/files/place.
+func (s *Server) PlacePublicationFiles(w http.ResponseWriter, r *http.Request, id, publicationId int64) {
+	var in apigen.PlacePublicationFilesJSONRequestBody
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&in); err != nil || len(in.Files) == 0 {
+		writeError(w, http.StatusBadRequest, "files are required")
+		return
+	}
+	req := acquisition.PlaceRequest{}
+	if in.MediaItemId != nil {
+		req.MediaItemID = *in.MediaItemId
+	}
+	if in.CopyId != nil {
+		req.CopyID = *in.CopyId
+	}
+	for _, f := range in.Files {
+		file := acquisition.PlaceFile{Path: f.Path, Season: -1}
+		if f.Season != nil {
+			file.Season = *f.Season
+		}
+		if f.Episodes != nil {
+			file.Episodes = *f.Episodes
+		}
+		req.Files = append(req.Files, file)
+	}
+	if err := s.deps.Acquisition.PlacePublicationFiles(r.Context(), id, publicationId, req); err != nil {
+		if errors.Is(err, acquisition.ErrInvalidResolution) {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		s.acqErr(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// GetQueueItem implements GET /queue/{id}: one row in any state, so a page
+// that started an import can follow it to the end.
+func (s *Server) GetQueueItem(w http.ResponseWriter, r *http.Request, id int64) {
+	dl, err := s.deps.Store.GetDownload(r.Context(), id)
+	if err != nil {
+		s.acqErr(w, err)
+		return
+	}
+	out, err := s.queueItems(r.Context(), []sqlite.Download{dl})
+	if err != nil {
+		s.acqErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, out[0])
+}
+
+// ResolvePublicationFile records a person's decision on one unresolved
+// publication file.
+func (s *Server) ResolvePublicationFile(w http.ResponseWriter, r *http.Request, id, publicationId int64) {
+	var in apigen.ResolvePublicationFileJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil || in.Path == "" {
+		writeError(w, http.StatusBadRequest, "path and action are required")
+		return
+	}
+	if err := s.deps.Acquisition.ResolvePublicationFile(r.Context(), id, publicationId, in.Path, in.Action); err != nil {
+		if errors.Is(err, acquisition.ErrInvalidResolution) {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		s.acqErr(w, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

@@ -11,6 +11,14 @@ import (
 // Explicit read-only operations. Other GETs may persist previews, provider
 // budgets, discovery state or candidate tokens and participate in the barrier.
 var maintenanceReads = map[string]bool{
+	"GET /api/v1/system/storage-observations":              true,
+	"GET /api/v1/activity/operations/{id}":                 true,
+	"GET /api/v1/activity/jobs/{id}/log":                   true,
+	"GET /api/v1/rootfolders/{id}/volume":                  true,
+	"POST /api/v1/metadata/availability":                   true,
+	"GET /api/v1/discover/library/seeds":                   true,
+	"GET /api/v1/activity":                                 true,
+	"GET /api/v1/imports":                                  true,
 	"GET /api/v1/system/status":                            true,
 	"GET /api/v1/system/tasks":                             true,
 	"GET /api/v1/health":                                   true,
@@ -44,6 +52,7 @@ var maintenanceReads = map[string]bool{
 	"GET /api/v1/notifiers":                                true,
 	"GET /api/v1/notifiers/{id}/deliveries":                true,
 	"GET /api/v1/system/transfers":                         true,
+	"GET /api/v1/system/pipeline":                          true,
 	"GET /api/v1/system/connections":                       true,
 	"GET /api/v1/system/backups":                           true,
 	"GET /api/v1/calendar":                                 true,

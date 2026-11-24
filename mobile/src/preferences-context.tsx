@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type PropsWithChildren } from 'react'
 import { loadPreferences, savePreferences } from './storage'
+import type { LibraryPresence } from './offload'
 import {
   DEFAULT_PREFERENCES,
   type AppPreferences,
@@ -14,6 +15,7 @@ interface PreferencesContextValue extends AppPreferences {
   setItemSize: (itemSize: ItemSize) => void
   setLayout: (layout: LayoutPreference) => void
   setPalette: (palette: PalettePreference) => void
+  setLibraryPresence: (presence: LibraryPresence) => void
 }
 
 const PreferencesContext = createContext<PreferencesContextValue | null>(null)
@@ -77,8 +79,19 @@ export function PreferencesProvider({ children }: PropsWithChildren) {
     })
   }, [])
 
+  const setLibraryPresence = useCallback((libraryPresence: LibraryPresence) => {
+    changed.current = true
+    setPreferences((current) => {
+      const next = { ...current, libraryPresence }
+      saveQueue.current = saveQueue.current
+        .then(() => savePreferences(next))
+        .catch(() => undefined)
+      return next
+    })
+  }, [])
+
   return (
-    <PreferencesContext.Provider value={{ ...preferences, setTheme, setItemSize, setLayout, setPalette }}>
+    <PreferencesContext.Provider value={{ ...preferences, setTheme, setItemSize, setLayout, setPalette, setLibraryPresence }}>
       {children}
     </PreferencesContext.Provider>
   )

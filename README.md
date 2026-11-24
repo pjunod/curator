@@ -1,10 +1,15 @@
 # Monarr
 
-[![Tests](https://github.com/pjunod/monarr/actions/workflows/tests.yml/badge.svg)](https://github.com/pjunod/monarr/actions/workflows/tests.yml)
-[![Lint](https://github.com/pjunod/monarr/actions/workflows/lint.yml/badge.svg)](https://github.com/pjunod/monarr/actions/workflows/lint.yml)
-[![Compat](https://github.com/pjunod/monarr/actions/workflows/compat.yml/badge.svg)](https://github.com/pjunod/monarr/actions/workflows/compat.yml)
-[![Docker](https://github.com/pjunod/monarr/actions/workflows/docker.yml/badge.svg)](https://github.com/pjunod/monarr/actions/workflows/docker.yml)
-[![Coverage](coverage.svg)](https://github.com/pjunod/monarr/actions/workflows/tests.yml)
+[![Tests](https://github.com/pjunod/curator/actions/workflows/tests.yml/badge.svg)](https://github.com/pjunod/curator/actions/workflows/tests.yml)
+[![Lint](https://github.com/pjunod/curator/actions/workflows/lint.yml/badge.svg)](https://github.com/pjunod/curator/actions/workflows/lint.yml)
+[![Compat](https://github.com/pjunod/curator/actions/workflows/compat.yml/badge.svg)](https://github.com/pjunod/curator/actions/workflows/compat.yml)
+[![Docker](https://github.com/pjunod/curator/actions/workflows/docker.yml/badge.svg)](https://github.com/pjunod/curator/actions/workflows/docker.yml)
+[![Coverage](coverage.svg)](https://github.com/pjunod/curator/actions/workflows/tests.yml)
+
+[![License: GPL-3.0](https://img.shields.io/badge/license-GPL--3.0-blue)](LICENSE)
+[![Release](https://img.shields.io/github/v/release/pjunod/curator)](https://github.com/pjunod/curator/releases)
+[![Security checks](https://github.com/pjunod/curator/actions/workflows/security.yml/badge.svg)](https://github.com/pjunod/curator/actions/workflows/security.yml)
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/pjunod/curator/badge)](https://scorecard.dev/viewer/?uri=github.com/pjunod/curator)
 
 **A unified, modern rewrite of Sonarr + Radarr in Go.** One binary, one database, one UI, one
 acquisition pipeline — for TV, movies, ebooks, and audiobooks, filling the gap left by
@@ -133,7 +138,7 @@ client as `http://qbittorrent:8080` (same compose network) or `http://<host>:808
 
 ### From source
 
-Requires Go ≥ 1.25 and Node ≥ 20.
+Requires Go ≥ 1.26.11 and Node ≥ 20.
 
 ```sh
 make build          # builds web UI, embeds it, compiles ./bin/monarr
@@ -232,6 +237,9 @@ the cost is one `coverage: NN.N%` commit from CI whenever the number actually ch
 
 ## Documentation
 
+- **[Security checks](docs/SECURITY_CHECKS.md)** — what CI scans, how to read Scorecard, and remaining repository controls.
+- **[Report a vulnerability](SECURITY.md)** — private reporting and support scope.
+
 - **[Storage association fix](docs/STORAGE_ASSOCIATION_STATUS.md)** — shared-folder receipt diagnosis, review, validation and delivery.
 - **[Season acquisition status](docs/SEASON_ACQUISITION_STATUS.md)** — build progress, review, checks, and merge.
 - **[Season acquisition contract](docs/plan-season-acquisition.md)** and **[review record](docs/plan-season-acquisition-review.md)** — authoritative round-3 policy and execution requirements.
@@ -242,6 +250,8 @@ the cost is one `coverage: NN.N%` commit from CI whenever the number actually ch
 - **[Mobile app](mobile/README.md)** — run, verify, build, and submit the native iOS and
   Android companion.
 - **[Settings reference](docs/settings.md)** — every field in the Settings and System pages.
+- **[Documentation index](docs/README.md)** — every file under `docs/`, grouped; a test keeps
+  it complete and every relative link resolving.
 - **[Integration](docs/integration.md)** — every seam with nzbd and plurx: what each does, the
   wire format, where you watch it in the UI, and the command that proves it works.
 - **[Deployment](docs/deployment.md)** — storage rules for the SQLite database (why the live
@@ -257,11 +267,11 @@ the cost is one `coverage: NN.N%` commit from CI whenever the number actually ch
   validation, and delivery of the scan feedback fix.
 - **[Release identity status](docs/RELEASE_IDENTITY_STATUS.md)** — live implementation,
   review, validation, and delivery state for that plan.
-- **[Download failure fix plan](docs/RUNNER_FAILURE_FIX_PLAN.md)** — Monster root
+- **[Download failure fix plan](docs/archive/RUNNER_FAILURE_FIX_PLAN.md)** — Monster root
   causes, Runner/Curator fixes, and retained-media recovery gates;
-  [incident evidence](docs/RUNNER_FAILURE_DIAGNOSIS.md) and
-  [adversarial review](docs/RUNNER_FAILURE_REVIEW.md) separate observations from
-  the proposed implementation. The [build handoff](docs/RUNNER_FAILURE_BUILD.md)
+  [incident evidence](docs/archive/RUNNER_FAILURE_DIAGNOSIS.md) and
+  [adversarial review](docs/archive/RUNNER_FAILURE_REVIEW.md) separate observations from
+  the proposed implementation. The [build handoff](docs/archive/RUNNER_FAILURE_BUILD.md)
   gives the cross-repository sequence, interface contract, and acceptance tests.
 - **[Wanted groups plan](docs/plan-wanted-groups.md)** — retained design for expandable
   titles, individual target searches, and bulk searches across every page.
@@ -282,6 +292,7 @@ database and be managed in the UI, per the *arr operational model.
 | `MONARR_DATA_DIR` | `./data` | SQLite database, backups, runtime state |
 | `MONARR_LOG_LEVEL` | `info` | `debug` \| `info` \| `warn` \| `error` |
 | `MONARR_LOG_FORMAT` | `text` | `text` \| `json` |
+| `MONARR_TRUSTED_PROXIES` | unset | Comma-separated proxy CIDRs allowed to assert HTTPS for session cookies; see [security checks](docs/SECURITY_CHECKS.md#authentication-and-proxy-transport). |
 | `MONARR_CONFIG` | *(unset)* | Optional JSON config file with the same keys |
 
 ## API
@@ -369,9 +380,9 @@ and native interaction contract, renderings, and Fable review dispositions.
 [Delivery status](docs/status.html#search-preview-delivery) tracks implementation
 and verification.
 
-Runner recovery placement and cleanup are documented in [ADR 0020](docs/adr/0021-file-lifecycle-recovery.md) and the [recovery usage guide](docs/usage.md#recover-media-retained-by-runner).
+Runner recovery placement and cleanup are documented in [ADR 0020](docs/adr/0021-file-lifecycle-recovery.md) and the [recovery usage guide](docs/usage.md#historical-staged-recovery-records).
 
-The [approved download lifecycle proposal](docs/DOWNLOAD_LIFECYCLE_PROPOSAL.md)
+The [approved download lifecycle proposal](docs/archive/DOWNLOAD_LIFECYCLE_PROPOSAL.md)
 records Runner/Curator ownership, failure retention, handoff, cleanup, replacement,
 and the reviewed interface scope. [Implementation status](docs/DOWNLOAD_LIFECYCLE_STATUS.md)
 tracks building, review, validation, and delivery. The [Cinema replacement API

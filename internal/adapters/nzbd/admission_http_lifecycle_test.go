@@ -140,3 +140,43 @@ func TestRequestAdmissionRejectsWrongIdentityAndPreservesRetryBoundary(t *testin
 		t.Fatal("blank transfer token was accepted")
 	}
 }
+
+// A zero-article health failure must not spend a full release's bandwidth.
+// Job IDs alone are reusable; only the same transfer can supply measurements.
+func TestFailedReceiptSupplementsFetchedCountsFromMatchingHistory(t *testing.T) {
+	for _, tc := range []struct {
+		name, row string
+		want      int64
+	}{
+		{"matching", `{"job":3,"params":[["monarr-transfer","t-3"]],"record":{"total_articles":100,"success_articles":0}}`, 100},
+		{"foreign token", `{"job":3,"params":[["monarr-transfer","other"]],"record":{"total_articles":100,"success_articles":0}}`, 0},
+		{"foreign job", `{"job":4,"params":[["monarr-transfer","t-3"]],"record":{"total_articles":100,"success_articles":0}}`, 0},
+		{"unmeasured", `{"job":3,"params":[["monarr-transfer","t-3"]],"record":{}}`, 0},
+		{"unavailable", ``, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				if r.URL.Path == "/api/v1/request-admissions/t-3" {
+					_, _ = w.Write([]byte(`{"protocolVersion":1,"requestToken":"t-3","jobId":3,"outcome":"failed","failureReason":"health","blamesRelease":true}`))
+					return
+				}
+				if r.URL.Path != "/api/v1/history" || r.URL.Query().Get("limit") != "100" {
+					t.Errorf("unexpected request %s", r.URL)
+					http.NotFound(w, r)
+					return
+				}
+				if tc.row == "" {
+					http.Error(w, "unavailable", http.StatusServiceUnavailable)
+					return
+				}
+				_, _ = w.Write([]byte(`{"entries":[` + tc.row + `]}`))
+			}))
+			defer srv.Close()
+			got, found, err := New(ports.ClientConfig{URL: srv.URL}).GetRequestAdmission(t.Context(), "t-3")
+			if err != nil || !found || got.Fetched.TotalArticles != tc.want || got.Fetched.SuccessArticles != 0 || got.FailureReason != "health" || got.BlamesRelease == nil || !*got.BlamesRelease {
+				t.Fatalf("receipt=%+v found=%v err=%v", got, found, err)
+			}
+		})
+	}
+}

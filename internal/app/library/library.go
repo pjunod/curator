@@ -26,7 +26,10 @@ import (
 
 // Errors surfaced to the API layer.
 var (
-	ErrAlreadyExists   = errors.New("item already in library")
+	ErrAlreadyExists = errors.New("item already in library")
+	// ErrOffloaded refuses to monitor an offloaded title (ADR 0028): Offload is
+	// its own state, and only Re-acquire brings it back.
+	ErrOffloaded       = errors.New("offloaded")
 	ErrUnsupportedKind = errors.New("kind not supported yet")
 	ErrNotFound        = sqlite.ErrNotFound
 	// ErrRootKindMismatch is returned when an item is placed in a root
@@ -499,6 +502,31 @@ func (s *Service) existingByAnyID(ctx context.Context, req AddRequest) error {
 	return nil
 }
 
+// Hydrate reads a title from its provider as Add would, without storing
+// anything: a Re-match preview of a title not yet in the library needs its
+// episodes (ADR 0027).
+func (s *Service) Hydrate(ctx context.Context, req AddRequest) (domain.MediaItem, error) {
+	if req.Kind == domain.KindBook {
+		if s.books == nil {
+			return domain.MediaItem{}, ports.ErrProviderNotConfigured
+		}
+		item, err := s.books.GetBook(ctx, req.OLID)
+		item.Source = "openlibrary"
+		return item, err
+	}
+	item, err := s.hydrateAdd(ctx, req)
+	if err != nil {
+		return item, err
+	}
+	if item.IDs.TMDB == 0 {
+		item.IDs.TMDB = req.TMDBID
+	}
+	if item.IDs.TVDB == 0 {
+		item.IDs.TVDB = req.TVDBID
+	}
+	return item, nil
+}
+
 func (s *Service) hydrateAdd(ctx context.Context, req AddRequest) (domain.MediaItem, error) {
 	switch req.HydrationSource {
 	case "":
@@ -833,6 +861,9 @@ func (s *Service) UpdateItem(ctx context.Context, id int64, req UpdateRequest) (
 		applyMonitorPreset(&item, *req.Monitor)
 	}
 	if req.Monitored != nil {
+		if *req.Monitored && item.Offloaded() {
+			return domain.MediaItem{}, fmt.Errorf("%w: %s is offloaded; Re-acquire it to download it again", ErrOffloaded, item.Title)
+		}
 		item.Monitored = *req.Monitored
 	}
 	if req.QualityProfileID != nil && *req.QualityProfileID != 0 {
@@ -955,13 +986,16 @@ func (s *Service) RefreshItem(ctx context.Context, id int64) (domain.MediaItem, 
 	// and NEW episodes appearing in them inherit it (existing episodes keep
 	// their own flag via the upsert). Brand-new seasons follow the series.
 	storedSeason := map[int]bool{}
+	wholeShowOffloaded := stored.Offloaded() // the stored item-scope intent, never inferred
 	for _, s := range stored.Seasons {
 		storedSeason[s.Number] = s.Monitored
 	}
 	for i := range fresh.Seasons {
 		mon, known := storedSeason[fresh.Seasons[i].Number]
 		if !known {
-			mon = monitorNewSeason(stored, fresh.Seasons[i].Number)
+			// A whole-show Offload (ADR 0028): a season found later arrives
+			// unmonitored, and not offloaded: it was never on disk.
+			mon = monitorNewSeason(stored, fresh.Seasons[i].Number) && !wholeShowOffloaded
 		}
 		fresh.Seasons[i].Monitored = mon
 		for j := range fresh.Seasons[i].Episodes {
@@ -977,6 +1011,27 @@ func (s *Service) RefreshItem(ctx context.Context, id int64) (domain.MediaItem, 
 		if err := s.EnqueueIdentityRefresh(ctx, id, true); err != nil {
 			s.log.Warn("library: identity enrichment deferred after refresh", "id", id, "err", err)
 		}
+	}
+	return s.db.GetMediaItemFull(ctx, id)
+}
+
+func (s *Service) CorrectMovieMatch(ctx context.Context, id, oldID, newID int64) (domain.MediaItem, error) {
+	if oldID <= 0 || newID <= 0 || oldID == newID {
+		return domain.MediaItem{}, ErrInvalidExternalID
+	}
+	fresh, err := s.meta.GetMovie(ctx, newID)
+	if err != nil {
+		return domain.MediaItem{}, err
+	}
+	if fresh.IDs.TMDB != newID || fresh.Title == "" {
+		return domain.MediaItem{}, ErrInvalidExternalID
+	}
+	fresh.Source = "tmdb"
+	if err = s.db.ReplaceMovieMatch(ctx, id, oldID, fresh); err != nil {
+		return domain.MediaItem{}, err
+	}
+	if err = s.EnqueueIdentityRefresh(ctx, id, true); err != nil {
+		s.log.Warn("identity enrichment deferred after metadata correction", "id", id, "err", err)
 	}
 	return s.db.GetMediaItemFull(ctx, id)
 }
@@ -1103,6 +1158,17 @@ func (s *Service) DeleteCopy(ctx context.Context, itemID, copyID int64) (domain.
 // SetSeasonMonitored flips a season's monitored flag (cascading to its
 // episodes) and returns the refreshed item.
 func (s *Service) SetSeasonMonitored(ctx context.Context, itemID int64, season int, monitored bool) (domain.MediaItem, error) {
+	if monitored {
+		item, err := s.db.GetMediaItemFull(ctx, itemID)
+		if err != nil {
+			return domain.MediaItem{}, err
+		}
+		for _, sn := range item.Seasons {
+			if sn.Number == season && sn.FullyOffloaded() {
+				return domain.MediaItem{}, fmt.Errorf("%w: season %d is offloaded; Re-acquire it to download it again", ErrOffloaded, season)
+			}
+		}
+	}
 	if err := s.db.SetSeasonMonitored(ctx, itemID, season, monitored); err != nil {
 		return domain.MediaItem{}, err
 	}
@@ -1113,6 +1179,19 @@ func (s *Service) SetSeasonMonitored(ctx context.Context, itemID int64, season i
 // SetEpisodeMonitored flips one episode's monitored flag and returns the
 // refreshed item.
 func (s *Service) SetEpisodeMonitored(ctx context.Context, itemID, episodeID int64, monitored bool) (domain.MediaItem, error) {
+	if monitored {
+		item, err := s.db.GetMediaItemFull(ctx, itemID)
+		if err != nil {
+			return domain.MediaItem{}, err
+		}
+		for _, sn := range item.Seasons {
+			for _, e := range sn.Episodes {
+				if e.ID == episodeID && e.Offloaded() {
+					return domain.MediaItem{}, fmt.Errorf("%w: that episode is offloaded; Re-acquire it to download it again", ErrOffloaded)
+				}
+			}
+		}
+	}
 	if err := s.db.SetEpisodeMonitored(ctx, itemID, episodeID, monitored); err != nil {
 		return domain.MediaItem{}, err
 	}
@@ -1142,6 +1221,14 @@ func (s *Service) RefreshAll(ctx context.Context) error {
 				continue
 			}
 			s.log.Warn("library: refresh failed", "id", item.ID, "title", item.Title, "err", err)
+			var remote *ports.RemoteError
+			if errors.As(err, &remote) && remote.Category == ports.RemoteNotFound {
+				_, recordErr := s.db.W.ExecContext(ctx, `INSERT INTO metadata_match_issues(item_id,provider,provider_id) SELECT id,source,tmdb_id FROM media_items WHERE id=? AND source=? AND tmdb_id=? ON CONFLICT(item_id) DO UPDATE SET provider=excluded.provider,provider_id=excluded.provider_id`, item.ID, item.Source, item.IDs.TMDB)
+				if recordErr != nil {
+					return recordErr
+				}
+				continue
+			}
 			if firstErr == nil {
 				firstErr = fmt.Errorf("refreshing %q: %w", item.Title, err)
 			}
@@ -1420,7 +1507,7 @@ func (s *Service) AddRootFolder(ctx context.Context, path string, kind domain.Ro
 	if err := s.checkNotNested(ctx, clean); err != nil {
 		return domain.RootFolder{}, err
 	}
-	rf, err := s.db.AddRootFolder(ctx, clean, kind)
+	rf, err := s.db.AddRootFolderWithPresence(ctx, clean, kind, presenceRootIdentity(info))
 	if errors.Is(err, sqlite.ErrDuplicate) {
 		return domain.RootFolder{}, fmt.Errorf("root folder already registered")
 	}

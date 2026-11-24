@@ -16,7 +16,7 @@ import (
 	"github.com/pjunod/monarr/internal/ports"
 )
 
-// Pre-flight probing (ADR 0026 §6): before a release is grabbed, Runner reads
+// Pre-flight probing (ADR 0031 §6): before a release is grabbed, Runner reads
 // the head of its main file and Curator measures those bytes with the same
 // prober it runs on imported files. The measurement replaces the name's HDR
 // claim in the decision and the ranking; a release Runner cannot peek at
@@ -163,7 +163,7 @@ func (h headReader) ReadAt(p []byte, off int64) (int, error) {
 }
 
 // discMasterNote is the warning a profile 7 remux gets when the title's disc
-// is known to be FEL and this release measured MEL (ADR 0026 §6).
+// is known to be FEL and this release measured MEL (ADR 0031 §6).
 func discMasterNote(discEL string, ev *ProbeEvidence) string {
 	if !ev.measured() || discEL != hdr.ELFEL || ev.Tier != hdr.TierDVP7MEL {
 		return ""

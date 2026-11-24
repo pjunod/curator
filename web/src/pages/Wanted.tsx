@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useState } from 'react'
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
 import {
@@ -8,18 +8,28 @@ import {
   fmtRelative,
   getTasks,
   getWanted,
-  getWantedSearch,
+  getWantedSearches,
   getWantedSearchResults,
+  type WantedSearchRun,
   type WantedSearchScope,
 } from '../api'
 import { PAGE_SIZES, PageSizePicker, Pager, clampPage, sliceForPage } from '../Pager'
 import { selectWantedGroups, type WantedFilter, type WantedGroup, type WantedSort } from '../wanted'
 
-const RUN_KEY = 'monarr-wanted-search-run'
+const RUNS_QUERY_KEY = ['wanted-searches'] as const
+const RESULTS_PAGE_SIZE = 100
 const SIZE_KEY = 'monarr-wanted-page-size'
 
-function savedRun(): string {
-  try { return localStorage.getItem(RUN_KEY) ?? '' } catch { return '' }
+const wantedSubmissions = new Map<string, { requestId: string; pending: boolean }>()
+
+function submissionKey(scope: WantedSearchScope, delay: number): string {
+  return JSON.stringify([
+    scope.scope,
+    delay,
+    'reason' in scope ? scope.reason : null,
+    'mediaItemId' in scope ? scope.mediaItemId : null,
+    'wantableId' in scope ? scope.wantableId : null,
+  ])
 }
 
 function savedPageSize(): number {
@@ -29,13 +39,6 @@ function savedPageSize(): number {
     const size = Number(stored)
     return PAGE_SIZES.includes(size as (typeof PAGE_SIZES)[number]) ? size : 50
   } catch { return 50 }
-}
-
-function saveRun(runId: string) {
-  try {
-    if (runId) localStorage.setItem(RUN_KEY, runId)
-    else localStorage.removeItem(RUN_KEY)
-  } catch { /* private mode */ }
 }
 
 function titleCase(value: string): string {
@@ -58,61 +61,48 @@ export function WantedPage() {
   const [page, setPage] = useState(0)
   const [pageSize, setPageSize] = useState(savedPageSize)
   const [expanded, setExpanded] = useState<Set<number>>(new Set())
-  const [runId, setRunId] = useState(savedRun)
-  const [runNotice, setRunNotice] = useState('')
   const [targetDelayMs, setTargetDelayMs] = useState(1000)
-  const [resultPage, setResultPage] = useState(0)
+  const [runNotice, setRunNotice] = useState('')
 
-  const run = useQuery({
-    queryKey: ['wanted-search', runId],
-    queryFn: () => getWantedSearch(runId),
-    enabled: Boolean(runId),
-    refetchInterval: (query) => {
-      const status = query.state.data?.status
-      return status && ['completed', 'failed', 'interrupted', 'cancelled'].includes(status) ? false : 1000
-    },
-    retry: false,
-  })
-  const terminal = run.data && ['completed', 'failed', 'interrupted', 'cancelled'].includes(run.data.status)
-  const results = useQuery({
-    queryKey: ['wanted-search-results', runId, resultPage],
-    queryFn: () => getWantedSearchResults(runId, 100, resultPage * 100),
-    enabled: Boolean(runId && terminal),
+  const runs = useQuery({
+    queryKey: RUNS_QUERY_KEY,
+    queryFn: getWantedSearches,
+    refetchInterval: (query) => query.state.data?.items.some(isActiveRun) ? 1000 : 5000,
   })
 
+  const previousRuns = useRef<WantedSearchRun[] | undefined>(undefined)
   useEffect(() => {
-    if (!run.isError || !(run.error instanceof ApiError) || run.error.status !== 404) return
-    setRunNotice('The saved Wanted search has expired or no longer exists.')
-    saveRun('')
-    setRunId('')
-  }, [run.error, run.isError])
-  useEffect(() => setResultPage(0), [runId])
-
-  useEffect(() => {
-    if (!terminal) return
-    void qc.invalidateQueries({ queryKey: ['wanted'] })
-    void qc.invalidateQueries({ queryKey: ['queue'] })
-    void qc.invalidateQueries({ queryKey: ['library'] })
-  }, [qc, terminal])
+    const currentRuns = runs.data?.items
+    if (!currentRuns) return
+    const previous = previousRuns.current
+    previousRuns.current = currentRuns
+    if (!previous) return
+    const previousTerminal = new Set(previous.filter((run) => !isActiveRun(run)).map((run) => run.runId))
+    if (currentRuns.some((run) => !isActiveRun(run) && !previousTerminal.has(run.runId))) {
+      void qc.invalidateQueries({ queryKey: ['wanted'] })
+      void qc.invalidateQueries({ queryKey: ['queue'] })
+      void qc.invalidateQueries({ queryKey: ['library'] })
+    }
+  }, [qc, runs.data])
 
   const submit = useMutation({
-    mutationFn: (scope: WantedSearchScope) => createWantedSearch({ ...scope, targetDelayMs }),
-    onSuccess: (next) => {
-      setRunNotice('')
-      saveRun(next.runId)
-      setRunId(next.runId)
-      void qc.setQueryData(['wanted-search', next.runId], next)
-    },
-    onError: (error) => {
-      if (error instanceof ApiError && error.status === 409 && error.activeRunId) {
-        saveRun(error.activeRunId)
-        setRunId(error.activeRunId)
+    mutationFn: async ({ scope, key, requestId, delay }: { scope: WantedSearchScope; key: string; requestId: string; delay: number }) => {
+      try {
+        const run = await createWantedSearch({ ...scope, targetDelayMs: delay, requestId })
+        if (!run?.runId) throw new Error('The server did not confirm the search. Try again to recover its status.')
+        wantedSubmissions.delete(key)
+        return run
+      } catch (error) {
+        if (error instanceof ApiError && error.status >= 400 && error.status < 500 && error.status !== 408 && error.status !== 499) {
+          wantedSubmissions.delete(key)
+        } else {
+          wantedSubmissions.set(key, { requestId, pending: false })
+        }
+        throw error
       }
     },
-  })
-  const cancel = useMutation({
-    mutationFn: () => cancelWantedSearch(runId),
-    onSuccess: (next) => void qc.setQueryData(['wanted-search', runId], next),
+    onSuccess: (run) => updateRun(qc, run),
+    onError: (error) => setRunNotice(`Could not start search: ${error.message}`),
   })
 
   const loop = (name: string) => tasks.data?.find((task) => task.name === name)
@@ -128,8 +118,6 @@ export function WantedPage() {
   )
   const currentPage = clampPage(page, selected.length, pageSize)
   const visible = sliceForPage(selected, currentPage, pageSize)
-  const active = Boolean(run.data && (run.data.status === 'queued' || run.data.status === 'running'))
-  const busy = active || submit.isPending
 
   useEffect(() => {
     if (page !== currentPage) setPage(currentPage)
@@ -149,7 +137,15 @@ export function WantedPage() {
     setQuery('')
     setPage(0)
   }
-  const start = (scope: WantedSearchScope) => submit.mutate(scope)
+  const start = (scope: WantedSearchScope) => {
+    const key = submissionKey(scope, targetDelayMs)
+    const saved = wantedSubmissions.get(key)
+    if (saved?.pending) return
+    setRunNotice('')
+    const requestId = saved?.requestId ?? (globalThis.crypto?.randomUUID?.() ?? `wanted-${Date.now()}-${Math.random().toString(36).slice(2)}`)
+    wantedSubmissions.set(key, { requestId, pending: true })
+    submit.mutate({ scope, key, requestId, delay: targetDelayMs })
+  }
   const groupScope = (group: WantedGroup): WantedSearchScope => ({
     scope: 'group',
     mediaItemId: group.mediaItemId,
@@ -161,7 +157,7 @@ export function WantedPage() {
       <header className="page-head">
         <h1>Wanted</h1>
         <div className="head-actions">
-          <button onClick={() => start({ scope: 'all' })} disabled={busy || all.length === 0}>
+          <button onClick={() => start({ scope: 'all' })} disabled={all.length === 0}>
             Search all now ({all.length})
           </button>
         </div>
@@ -185,54 +181,16 @@ export function WantedPage() {
       {all.length === 0 && wanted.isSuccess && (
         <div className="banner">Nothing wanted — everything monitored is on disk at or above its cutoff.</div>
       )}
-      {runNotice && <div className="banner warning">{runNotice}</div>}
-
-      {(run.data || submit.isError || run.isError) && (
-        <section className="panel wanted-run" aria-live="polite">
-          {submit.isError && <p className="error">Could not start search: {submit.error.message}</p>}
-          {run.isError && <p className="error">Could not read search status: {run.error.message}</p>}
-          {run.data && (
-            <>
-              <div className="wanted-run-head">
-                <div>
-                  <strong>{titleCase(run.data.status)}</strong> · {run.data.scopeLabel}
-                  <div className="muted">
-                    {run.data.status === 'running' || run.data.status === 'queued'
-                      ? `Searching ${run.data.processed} of ${run.data.selected} selected items`
-                      : `${run.data.processed} of ${run.data.selected} selected items processed`}
-                    {' '}· created {fmtRelative(run.data.createdAt, now)}
-                  </div>
-                </div>
-                {active && (
-                  <button disabled={cancel.isPending || Boolean(run.data.cancelRequestedAt)} onClick={() => cancel.mutate()}>
-                    {run.data.cancelRequestedAt ? 'Cancelling…' : 'Cancel'}
-                  </button>
-                )}
-              </div>
-              <div className="wanted-run-counts">
-                <span>Searched {run.data.searched}</span><span>Skipped {run.data.skipped}</span>
-                <span>Failed {run.data.failed}</span><span>Grabbed {run.data.grabbed}</span>
-              </div>
-              {run.data.error && <p className="error">{run.data.error}</p>}
-              {terminal && results.data && results.data.items.length > 0 && (
-                <details>
-                  <summary>Target results ({run.data.processed})</summary>
-                  <ul className="wanted-results">
-                    {results.data.items.map((item) => (
-                      <li key={item.ordinal}>
-                        <strong>{item.label}</strong> — {item.state}
-                        {item.skipped && ` (${item.skipped.replaceAll('_', ' ')})`}
-                        {item.grabbed && ` · grabbed ${item.grabbed}`}
-                        {!item.grabbed && item.state === 'searched' && ` · ${item.seen} seen, ${item.matched} matched, ${item.accepted} accepted`}
-                        {item.error && <span className="error"> · {item.error}</span>}
-                      </li>
-                    ))}
-                  </ul>
-                  <Pager page={resultPage} size={100} total={run.data.processed} onPage={setResultPage} />
-                </details>
-              )}
-            </>
-          )}
+      {runNotice && <div className="banner banner-error" role="alert">{runNotice}</div>}
+      {runs.isError && (
+        <div className="banner banner-error">
+          Could not load Wanted searches: {runs.error.message}{' '}
+          <button onClick={() => void runs.refetch()}>Retry</button>
+        </div>
+      )}
+      {runs.data && runs.data.items.length > 0 && (
+        <section aria-label="Wanted searches">
+          {runs.data.items.map((run) => <WantedRun key={run.runId} run={run} now={now} />)}
         </section>
       )}
 
@@ -240,10 +198,10 @@ export function WantedPage() {
         <section className="panel">
           <div className="wanted-reasons" aria-label="Search every title by reason">
             <span className="muted">Reason actions span all titles and pages:</span>
-            <button disabled={busy || missingCount === 0} onClick={() => start({ scope: 'reason', reason: 'missing' })}>
+            <button disabled={missingCount === 0} onClick={() => start({ scope: 'reason', reason: 'missing' })}>
               Search all Missing ({missingCount})
             </button>
-            <button disabled={busy || upgradeCount === 0} onClick={() => start({ scope: 'reason', reason: 'upgrade' })}>
+            <button disabled={upgradeCount === 0} onClick={() => start({ scope: 'reason', reason: 'upgrade' })}>
               Search all Upgrade ({upgradeCount})
             </button>
             <details className="wanted-advanced">
@@ -313,7 +271,7 @@ export function WantedPage() {
                         </td>
                         <td className="muted mono">{group.kind}</td>
                         <td>{group.children.length} wanted · {group.missing} missing · {group.upgrade} upgrade</td>
-                        <td><button disabled={busy} title={group.kind === 'series' ? "Searches individual episodes; use the item's Auto search for season packs." : undefined}
+                        <td><button title={group.kind === 'series' ? "Searches individual episodes; use the item's Auto search for season packs." : undefined}
                           onClick={() => start(direct ? { scope: 'target', wantableId: group.children[0].wantableId } : groupScope(group))}>
                           {direct ? <>Search item</> : <GroupActionLabel group={group} filter={filter} />}
                         </button></td>
@@ -333,7 +291,7 @@ export function WantedPage() {
                                     </td>
                                     <td className="muted">{child.reason === 'missing' ? 'Missing' : `Upgrade from ${child.current}`}</td>
                                     <td className="muted mono">{child.wantableId}</td>
-                                    <td><button disabled={busy} onClick={() => start({ scope: 'target', wantableId: child.wantableId })}>
+                                    <td><button onClick={() => start({ scope: 'target', wantableId: child.wantableId })}>
                                       {group.kind === 'series' ? 'Search episode' : 'Search item'}
                                     </button></td>
                                   </tr>
@@ -358,5 +316,92 @@ export function WantedPage() {
         </section>
       )}
     </>
+  )
+}
+
+function isActiveRun(run: WantedSearchRun): boolean {
+  return run.status === 'queued' || run.status === 'running'
+}
+
+function updateRun(qc: ReturnType<typeof useQueryClient>, run: WantedSearchRun) {
+  qc.setQueryData<Awaited<ReturnType<typeof getWantedSearches>>>(RUNS_QUERY_KEY, (previous) => {
+    const items = previous?.items ?? []
+    return {
+      items: items.some((item) => item.runId === run.runId)
+        ? items.map((item) => item.runId === run.runId ? run : item)
+        : [run, ...items],
+    }
+  })
+  void qc.invalidateQueries({ queryKey: RUNS_QUERY_KEY })
+}
+
+function WantedRun({ run, now }: { run: WantedSearchRun; now: Date }) {
+  const qc = useQueryClient()
+  const [resultPage, setResultPage] = useState(0)
+  const [showResults, setShowResults] = useState(false)
+  const active = isActiveRun(run)
+  const results = useQuery({
+    queryKey: ['wanted-search-results', run.runId, resultPage],
+    queryFn: () => getWantedSearchResults(run.runId, RESULTS_PAGE_SIZE, resultPage * RESULTS_PAGE_SIZE),
+    enabled: !active && showResults,
+  })
+  const cancel = useMutation({
+    mutationFn: () => cancelWantedSearch(run.runId),
+    onSuccess: (next) => updateRun(qc, next),
+  })
+
+  return (
+    <article className="panel wanted-run">
+      <div className="wanted-run-head">
+        <div aria-live="polite">
+          <strong>{titleCase(run.status)}</strong> · {run.scopeLabel}
+          <div className="muted">
+            {run.status === 'queued' ? `${run.selected} selected items` : active
+              ? `Searching ${run.processed} of ${run.selected} selected items`
+              : `${run.processed} of ${run.selected} selected items processed`}
+            {' '}· created {fmtRelative(run.createdAt, now)}
+          </div>
+        </div>
+        {active && (
+          <button aria-label={`Cancel ${run.scopeLabel}`}
+            disabled={cancel.isPending || Boolean(run.cancelRequestedAt)} onClick={() => cancel.mutate()}>
+            {run.cancelRequestedAt ? 'Cancelling…' : 'Cancel'}
+          </button>
+        )}
+      </div>
+      <div className="wanted-run-counts">
+        <span>Searched {run.searched}</span><span>Skipped {run.skipped}</span>
+        <span>Failed {run.failed}</span><span>Grabbed {run.grabbed}</span>
+      </div>
+      {run.error && <p className="error">{run.error}</p>}
+      {cancel.isError && <p className="error">Could not cancel search: {cancel.error.message}</p>}
+      {!active && run.processed > 0 && (
+        <details onToggle={(event) => setShowResults(event.currentTarget.open)}>
+          <summary>Target results ({run.processed})</summary>
+          {results.isPending && <p className="muted">Loading target results…</p>}
+          {results.isError && (
+            <p className="error">Could not load target results: {results.error.message}{' '}
+              <button onClick={() => void results.refetch()}>Retry</button>
+            </p>
+          )}
+          {results.data && (
+            <>
+              <ul className="wanted-results">
+                {results.data.items.map((item) => (
+                  <li key={item.ordinal}>
+                    <strong>{item.label}</strong> — {item.state}
+                    {item.skipped && ` (${item.skipped.replaceAll('_', ' ')})`}
+                    {item.grabbed && ` · grabbed ${item.grabbed}`}
+                    {!item.grabbed && item.state === 'searched' && ` · ${item.seen} seen, ${item.matched} matched, ${item.accepted} accepted`}
+                    {item.error && <span className="error"> · {item.error}</span>}
+                  </li>
+                ))}
+              </ul>
+              <Pager page={resultPage} size={RESULTS_PAGE_SIZE} total={run.processed} onPage={setResultPage} />
+            </>
+          )}
+        </details>
+      )}
+    </article>
   )
 }

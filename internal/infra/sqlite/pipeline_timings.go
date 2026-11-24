@@ -1,0 +1,194 @@
+package sqlite
+
+import (
+	"context"
+	"strings"
+	"time"
+)
+
+// Pipeline timing kinds (migration 0071, contract section 3.5).
+const (
+	TimingFailureToNextGrab     = "failure_to_next_grab"
+	TimingRunnerDoneToImport    = "runner_done_to_import"
+	TimingImportToCinemaVisible = "import_to_cinema_visible"
+)
+
+// StartPipelineTiming opens a timing for (kind, transfer). The first start
+// wins: a second observation of the same event must not move the clock.
+func (d *DB) StartPipelineTiming(ctx context.Context, kind, transfer string, downloadID, startedAt int64) error {
+	_, err := d.W.ExecContext(ctx,
+		`INSERT INTO pipeline_timings (transfer, download_id, kind, started_at) VALUES (?,?,?,?) ON CONFLICT (kind, transfer) DO NOTHING`,
+		transfer, downloadID, kind, startedAt)
+	return err
+}
+
+// EndPipelineTiming closes an open timing. A timing that was never started,
+// or is already closed, is left alone. An end before the start (a backwards
+// clock step) closes the sample at duration 0.
+func (d *DB) EndPipelineTiming(ctx context.Context, kind, transfer string, endedAt int64) error {
+	_, err := d.W.ExecContext(ctx,
+		`UPDATE pipeline_timings SET ended_at=MAX(?,started_at) WHERE kind=? AND transfer=? AND ended_at=0`,
+		endedAt, kind, transfer)
+	return err
+}
+
+// PipelineHistogram aggregates the closed timings of one kind in SQL: for each
+// bound (milliseconds, ascending) the number of timings at or under it, plus
+// the sum of all durations and their count. One row is read however many
+// timings exist, which is what a metrics scrape needs.
+func (d *DB) PipelineHistogram(ctx context.Context, kind string, boundsMs []int64) (cum []int64, sumMs, count int64, err error) {
+	cols := []string{"COUNT(*)", "COALESCE(SUM(ended_at-started_at),0)"}
+	args := make([]any, 0, len(boundsMs)+1)
+	for _, b := range boundsMs {
+		cols = append(cols, "COALESCE(SUM(CASE WHEN ended_at-started_at<=? THEN 1 ELSE 0 END),0)")
+		args = append(args, b)
+	}
+	args = append(args, kind)
+	dest := make([]any, len(cols))
+	cum = make([]int64, len(boundsMs))
+	dest[0], dest[1] = &count, &sumMs
+	for i := range cum {
+		dest[2+i] = &cum[i]
+	}
+	err = d.R.QueryRowContext(ctx,
+		"SELECT "+strings.Join(cols, ", ")+" FROM pipeline_timings WHERE kind=? AND ended_at>0", args...).Scan(dest...)
+	return cum, sumMs, count, err
+}
+
+// PipelineDurationsMs returns the closed durations (milliseconds) of one kind
+// that ended at or after sinceMs, ascending. It reads every matching row, so
+// it is for the last-24-hour tiles, not for a metrics scrape.
+func (d *DB) PipelineDurationsMs(ctx context.Context, kind string, sinceMs int64) ([]int64, error) {
+	rows, err := d.R.QueryContext(ctx,
+		`SELECT ended_at-started_at FROM pipeline_timings WHERE kind=? AND ended_at>0 AND ended_at>=? ORDER BY ended_at-started_at`,
+		kind, sinceMs)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var out []int64
+	for rows.Next() {
+		var v int64
+		if err := rows.Scan(&v); err != nil {
+			return nil, err
+		}
+		out = append(out, v)
+	}
+	return out, rows.Err()
+}
+
+// DiscardPipelineTiming deletes an open timing that turned out to have nothing
+// to wait for. A closed timing is never touched.
+func (d *DB) DiscardPipelineTiming(ctx context.Context, kind, transfer string) error {
+	_, err := d.W.ExecContext(ctx, `DELETE FROM pipeline_timings WHERE kind=? AND transfer=? AND ended_at=0`, kind, transfer)
+	return err
+}
+
+// PipelineWaiting counts open timings of one kind that started at or after
+// sinceMs (0 = any age) and the start of the oldest one (0 when none).
+// A failed, payload-removed import with no salvage or remaining custody has
+// nothing left to import. Preserve its open audit sample without reporting
+// it as live work or fabricating a successful duration.
+func (d *DB) PipelineWaiting(ctx context.Context, kind string, sinceMs int64) (n int, oldestStart int64, err error) {
+	err = d.R.QueryRowContext(ctx,
+		`SELECT COUNT(*), COALESCE(MIN(started_at),0) FROM pipeline_timings t
+ WHERE kind=? AND ended_at=0 AND started_at>=?
+ AND NOT (kind='runner_done_to_import' AND EXISTS (
+  SELECT 1 FROM downloads d WHERE d.id=t.download_id AND d.transfer=t.transfer
+   AND (d.id IN (`+archivedDownloadIDs+`) OR (d.state='failed' AND d.payload_removed=1 AND d.runner_salvage IN ('','none')
+   AND NOT EXISTS(SELECT 1 FROM publications p WHERE p.download_id=d.id AND p.state!='removed')
+   AND NOT EXISTS(SELECT 1 FROM import_attempt_controls c WHERE c.download_id=d.id AND c.outcome='pending')
+   AND NOT EXISTS(SELECT 1 FROM import_attempt_stages s WHERE s.download_id=d.id AND s.state='held')
+   AND NOT EXISTS(SELECT 1 FROM import_publication_authorizations a WHERE a.download_id=d.id AND (a.outcome='pending' OR a.resolution IN ('retained_for_review','operator_adopted')))
+   AND NOT EXISTS(SELECT 1 FROM import_placements p WHERE json_extract(p.data,'$.download_id')=d.id AND p.state IN ('prepared','retained'))
+ ))))`,
+		kind, sinceMs).Scan(&n, &oldestStart)
+	return n, oldestStart, err
+}
+
+// OverdueRow is a download or a publication past its deadline.
+type OverdueRow struct {
+	ID         int64
+	Title      string
+	State      string
+	Protocol   string
+	DeadlineMs int64
+	// Publication is set for a publication past its six hours; ID is then the
+	// publication's own id.
+	Publication bool
+}
+
+// The overdue predicate of contract section 3.5: a download in a
+// non-terminal state whose deadline_at (written on every state entry) has
+// passed, plus a publication still discovered/importing past its deadline.
+// A legacy-client row parked or superseded for an operator waits on a person
+// (like awaiting_import) and has no deadline until M4 retires the fence.
+// An archived cleanup keeps custody records, but its import is closed.
+const archivedDownloadIDs = `SELECT d.id FROM downloads d JOIN download_dispositions x
+ ON x.download_id=d.id AND x.generation_key=d.generation_key WHERE x.state='archived'`
+
+const reportPublication = `(download_id IS NULL OR download_id NOT IN (` + archivedDownloadIDs + `))`
+const heldPublicationsWhere = `state='discovered' AND last_stop='environment' AND ` + reportPublication
+
+const overdueDownloadsWhere = `state NOT IN ('imported','notified','failed') AND deadline_at>0 AND deadline_at<?1 AND superseded=0 AND parked_at=0 AND id NOT IN (` + archivedDownloadIDs + `)`
+const overduePublicationsWhere = `state IN ('discovered','importing') AND download_id IS NOT NULL AND deadline_at>0 AND deadline_at<?1 AND ` + reportPublication
+
+// OverdueCount counts overdue downloads and publications.
+func (d *DB) OverdueCount(ctx context.Context, nowMs int64) (n int, err error) {
+	err = d.R.QueryRowContext(ctx, `SELECT (SELECT COUNT(*) FROM downloads WHERE `+overdueDownloadsWhere+`) +
+		(SELECT COUNT(*) FROM publications WHERE `+overduePublicationsWhere+`)`, nowMs).Scan(&n)
+	return n, err
+}
+
+// OverdueRows lists the most overdue rows first, at most limit of them.
+func (d *DB) OverdueRows(ctx context.Context, nowMs int64, limit int) ([]OverdueRow, error) {
+	rows, err := d.R.QueryContext(ctx, `SELECT id, release_title, state, protocol, deadline_at, 0 FROM downloads WHERE `+overdueDownloadsWhere+`
+		UNION ALL SELECT id, path, state, kind, deadline_at, 1 FROM publications WHERE `+overduePublicationsWhere+`
+		ORDER BY 5 LIMIT ?2`, nowMs, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var out []OverdueRow
+	for rows.Next() {
+		var r OverdueRow
+		var pub int
+		if err := rows.Scan(&r.ID, &r.Title, &r.State, &r.Protocol, &r.DeadlineMs, &pub); err != nil {
+			return nil, err
+		}
+		r.Publication = pub == 1
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+type OperatorIssue struct {
+	ID                  int64
+	Kind, Title, Reason string
+}
+
+// OperatorIssues returns one addressable job even when both the download
+// and its publication exceed their deadlines.
+func (d *DB) OperatorIssues(ctx context.Context, now time.Time) ([]OperatorIssue, error) {
+	rows, err := d.R.QueryContext(ctx, `WITH affected(id,reason) AS (
+    SELECT id,'Download overdue' FROM downloads WHERE `+overdueDownloadsWhere+`
+    UNION SELECT download_id,'Import overdue' FROM publications WHERE `+overduePublicationsWhere+`
+    UNION SELECT download_id,'Import held: ' || error FROM publications WHERE `+heldPublicationsWhere+`
+ )
+ SELECT d.id,'job',d.release_title,group_concat(a.reason,' · ') FROM affected a JOIN downloads d ON d.id=a.id GROUP BY d.id
+ UNION ALL SELECT m.id,'metadata',m.title,'Metadata provider could not find this title' FROM metadata_match_issues i JOIN media_items m ON m.id=i.item_id
+ ORDER BY 2,1`, now.UnixMilli())
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var issues []OperatorIssue
+	for rows.Next() {
+		var issue OperatorIssue
+		if err := rows.Scan(&issue.ID, &issue.Kind, &issue.Title, &issue.Reason); err != nil {
+			return nil, err
+		}
+		issues = append(issues, issue)
+	}
+	return issues, rows.Err()
+}

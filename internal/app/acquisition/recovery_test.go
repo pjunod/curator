@@ -36,6 +36,12 @@ func markRecoveryImportingForTest(t *testing.T, db *sqlite.DB, id string) {
 func recoveryNamedFixture(t *testing.T, name string, extra bool) (*Service, *sqlite.DB, RecoveryRequest, *atomic.Int32) {
 	t.Helper()
 	svc, db, itemID := autoSetup(t, nil, &fakeClient{})
+	return recoveryFixtureOn(t, svc, db, itemID, name, extra)
+}
+
+// recoveryFixtureOn adds a Runner recovery of one file to an autoSetup scenario.
+func recoveryFixtureOn(t *testing.T, svc *Service, db *sqlite.DB, itemID int64, name string, extra bool) (*Service, *sqlite.DB, RecoveryRequest, *atomic.Int32) {
+	t.Helper()
 	ctx := context.Background()
 	mount := t.TempDir()
 	payload := filepath.Join(mount, "abc123", "payload")

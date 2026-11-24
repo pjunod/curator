@@ -6,7 +6,8 @@ Read before touching anything. These rules reflect the owner's September 30,
 ## 1. Work in your own clone
 
 Never work in the owner's repositories under `~/code`. Create an independent
-clone outside that directory and use a `codex/` branch. Do not leave source,
+clone outside that directory and use a branch named for your agent (`claude/` for Claude,
+`codex/` for Codex). Do not leave source,
 build output, test artifacts, or agent scratch files in the owner's checkout.
 Clean up your clone, temporary files, processes, and remote branch after merge.
 Preserve other people's work; remove only artifacts you created.
@@ -46,7 +47,8 @@ review. Surface conflicting directives to the owner rather than hiding them.
 ## 4. Ship usable features
 
 Do not gate features in code. If an enable control is absolutely necessary,
-put it in an enable section in the Dev settings tab. Explain what is needed
+put it beside the relevant saved connection or feature settings. The Dev
+settings tab was retired by the owner-approved UI consolidation. Explain what is needed
 to enable it safely and whether those conditions are met. That information is
 advisory; it must not disable the enable control. Do not add unused flags or
 other cruft.

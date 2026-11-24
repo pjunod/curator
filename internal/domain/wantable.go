@@ -78,7 +78,7 @@ type Wantable interface {
 	// never makes an item wanted.
 	AudioLanguages() quality.Audio
 	// CurrentHDR is the measured HDR tier of the file behind CurrentQuality
-	// (ADR 0026); hdr.TierUnknown when it was never measured, which never
+	// (ADR 0031); hdr.TierUnknown when it was never measured, which never
 	// makes an item wanted.
 	CurrentHDR() hdr.Tier
 }

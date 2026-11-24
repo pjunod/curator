@@ -26,7 +26,8 @@ test('Wanted groups titles, preserves siblings, and sends every explicit scope',
     })),
   ]
   const submitted: Record<string, unknown>[] = []
-  let currentRun: Record<string, unknown> | undefined
+  const runs = new Map<string, Record<string, unknown>>()
+  const cancelled: string[] = []
 
   await page.route('**/api/v1/wanted', (route) => route.fulfill({ json: wanted }))
   await page.route('**/api/v1/system/tasks', (route) => route.fulfill({ json: [] }))
@@ -35,20 +36,37 @@ test('Wanted groups titles, preserves siblings, and sends every explicit scope',
     if (route.request().method() === 'POST' && url.pathname.endsWith('/wanted/searches')) {
       const scope = route.request().postDataJSON() as Record<string, unknown>
       submitted.push(scope)
-      currentRun = {
-        runId: `run-${submitted.length}`, scope, scopeLabel: 'Test scope', status: 'completed',
-        createdAt: new Date().toISOString(), finishedAt: new Date().toISOString(),
-        targetDelayMs: scope.targetDelayMs, selected: 1, processed: 1,
-        searched: 1, skipped: 0, failed: 0, grabbed: 0,
+      const runId = `run-${submitted.length}`
+      const scopeLabel = ['All wanted items', 'All missing items', 'Missing in Example Show', 'Example Show S01E02', 'All upgrade items'][submitted.length - 1]
+      const run = {
+        runId, scope, scopeLabel, status: 'queued', createdAt: new Date().toISOString(),
+        targetDelayMs: scope.targetDelayMs, selected: 1, processed: 0,
+        searched: 0, skipped: 0, failed: 0, grabbed: 0,
       }
-      await route.fulfill({ status: 202, json: currentRun })
+      runs.set(runId, run)
+      await route.fulfill({ status: 202, json: run })
       return
     }
     if (url.pathname.endsWith('/results')) {
       await route.fulfill({ json: { items: [], limit: 100, offset: 0 } })
       return
     }
-    await route.fulfill({ json: currentRun })
+    if (url.pathname.endsWith('/wanted/searches')) {
+      await route.fulfill({ json: { items: [...runs.values()].reverse() } })
+      return
+    }
+    const [, runId, action] = /\/wanted\/searches\/([^/]+)(?:\/([^/]+))?$/.exec(url.pathname) ?? []
+    const run = runId ? runs.get(runId) : undefined
+    if (!runId || !run) {
+      await route.fulfill({ status: 404, json: { message: 'Unknown run' } })
+      return
+    }
+    if (action === 'cancel' && route.request().method() === 'POST') {
+      cancelled.push(runId)
+      run.status = 'cancelled'
+      run.finishedAt = new Date().toISOString()
+    }
+    await route.fulfill({ json: run })
   })
 
   await page.goto('/wanted')
@@ -73,10 +91,24 @@ test('Wanted groups titles, preserves siblings, and sends every explicit scope',
   await page.getByRole('button', { name: 'Search Missing in show (2)' }).click()
   await page.getByRole('button', { name: 'Search episode' }).first().click()
 
-  expect(submitted).toEqual([
+  await page.getByRole('button', { name: 'Search all Upgrade (1)' }).click()
+
+  const cards = page.getByRole('region', { name: 'Wanted searches' }).getByRole('article')
+  await expect(cards).toHaveCount(5)
+  await expect(cards.filter({ hasText: 'Queued' })).toHaveCount(5)
+  expect(submitted.map(({ requestId, ...scope }) => scope)).toEqual([
     { scope: 'all', targetDelayMs: 1000 },
     { scope: 'reason', reason: 'missing', targetDelayMs: 1000 },
     { scope: 'group', mediaItemId: 101, reason: 'missing', targetDelayMs: 1000 },
     { scope: 'target', wantableId: 'episode:101:1:2:c4', targetDelayMs: 1000 },
+    { scope: 'reason', reason: 'upgrade', targetDelayMs: 1000 },
   ])
+  const requestIds = submitted.map(({ requestId }) => requestId)
+  expect(requestIds).toEqual(Array(5).fill(expect.stringMatching(/.+/)))
+  expect(new Set(requestIds).size).toBe(5)
+
+  await page.getByRole('button', { name: 'Cancel Missing in Example Show', exact: true }).click()
+  await expect(cards.filter({ hasText: 'Missing in Example Show' })).toContainText('Cancelled')
+  await expect(cards.filter({ hasText: 'Queued' })).toHaveCount(4)
+  expect(cancelled).toEqual(['run-3'])
 })

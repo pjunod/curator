@@ -16,7 +16,7 @@ type CandidateKey string
 
 // Preference orders candidates: Class first, then QualityRank (higher wins),
 // then the profile's HDR order (HDRRank, lower wins, a measurement beating
-// an equal claim — ADR 0026 §4), then the custom-format score. A zero
+// an equal claim — ADR 0031 §4), then the custom-format score. A zero
 // HDRRank everywhere, which is every profile without an HDR order, leaves
 // the older ordering exactly as it was.
 type Preference struct {

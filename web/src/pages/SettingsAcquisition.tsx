@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { RunnerRecoverySettings } from './Recovery'
 import { ActionDialog, focusActionTrigger } from '../ActionDialog'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import type { DownloadClientConfig, DownloadClientInput, IndexerInput } from '../api'
@@ -80,6 +81,7 @@ function isNativeRunnerClient(type: string): boolean {
 }
 
 export function AcquisitionSettings() {
+  const [runnerAdvanced, setRunnerAdvanced] = useState(false)
   const qc = useQueryClient()
   const indexers = useQuery({ queryKey: ['indexers'], queryFn: getIndexers })
   const [budgetEdit, setBudgetEdit] = useState<{id:number; name:string; enabled:boolean; cap:number} | null>(null)
@@ -437,6 +439,7 @@ export function AcquisitionSettings() {
           </button>
         </div>
         {cliMsg && <p className={cliMsg.startsWith('✓') ? 'ok-text' : 'error-text'}>{cliMsg}</p>}
+      {clients.data?.some(c => c.type === 'nzbd' || c.type === 'runner-torrent') && <details onToggle={event => setRunnerAdvanced(event.currentTarget.open)}><summary>Advanced Runner integration</summary>{runnerAdvanced && <RunnerRecoverySettings />}</details>}
       </section>
     </>
   )

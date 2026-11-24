@@ -1,4 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
+import { useLocation } from '@tanstack/react-router'
+import { SystemStorage } from './SystemStorage'
+import '../Activity.css'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import type { BusEvent } from '../api'
 import type { Connection } from '../api'
@@ -8,7 +11,10 @@ import {
   fmtRelative,
   getBackups,
   getConnections,
+  getCompletedInventory,
   getHealth,
+  getPipeline,
+  pipelineTile,
   getTasks,
   runTask,
 } from '../api'
@@ -70,6 +76,11 @@ function ConnectionsCard() {
     refetchInterval: 10_000,
   })
   const rows = q.data?.connections ?? []
+  const pipe = useQuery({
+    queryKey: ['pipeline'],
+    queryFn: getPipeline,
+    refetchInterval: 30_000,
+  })
 
   return (
     <section className="panel">
@@ -82,6 +93,36 @@ function ConnectionsCard() {
           ? `Last probed ${fmtRelative(new Date(q.data.checkedAt).toISOString())}.`
           : 'Not probed yet — the health check runs every minute.'}
       </p>
+      {pipe.data && (
+        <div className="pipeline-tiles" aria-label="Pipeline timings, last 24 hours">
+          {pipe.data.timings.map((t) => {
+            const tile = pipelineTile(t)
+            return (
+              <div key={t.kind} className="pipeline-tile">
+                <div className="muted">{tile.title}</div>
+                <strong>{tile.value}</strong>
+                {tile.detail && <div className="muted">{tile.detail}</div>}
+              </div>
+            )
+          })}
+          {pipe.data.heldPublications > 0 && (
+            <p className="pipeline-overdue">
+              <span className="pill pill-warning">{pipe.data.heldPublications} held</span>{' '}
+              publication(s) wait on their environment (a full or blocked library,
+              unavailable storage, a missing manifest) — each Activity row says why.
+            </p>
+          )}
+          {pipe.data.overdueRows > 0 && (
+            <p className="pipeline-overdue">
+              <span className="pill pill-warning">{pipe.data.overdueRows} overdue</span>{' '}
+              download or import records are past their deadline.
+            </p>
+          )}
+          {!!pipe.data.issues?.length && <ul id="affected-jobs">{pipe.data.issues.map(issue => <li key={`${issue.kind}-${issue.id}`}>
+            <a href={issue.kind === 'metadata' ? `/library/${issue.id}` : `/activity?job=${issue.id}#attention`}>{issue.title}</a> · {issue.reason}
+          </li>)}</ul>}
+        </div>
+      )}
       {rows.length === 0 ? (
         <p className="muted">
           No download clients or media servers configured yet (Settings).
@@ -158,8 +199,16 @@ function useEventStream(): { events: BusEvent[]; connected: boolean } {
 }
 
 export function SystemPage() {
+  const location = useLocation()
+  const [tab, setTab] = useState<'diagnostics' | 'storage'>(location.hash.replace(/^#/, '') === 'storage' ? 'storage' : 'diagnostics')
+  useEffect(() => { setTab(location.hash.replace(/^#/, '') === 'storage' ? 'storage' : 'diagnostics') }, [location.hash])
   const qc = useQueryClient()
   const health = useQuery({ queryKey: ['health'], queryFn: getHealth, refetchInterval: 30_000 })
+  const completed = useQuery({
+    queryKey: ['completed-inventory'], queryFn: getCompletedInventory,
+    enabled: tab === 'diagnostics' && !!health.data?.checks.some(check => check.name === 'completed-folders' && check.status === 'warning' && check.message?.includes('entries need attention')),
+    refetchInterval: 30_000,
+  })
   const tasks = useQuery({ queryKey: ['tasks'], queryFn: getTasks, refetchInterval: 5_000 })
   const backups = useQuery({ queryKey: ['backups'], queryFn: getBackups, refetchInterval: 60_000 })
   const { events, connected } = useEventStream()
@@ -178,6 +227,9 @@ export function SystemPage() {
         <h1>System</h1>
       </header>
 
+      <nav className="system-tabs" aria-label="System sections"><button aria-pressed={tab === 'diagnostics'} onClick={() => setTab('diagnostics')}>Diagnostics</button><button aria-pressed={tab === 'storage'} onClick={() => setTab('storage')}>Storage</button></nav>
+      {tab === 'storage' && <SystemStorage />}
+      <div hidden={tab !== 'diagnostics'}>
       <ConnectionsCard />
 
       <section className="panel">
@@ -198,7 +250,14 @@ export function SystemPage() {
                 <td>
                   <span className={`pill pill-${c.status}`}>{c.status}</span>
                 </td>
-                <td className="muted">{c.message ?? ''}</td>
+                <td className="muted">{c.message ?? ''} {c.status === 'warning' && c.name === 'pipeline:overdue' && <a href="#affected-jobs">View affected jobs</a>}
+                {c.status === 'warning' && c.name === 'completed-folders' && <>
+                  {completed.data?.roots.flatMap(root => root.entries.filter(entry => !['active','retained','storage'].includes(entry.status)).map(entry =>
+                    <div key={entry.path}>{entry.receipts?.length ? entry.receipts.map(receipt =>
+                      <a key={receipt.downloadId} href={`/activity?job=${receipt.downloadId}#attention`}>{receipt.title}</a>) : entry.path}
+                      {' · '}{fmtBytes(entry.bytes)} · {entry.reason}</div>))}
+                  <a href="/system#storage">Review storage</a>
+                </>}</td>
                 <td className="muted">{fmtRelative(c.checkedAt)}</td>
               </tr>
             ))}
@@ -307,6 +366,7 @@ export function SystemPage() {
           </ul>
         )}
       </section>
+      </div>
     </>
   )
 }

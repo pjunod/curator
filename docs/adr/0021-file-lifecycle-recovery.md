@@ -1,6 +1,12 @@
 # ADR 0021: Durable Runner recovery handoff
 
-- **Status:** implemented, verification pending
+- **Status:** implemented, verification pending · **partly superseded**
+  (2026-11-07, curator v0.40.0) by [ADR 0026](0026-pipeline-contract-v2.md):
+  cleanup of a Runner publication is per file, bound to its recorded outcome
+  and manifest digest (pipeline contract v2 section 3.4); the receipt-bound
+  cleanup ledger, its explicit deletion batches and the migration-0040 review
+  cohort described below and in later amendments are removed. Recovery
+  handoff, placement and storage-identity checks are unchanged.
 - **Date:** 2026-09-25
 - **Related:** [ADR 0013](0013-measured-quality.md), [settings](../settings.md),
   [usage](../usage.md)

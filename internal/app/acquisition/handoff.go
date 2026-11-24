@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/pjunod/monarr/internal/app/pipeline"
 	"github.com/pjunod/monarr/internal/infra/sqlite"
 	"github.com/pjunod/monarr/internal/ports"
 )
@@ -70,6 +71,14 @@ func (s *Service) recordDownloaded(ctx context.Context, dl *sqlite.Download, cfg
 	s.advance(ctx, dl, "downloaded", 1, "", stepDownloaded, traced(detail, source))
 }
 
+// startRunnerDoneTiming opens runner_done_to_import for a row that is going to
+// be imported without waiting on a person: a row held for approval starts its
+// clock at approval, so an operator's wait does not pollute the seam. The first
+// start wins, so calling it again from a retry or the import itself is safe.
+func (s *Service) startRunnerDoneTiming(ctx context.Context, dl sqlite.Download) {
+	s.timings.Start(ctx, pipeline.RunnerDoneToImport, pipeline.Key(dl.Transfer, dl.ID), dl.ID)
+}
+
 // onDownloaded is the completed-download branch of the poller. It records
 // the download, then imports it (auto). The manual-approval gate is layered
 // in on top of this.
@@ -84,6 +93,7 @@ func (s *Service) onDownloaded(ctx context.Context, dl sqlite.Download, cfg port
 		}
 		return
 	}
+	s.startRunnerDoneTiming(ctx, dl)
 	// Handed to the import workers, not run here. This is the control/data
 	// split: deciding is cheap and belongs on the caller's goroutine, moving
 	// bytes is not and does not — a 20 GB import used to hold the queue poll
@@ -113,11 +123,12 @@ func (s *Service) runImport(ctx context.Context, dl sqlite.Download) error {
 		}
 		dl.State, dl.Handoff = fresh.State, fresh.Handoff
 	}
+	s.startRunnerDoneTiming(ctx, dl) // no-op when an earlier path already started it
 	imp := dl.ImportPath
 	if imp == "" {
 		imp = dl.SavePath
 	}
-	legacyReview, reviewErr := s.db.LegacyAutomaticImportReview(ctx, dl.GenerationKey, imp)
+	legacyReview, reviewErr := s.db.StorageChangeReview(ctx, dl.GenerationKey, imp)
 	legacyReviewApproved := false
 	var legacyApproval *sqlite.HandoffEntry
 	var reviewedSnapshots map[string]string
@@ -158,7 +169,7 @@ func (s *Service) runImport(ctx context.Context, dl sqlite.Download) error {
 		}
 	}
 	if reviewErr != nil || (legacyReview && !legacyReviewApproved) {
-		reason := "automatic import is held for legacy payload review; select exact files in Resolve"
+		reason := "automatic import is held because the storage under this payload changed; select exact files in Resolve"
 		if reviewErr != nil {
 			reason += ": " + reviewErr.Error()
 		}
@@ -174,13 +185,17 @@ func (s *Service) runImport(ctx context.Context, dl sqlite.Download) error {
 	// person selected, even after a process restart.
 	var selected []string
 	manual := dl.Intent == GrabIntentManualAdditional
+	var selection sqlite.HandoffEntry
 	for i := len(dl.Handoff) - 1; i >= 0; i-- {
 		if dl.Handoff[i].Step == stepManualQueued || (dl.Handoff[i].Step == stepLegacyReviewImportQueued && legacyReviewApproved) {
-			selected = dl.Handoff[i].Paths
+			selection = dl.Handoff[i]
+			selected = selection.Paths
 			manual = true
+			ctx = withManualEpisodeTargets(ctx, selection.EpisodeTargets)
 			break
 		}
 	}
+	removeOriginal := selection.RemoveOriginal && dl.Protocol == "manual"
 	if legacyReviewApproved {
 		ctx = withReviewedSourceSnapshots(ctx, reviewedSnapshots)
 	}
@@ -208,12 +223,23 @@ func (s *Service) runImport(ctx context.Context, dl sqlite.Download) error {
 	if skipped := result.Skipped(); len(skipped) > 0 {
 		detail += fmt.Sprintf("; %d skipped — %s", len(skipped), result.reasons(3))
 	}
+	if removeOriginal {
+		// Journaled before completion: a restart between the two finishes it.
+		if err := s.recordPendingRemoval(ctx, &dl, selection, result); err != nil {
+			s.log.Warn("manual import: Remove original could not be journaled; originals kept", "download", dl.ID, "err", err)
+			removeOriginal = false
+		}
+	}
 	if _, bound := importAttemptFrom(ctx); bound {
 		if err := s.completeBoundImport(ctx, detail); err != nil {
 			return err
 		}
 	} else {
 		s.advance(ctx, &dl, "imported", 1, "", stepImported, detail)
+	}
+	s.timings.End(ctx, pipeline.RunnerDoneToImport, pipeline.Key(dl.Transfer, dl.ID))
+	if removeOriginal {
+		s.finishOriginalRemoval(ctx, dl.ID)
 	}
 	// The library has the files now, so the client's copy is just occupying a
 	// disk. Inline rather than left to the hourly sweep: a night of 60 GB
@@ -246,6 +272,11 @@ func (s *Service) ImportNow(ctx context.Context, id int64) error {
 	if err != nil {
 		return err
 	}
+	if deleted, e := s.db.DownloadDeletionRequested(ctx, dl.ID, dl.GenerationKey); e != nil {
+		return e
+	} else if deleted {
+		return fmt.Errorf("job deletion was requested")
+	}
 	if dl.RunnerControl != "" {
 		var control *ports.DownloadControl
 		if json.Unmarshal([]byte(dl.RunnerControl), &control) != nil || control.Held() {
@@ -255,6 +286,7 @@ func (s *Service) ImportNow(ctx context.Context, id int64) error {
 	if dl.State == "imported" {
 		return nil
 	}
+	s.startRunnerDoneTiming(ctx, dl) // approval is when a held row's clock starts
 	if dl.ImportPath == "" && dl.SavePath == "" {
 		return fmt.Errorf("no download path recorded yet — wait for the download to finish")
 	}
@@ -264,13 +296,37 @@ func (s *Service) ImportNow(ctx context.Context, id int64) error {
 	if a, e := s.db.GetImportAttempt(ctx, id, dl.GenerationKey); e == nil && a.Outcome == "pending" {
 		s.finishCancelledImport(ctx, a.ImportAttemptKey)
 	}
-	a, err := s.db.BeginImportRetry(ctx, id, dl.GenerationKey)
+	a, err := s.beginImportRetry(ctx, dl, "")
 	if err != nil {
 		return importControlError(err)
 	}
 	dl, err = s.db.GetDownload(ctx, id)
 	if err != nil {
 		return err
+	}
+	// A row with a publication imports that publication (pipeline v2): an
+	// approval (ManualApproval) or a retry after import_failed.
+	if pubs, e := s.db.ListPublicationsForDownload(ctx, id); e == nil && len(pubs) > 0 {
+		for _, p := range pubs {
+			if p.State != "discovered" && p.State != "importing" && p.State != "import_failed" {
+				continue
+			}
+			// A person's retry starts the publication over (no counted
+			// attempts, no deadline until it starts).
+			if e := s.db.ResetPublicationForRetry(ctx, p.ID); e != nil {
+				return e
+			}
+			var cfg ports.ClientConfig
+			if dl.ClientID != 0 {
+				if cfg, err = s.db.GetDownloadClient(ctx, dl.ClientID); err != nil {
+					return err
+				}
+			}
+			if !s.enqueueImportJobFor(ctx, dl, cfg, importJob{publicationID: p.ID, approved: true}, true) {
+				return fmt.Errorf("import queue is full; durable retry remains recorded")
+			}
+			return nil
+		}
 	}
 	if s.importCh == nil {
 		bound, finish, e := s.beginInlineImport(ctx, dl, a.ImportAttemptKey)

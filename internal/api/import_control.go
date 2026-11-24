@@ -70,9 +70,10 @@ func (s *Server) GetImportReview(w http.ResponseWriter, r *http.Request, id int6
 func (s *Server) ResolveImportReview(w http.ResponseWriter, r *http.Request, id int64) {
 	var body struct {
 		importIdentity
-		Action       string   `json:"action"`
-		IDs          []string `json:"ids"`
-		Acknowledged bool     `json:"acknowledged"`
+		Action       string            `json:"action"`
+		IDs          []string          `json:"ids"`
+		Acknowledged bool              `json:"acknowledged"`
+		Fingerprints map[string]string `json:"fingerprints"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 65536)).Decode(&body); err != nil {
 		writeError(w, 400, "invalid review request")
@@ -81,6 +82,24 @@ func (s *Server) ResolveImportReview(w http.ResponseWriter, r *http.Request, id 
 	key, err := body.key(id)
 	if err != nil {
 		writeError(w, 400, err.Error())
+		return
+	}
+	if body.Action == "preview_stage_cleanup" {
+		reviews, err := s.deps.Acquisition.PreviewImportStageCleanup(r.Context(), key, body.IDs)
+		if err != nil {
+			s.importControlErr(w, err)
+			return
+		}
+		writeJSON(w, 200, map[string]any{"stages": reviews})
+		return
+	}
+	if body.Action == "cleanup_stages" {
+		a, err := s.deps.Acquisition.CleanupImportStages(r.Context(), key, body.IDs, body.Fingerprints, body.Acknowledged)
+		if err != nil {
+			s.importControlErr(w, err)
+			return
+		}
+		writeJSON(w, 200, importStatus(a))
 		return
 	}
 	a, err := s.deps.Acquisition.ReviewImportCancellation(r.Context(), key, body.Action, body.IDs, body.Acknowledged)

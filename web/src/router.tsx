@@ -1,3 +1,5 @@
+import {HouseholdPrincipal} from './HouseholdPrincipal'
+import {MemberPortal,HouseholdRequestsPage,AccountPage,JoinHouseholdPage} from './Household'
 import { parsePreviewKey } from './metadataPreview'
 import { useEffect, useState } from 'react'
 import {
@@ -7,11 +9,13 @@ import {
   createRootRoute,
   createRoute,
   createRouter,
+  redirect,
   useRouterState,
 } from '@tanstack/react-router'
 import { useQuery } from '@tanstack/react-query'
 import { GlobalSearch } from './globalsearch'
 import { useIsMobile } from './useIsMobile'
+import { useViewportChromeScrollPadding } from './viewportChrome'
 import { Dashboard } from './pages/Dashboard'
 import { SystemPage } from './pages/System'
 import { LibraryPage } from './pages/Library'
@@ -26,7 +30,7 @@ import type { CalendarSearch } from './pages/Calendar'
 import { LoginPage } from './pages/Login'
 import { WantedPage } from './pages/Wanted'
 import type { MediaKind } from './api'
-import { getHealth, getStatus } from './api'
+import { getHealth, getStatus, getSignInInfo, getCurrentAccount } from './api'
 import {
   LAYOUTS,
   PALETTES,
@@ -122,7 +126,7 @@ function MobileShell(props: { overall: string; version: string; children: React.
       <nav className="mobile-tabs" aria-label="Primary">
         {tab('/', 'Library', true)}
         {tab('/wanted', 'Wanted')}
-        {tab('/calendar', 'Calendar')}
+        {tab('/discover', 'Discover')}
         {tab('/activity', 'Activity')}
         <button
           className={`mobile-tab${sheet ? ' active' : ''}`}
@@ -140,10 +144,8 @@ function MobileShell(props: { overall: string; version: string; children: React.
           <div className="sheet-backdrop" onClick={() => setSheet(false)} />
           <div className="more-sheet" role="dialog" aria-label="More">
             <GlobalSearch />
-            <nav className="sheet-nav">
-              <Link to="/discover" activeProps={{ className: 'active' }}>
-                Discover
-              </Link>
+            <nav className="sheet-nav"><Link to="/requests">Requests</Link><Link to="/account">Account</Link>
+              <Link to="/calendar" activeProps={{ className: 'active' }}>Calendar</Link>
               <Link to="/dashboard" activeProps={{ className: 'active' }}>
                 Dashboard
               </Link>
@@ -170,11 +172,24 @@ function MobileShell(props: { overall: string; version: string; children: React.
   )
 }
 
-function Layout() {
+function Layout(){
+ const path=useRouterState({select:s=>s.location.pathname})
+ const publicPage=path==='/login'||path==='/join'
+ const info=useQuery({queryKey:['sign-in-info'],queryFn:getSignInInfo,enabled:!publicPage,retry:false,refetchInterval:30000})
+ const account=useQuery({queryKey:['account'],queryFn:getCurrentAccount,enabled:!publicPage&&info.isSuccess,retry:false,refetchInterval:15000})
+ if(publicPage)return <main className="household-shell"><Outlet/></main>
+ if(info.isPending||info.data?.required&&account.isPending)return <main className="household-shell" role="status">Checking account access…</main>
+ if(info.error||account.error)return <main className="household-shell"><p role="alert">Account access could not be checked.</p><button onClick={()=>{void info.refetch();void account.refetch()}}>Try again</button><Link to="/login">Sign in with a local Curator account</Link></main>
+ if(info.data?.required&&!account.data)return <main className="household-shell"><LoginPage/></main>
+ const principal=account.data?`${account.data.account.id}:${account.data.method}:${account.data.accessRole}`:'open'
+ return <HouseholdPrincipal.Provider key={principal} value={principal}>{account.data&&account.data.accessRole!=='owner'?<MemberPortal identity={account.data}/>:<OwnerLayout/>}</HouseholdPrincipal.Provider>
+}
+function OwnerLayout() {
   const status = useQuery({ queryKey: ['status'], queryFn: getStatus, refetchInterval: 30_000 })
   const health = useQuery({ queryKey: ['health'], queryFn: getHealth, refetchInterval: 30_000 })
   const overall = health.data?.overall ?? 'ok'
   const isMobile = useIsMobile()
+  useViewportChromeScrollPadding(isMobile ? 'phone' : 'desktop')
 
   if (isMobile) {
     return (
@@ -201,6 +216,8 @@ function Layout() {
           <Link to="/discover" activeProps={{ className: 'active' }}>
             Discover
           </Link>
+          <Link to="/requests" activeProps={{className:'active'}}>Requests</Link>
+          <Link to="/account" activeProps={{className:'active'}}>Account</Link>
           <Link to="/wanted" activeProps={{ className: 'active' }}>
             Wanted
           </Link>
@@ -301,6 +318,10 @@ const loginRoute = createRoute({
   component: LoginPage,
 })
 
+const requestsRoute=createRoute({getParentRoute:()=>rootRoute,path:'/requests',component:HouseholdRequestsPage})
+const accountRoute=createRoute({getParentRoute:()=>rootRoute,path:'/account',component:AccountPage})
+const joinRoute=createRoute({getParentRoute:()=>rootRoute,path:'/join',component:JoinHouseholdPage})
+
 const wantedRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/wanted',
@@ -330,6 +351,8 @@ const activityRoute = createRoute({
   component: ActivityPage,
 })
 
+const importsRoute = createRoute({ getParentRoute: () => rootRoute, path: '/imports', beforeLoad: () => { throw redirect({ href: '/activity?scope=imports' }) } })
+
 const systemRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/system',
@@ -355,9 +378,13 @@ const routeTree = rootRoute.addChildren([
   addRoute,
   discoverRoute,
   loginRoute,
+  requestsRoute,
+  accountRoute,
+  joinRoute,
   wantedRoute,
   calendarRoute,
   activityRoute,
+  importsRoute,
   systemRoute,
   settingsRoute,
   accessRoute,

@@ -12,7 +12,7 @@ import (
 )
 
 // ProbeCapability is the /api/v1/status capability Runner advertises when it
-// serves POST /api/v1/probe (Runner docs/INTEGRATION.md, ADR 0026 §6).
+// serves POST /api/v1/probe (Runner docs/INTEGRATION.md, ADR 0031 §6).
 const ProbeCapability = "release-probe-v1"
 
 // SupportsReleaseProbe implements ports.ReleaseProber.

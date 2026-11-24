@@ -1,0 +1,114 @@
+version: 2
+updates:
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      go-patches:
+        applies-to: version-updates
+        patterns:
+          - "*"
+        update-types:
+          - patch
+  - package-ecosystem: npm
+    directory: /web
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      web-routine:
+        applies-to: version-updates
+        patterns:
+          - "*"
+        update-types:
+          - patch
+          - minor
+  - package-ecosystem: npm
+    directory: /mobile
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      mobile-patches:
+        applies-to: version-updates
+        patterns:
+          - "*"
+        update-types:
+          - patch
+  - package-ecosystem: npm
+    directory: /test/e2e
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      e2e-routine:
+        applies-to: version-updates
+        patterns:
+          - "*"
+        update-types:
+          - patch
+          - minor
+  - package-ecosystem: cargo
+    directory: /tools/curator-embed
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      embed-rust-patches:
+        applies-to: version-updates
+        patterns:
+          - "*"
+        update-types:
+          - patch
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      actions-routine:
+        applies-to: version-updates
+        patterns:
+          - "*"
+        update-types:
+          - patch
+          - minor
+  - package-ecosystem: docker
+    directory: /deploy
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      deployment-image-patches:
+        applies-to: version-updates
+        patterns:
+          - "*"
+        update-types:
+          - patch
+  - package-ecosystem: docker
+    directory: /tools/nfs-qual
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      nfs-image-patches:
+        applies-to: version-updates
+        patterns:
+          - "*"
+        update-types:
+          - patch
+  - package-ecosystem: pip
+    directory: /tools/curator-embed
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      embed-python-routine:
+        applies-to: version-updates
+        patterns:
+          - "*"
+        update-types:
+          - patch
+          - minor

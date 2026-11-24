@@ -176,12 +176,12 @@ export function LoadingState({ label = 'Loading…' }: { label?: string }) {
   )
 }
 
-export function MessageState({ title, message, retry }: { title: string; message: string; retry?: () => void }) {
+export function MessageState({ title, message, retry }: { title: string; message?: string; retry?: () => void }) {
   const theme = useTheme()
   return (
     <View style={styles.centerState}>
       <Text style={[styles.stateTitle, { color: theme.text }]}>{title}</Text>
-      <Text style={[styles.stateText, { color: theme.muted }]}>{message}</Text>
+      {message ? <Text style={[styles.stateText, { color: theme.muted }]}>{message}</Text> : null}
       {retry ? <Button label="Try again" secondary onPress={retry} /> : null}
     </View>
   )

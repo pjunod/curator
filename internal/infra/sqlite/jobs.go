@@ -324,6 +324,7 @@ func (d *DB) DeferJob(ctx context.Context, id int64, cause string, at time.Time)
 func (d *DB) DeferClaimedJob(ctx context.Context, job domain.Job, cause string, at time.Time) error {
 	var claimed struct {
 		ManualGeneration int64 `json:"manualGeneration"`
+		ReplanGeneration int64 `json:"replanGeneration"`
 	}
 	_ = json.Unmarshal([]byte(job.Payload), &claimed)
 	now := time.Now().UnixMilli()
@@ -332,11 +333,15 @@ func (d *DB) DeferClaimedJob(ctx context.Context, job domain.Job, cause string, 
    run_after=CASE WHEN json_valid(payload) THEN
      CASE WHEN COALESCE(json_extract(payload,'$.manualGeneration'),0)>?
                     AND COALESCE(json_extract(payload,'$.manual'),0)=1
-       THEN min(run_after,?) ELSE ? END
+       THEN min(run_after,?)
+       -- A failed grab asked for a fresh comparison after the handler's
+       -- last check: run now instead of parking behind this deferral.
+       WHEN COALESCE(json_extract(payload,'$.replanGeneration'),0)>? THEN ?
+       ELSE ? END
      ELSE ? END,
    last_error=?,lease_owner='',lease_expires_at=0,updated_at=?
    WHERE id=? AND state='leased' AND lease_owner=? AND lease_expires_at>?`,
-		claimed.ManualGeneration, at.UnixMilli(), at.UnixMilli(), at.UnixMilli(),
+		claimed.ManualGeneration, at.UnixMilli(), claimed.ReplanGeneration, now, at.UnixMilli(), at.UnixMilli(),
 		cause, now, job.ID, job.LeaseOwner, now)
 	if err != nil {
 		return err
@@ -349,4 +354,27 @@ func (d *DB) DeferClaimedJob(ctx context.Context, job domain.Job, cause string, 
 		return errors.New("deferred job lease lost")
 	}
 	return nil
+}
+
+// EnqueueFailedJobReplacement replaces only the newest terminal failure for
+// this key. A concurrent manual request (even one already completed) wins;
+// the recovery sweep must not resurrect the stale failure it read earlier.
+func (d *DB) EnqueueFailedJobReplacement(ctx context.Context, failedID int64, j domain.Job) (bool, error) {
+	if j.DedupeKey == "" {
+		return false, fmt.Errorf("failed job replacement needs a dedupe key")
+	}
+	now := time.Now()
+	after := j.RunAfter
+	if after.IsZero() {
+		after = now
+	}
+	res, err := d.W.ExecContext(ctx, `INSERT INTO jobs(kind,payload,priority,run_after,max_attempts,dedupe_key,created_at,updated_at)
+ SELECT ?,?,?,?,?,?,?,? FROM jobs old WHERE old.id=? AND old.kind=? AND old.dedupe_key=? AND old.state='failed'
+ AND NOT EXISTS(SELECT 1 FROM jobs newer WHERE newer.kind=old.kind AND newer.dedupe_key=old.dedupe_key AND newer.id>old.id)
+ ON CONFLICT DO NOTHING`, j.Kind, j.Payload, j.Priority, after.UnixMilli(), j.MaxAttempts, j.DedupeKey, now.UnixMilli(), now.UnixMilli(), failedID, j.Kind, j.DedupeKey)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n == 1, err
 }

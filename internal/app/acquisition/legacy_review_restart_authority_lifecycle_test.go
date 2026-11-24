@@ -41,7 +41,7 @@ func TestLegacyReviewManualImportReplaysExactAuthorityAfterRestart(t *testing.T)
 			if err := os.WriteFile(sibling, []byte("unselected sibling"), 0o644); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := db.W.ExecContext(ctx, `INSERT INTO legacy_cleanup_review(generation_key,path) VALUES('',?)`, payload); err != nil {
+			if _, err := db.W.ExecContext(ctx, `INSERT INTO storage_change_review_paths(review_token,path) VALUES('',?)`, payload); err != nil {
 				t.Fatal(err)
 			}
 			if err := svc.SetCompletedRoots(ctx, completedRoot); err != nil {
@@ -108,7 +108,7 @@ func TestLegacyReviewManualImportReplaysExactAuthorityAfterRestart(t *testing.T)
 			for {
 				row, loadErr := reopened.GetDownload(ctx, id)
 				if loadErr == nil && row.State == tc.wantState {
-					if tc.changeTarget && !strings.Contains(row.Error, "legacy payload review") {
+					if tc.changeTarget && !strings.Contains(row.Error, "storage under this payload changed") {
 						t.Fatalf("changed target was not reported as an expired review approval: %+v", row)
 					}
 					break

@@ -1,4 +1,4 @@
-// The HDR & Dolby Vision part of a target profile (ADR 0026): which HDR
+// The HDR & Dolby Vision part of a target profile (ADR 0031): which HDR
 // presentations the profile prefers, in order; which it never takes; and how
 // releases are measured before they are grabbed.
 //
@@ -187,7 +187,7 @@ export function HDRPreferences(props: {
 const yes = (b: boolean, ok: string, no: string) => (b ? ok : no)
 
 /**
- * "Derive order from device" (ADR 0026 §5): the playback devices Cinema
+ * "Derive order from device" (ADR 0031 §5): the playback devices Cinema
  * reports, what each decodes, and the order, ties and refusals that follow.
  * Applying one fills the profile; the profile, not the device, stays the
  * policy, and it can be edited afterwards.

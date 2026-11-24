@@ -75,6 +75,7 @@ func itemToDomain(r sqlitegen.MediaItem) domain.MediaItem {
 		Network:          r.Network,
 		Source:           r.Source,
 		Monitored:        r.Monitored != 0,
+		OffloadedAt:      r.OffloadedAt,
 		Monitor:          r.Monitor,
 		MonitorSince:     r.MonitorSince,
 		MonitorSeason:    int(r.MonitorSeason),
@@ -213,6 +214,18 @@ func (d *DB) CreateMediaItem(ctx context.Context, m domain.MediaItem) (int64, er
 		return 0, err
 	}
 	defer func() { _ = tx.Rollback() }()
+	id, err := d.createMediaItemTx(ctx, tx, m)
+	if err != nil {
+		return 0, err
+	}
+	if err = tx.Commit(); err != nil {
+		return 0, err
+	}
+	return id, nil
+}
+
+// createMediaItemTx is shared by ordinary Add and atomic household approval.
+func (d *DB) createMediaItemTx(ctx context.Context, tx *sql.Tx, m domain.MediaItem) (int64, error) {
 	q := d.Write.WithTx(tx)
 	// Check every supplied identity inside the writer transaction. Search and
 	// add may be minutes apart, and different IDs resolving to different rows
@@ -255,9 +268,6 @@ func (d *DB) CreateMediaItem(ctx context.Context, m domain.MediaItem) (int64, er
 		return 0, err
 	}
 	if _, err := q.BumpIdentityRevision(ctx); err != nil {
-		return 0, err
-	}
-	if err := tx.Commit(); err != nil {
 		return 0, err
 	}
 	return id, nil
@@ -348,15 +358,17 @@ func (d *DB) GetMediaItemFull(ctx context.Context, id int64) (domain.MediaItem, 
 				Title:         e.Title,
 				AirDate:       e.AirDate,
 				Monitored:     e.Monitored != 0,
+				OffloadedAt:   e.OffloadedAt,
 				HasFile:       hasFile[e.ID],
 			})
 		}
 		for _, s := range seasons {
 			item.Seasons = append(item.Seasons, domain.Season{
-				ID:        s.ID,
-				Number:    int(s.Number),
-				Monitored: s.Monitored != 0,
-				Episodes:  bySeason[s.Number],
+				ID:          s.ID,
+				Number:      int(s.Number),
+				Monitored:   s.Monitored != 0,
+				OffloadedAt: s.OffloadedAt,
+				Episodes:    bySeason[s.Number],
 			})
 		}
 		sort.Slice(item.Seasons, func(i, j int) bool { return item.Seasons[i].Number < item.Seasons[j].Number })
@@ -567,6 +579,8 @@ func (d *DB) ListMediaItems(ctx context.Context, kind domain.MediaKind) ([]domai
 			item.EpisodeCount = int(s.AiredEpisodes)
 			item.EpisodeFileCount = int(s.HaveEpisodes)
 			item.FileCount = int(s.Files)
+			item.OffloadedEpisodes = int(s.OffloadedEpisodes)
+			item.OffloadedSeasons = int(s.OffloadedSeasons)
 			item.Quality, item.QualityVerified, item.Audio, item.HDR = weakestRecorded(textOf(s.Qualities))
 		}
 		out = append(out, item)
@@ -610,7 +624,7 @@ func textOf(v any) string {
 // only when every file is known, carrying only the languages every file
 // carries. Unknown never starts a hunt, so the safe direction holds here too.
 //
-// The HDR field (ADR 0026) is media_files.hdr_tier. An item has one HDR tier
+// The HDR field (ADR 0031) is media_files.hdr_tier. An item has one HDR tier
 // only when every file measured the same one, the SeasonWantable rule;
 // anything mixed or unmeasured is unknown, which never starts a hunt.
 func weakestRecorded(joined string) (quality.Quality, bool, quality.Audio, hdr.Tier) {

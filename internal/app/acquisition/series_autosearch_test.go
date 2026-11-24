@@ -2,10 +2,11 @@ package acquisition
 
 import (
 	"context"
-	"github.com/pjunod/monarr/internal/domain"
-	"github.com/pjunod/monarr/internal/infra/sqlite"
 	"testing"
 	"time"
+
+	"github.com/pjunod/monarr/internal/domain"
+	"github.com/pjunod/monarr/internal/infra/sqlite"
 
 	"github.com/pjunod/monarr/internal/ports"
 )

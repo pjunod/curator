@@ -3,6 +3,7 @@ package sqlite
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/pjunod/monarr/internal/domain"
 	"github.com/pjunod/monarr/internal/domain/quality"
@@ -77,5 +78,30 @@ func TestPlacementReceiptAndMetadataAreAtomic(t *testing.T) {
 	}
 	if _, err := db.CommitPlacement(ctx, p); err != ErrPlacementGenerationChanged {
 		t.Fatalf("replay of old placement returned err=%v, want stale generation", err)
+	}
+}
+
+func TestDetachedPlacementSurvivesHistoryCleanup(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+	item := availabilityFixture(t, db, domain.MediaItem{Kind: domain.KindMovie, Title: "Detached"})
+	dl, err := db.InsertDownloadRecord(ctx, Download{MediaItemID: item, ReleaseTitle: "Old movie", State: "imported"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = db.PreparePlacement(ctx, Placement{ID: "scratch", ItemID: item, DownloadID: dl.ID, SourceGeneration: dl.GenerationKey, Target: "/library/movie.mkv", State: "prepared"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.W.ExecContext(ctx, `UPDATE import_placements SET state='detached',data=json_set(data,'$.state','detached') WHERE id='scratch'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.ClearImportedDownloads(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.PruneTerminalDownloads(ctx, time.Now().Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.GetDownload(ctx, dl.ID); err != nil {
+		t.Fatalf("history cleanup lost detached scratch: %v", err)
 	}
 }

@@ -140,7 +140,7 @@ var corpus = []probeCase{
 		summary: "480p · H.264 · AC-3 · 3.2 Mbps",
 	},
 
-	// Dolby Vision and HDR10+ (ADR 0026). These are whole files: the facts
+	// Dolby Vision and HDR10+ (ADR 0031). These are whole files: the facts
 	// that matter live in the first frame, which a header window drops. The
 	// DV files were authored with libdovi in the plurx repository (see
 	// scripts/gen-mediainfo-fixtures.sh); ffprobe agrees on every field it

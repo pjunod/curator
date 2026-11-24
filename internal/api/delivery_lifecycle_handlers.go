@@ -100,21 +100,9 @@ func (s *Server) ResolveDeliveryImport(w http.ResponseWriter, r *http.Request, r
 	w.WriteHeader(http.StatusAccepted)
 }
 
-func (s *Server) AbandonDeliveryDeleteRequest(w http.ResponseWriter, r *http.Request, receiptId int64, batchId string) {
-	if s.deps.Acquisition == nil {
-		writeError(w, http.StatusServiceUnavailable, "download lifecycle is unavailable")
-		return
-	}
-	if err := s.deps.Acquisition.AbandonDeliveryDeleteRequest(r.Context(), receiptId, batchId); err != nil {
-		s.deliveryLifecycleError(w, err)
-		return
-	}
-	w.WriteHeader(http.StatusNoContent)
-}
-
 func (s *Server) deliveryLifecycleError(w http.ResponseWriter, err error) {
 	if errors.Is(err, sqlite.ErrNotFound) {
-		writeError(w, http.StatusNotFound, "delivery receipt or deletion request not found")
+		writeError(w, http.StatusNotFound, "delivery receipt not found")
 		return
 	}
 	var databaseError interface{ Code() int }

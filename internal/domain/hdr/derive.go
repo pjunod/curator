@@ -1,6 +1,6 @@
 package hdr
 
-// DeviceCaps is what a playback device decodes (ADR 0026 §5), as Cinema
+// DeviceCaps is what a playback device decodes (ADR 0031 §5), as Cinema
 // reports it.
 type DeviceCaps struct {
 	Name string

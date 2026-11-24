@@ -4,9 +4,9 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"slices"
-	"strings"
 	"time"
 
 	"github.com/pjunod/monarr/internal/domain"
@@ -42,14 +42,22 @@ func clientFingerprint(cfg ports.ClientConfig) string {
 	return fmt.Sprintf("%x", sum)
 }
 func (s *Service) dispatchPlan(ctx context.Context, id int64) error {
-	s.planDispatchMu.Lock()
-	defer s.planDispatchMu.Unlock()
+	release, err := s.planDispatchLocks.lock(ctx, id)
+	if err != nil {
+		return err
+	}
+	defer release()
 	p, err := s.db.GetAcquisitionPlan(ctx, id)
 	if err != nil {
 		return err
 	}
 	if p.State != "admitted" && p.State != "dispatching" && p.State != "active" {
 		return nil
+	}
+	if err = s.db.CheckSeasonReplacementOrigin(ctx, p.ReplacementOrigin); errors.Is(err, sqlite.ErrParentDispositionRequested) {
+		return s.db.CloseRevokedSeasonPlanIntents(ctx, id)
+	} else if err != nil {
+		return err
 	}
 	rows, err := s.db.PlanDownloads(ctx, id)
 	if err != nil {
@@ -212,13 +220,15 @@ func (s *Service) dispatchPlannedDownload(ctx context.Context, plan sqlite.Acqui
 	if currentPlan.State != "admitted" && currentPlan.State != "dispatching" && currentPlan.State != "active" {
 		return false, nil
 	}
-	if deliveryExpected {
-		s.rememberRunnerDelivery(cfg.ID)
-	}
 	fresh.DeliveryExpected = deliveryExpected
 	fresh.RequestTokenIdempotent = requestTokenIdempotent
 	fresh.ExactTransferCorrelation = exactTransferCorrelation
 	s.advance(ctx, &fresh, "grabbed", 0, "", stepGrabbed, "submitting planned release as "+fresh.Transfer)
+	if deleted, e := s.db.DownloadDeletionRequested(ctx, fresh.ID, fresh.GenerationKey); e != nil {
+		return false, e
+	} else if deleted {
+		return false, nil
+	}
 	handle, err := addToClient(ctx, client, payload.URL, cfg.Category, fresh.ReleaseTitle, fresh.Transfer, payload.Priority, deliveryExpected, false)
 	if err != nil {
 		if permanentSubmissionRefusal(err) {
@@ -281,6 +291,9 @@ func (s *Service) reconcileSeasonPlans(ctx context.Context) {
 		return
 	}
 	defer releaseWork()
+	if err := s.recoverFailedSeasonSearches(ctx); err != nil {
+		s.log.Warn("failed season search recovery deferred", "err", err)
+	}
 	rows, err := s.db.R.QueryContext(ctx, `SELECT id FROM acquisition_plans WHERE state IN ('admitted','dispatching','active','cancel_requested') ORDER BY id`)
 	if err != nil {
 		return
@@ -373,8 +386,9 @@ func (s *Service) settleSeasonPlan(ctx context.Context, p sqlite.AcquisitionPlan
 	if state == "cancelled" {
 		return tx.Commit()
 	}
-	checkpoint, _ := json.Marshal(seasonCheckpoint{Version: 1, ItemID: p.MediaItemID, CopyID: p.CopyID, Season: p.Season, Trigger: "plan_settlement"})
-	if _, err = tx.ExecContext(ctx, `INSERT OR IGNORE INTO jobs(kind,payload,priority,run_after,dedupe_key,created_at,updated_at) VALUES(?,?,50,?,?,?,?)`, SeasonSearchJobKind, string(checkpoint), now, seasonJobKey(p.MediaItemID, p.CopyID, p.Season), now, now); err != nil {
+	successor := seasonCheckpoint{Version: 1, ItemID: p.MediaItemID, CopyID: p.CopyID, Season: p.Season, Trigger: "plan_settlement", ReplacementOrigin: p.ReplacementOrigin}
+	checkpoint, _ := json.Marshal(successor)
+	if _, err = tx.ExecContext(ctx, `INSERT OR IGNORE INTO jobs(kind,payload,priority,run_after,dedupe_key,created_at,updated_at) VALUES(?,?,50,?,?,?,?)`, SeasonSearchJobKind, string(checkpoint), now, successor.jobKey(), now, now); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -399,6 +413,11 @@ func (s *Service) observeUncertain(ctx context.Context, dl sqlite.Download, cfg 
 	// absence for a client without exact request-token support. Their exact
 	// transfer token is reconciled through RequestAdmissionProtocol instead.
 	if dl.Intent == GrabIntentManualAdditional || dl.ExactTransferCorrelation || dl.RequestTokenIdempotent || dl.DeliveryExpected {
+		return
+	}
+	// A Runner row's submission is confirmed by its request receipt
+	// (confirmAdmissions), never by inventory guessing, and never parked.
+	if isRunnerClient(s.newClient(cfg)) {
 		return
 	}
 	now := time.Now()
@@ -439,7 +458,7 @@ func (s *Service) observeUncertain(ctx context.Context, dl sqlite.Download, cfg 
 	if now.Sub(dl.AddedAt) >= 30*time.Minute && ob.Inventories >= 3 && now.Sub(ob.AbsenceSince) >= 30*time.Minute {
 		_ = s.db.ParkDownload(ctx, dl.ID, "submission uncertain; episode reserved while inventories continue")
 	}
-	if !ob.AbsenceSince.IsZero() && now.Sub(ob.AbsenceSince) >= 7*24*time.Hour && dl.PlanID != 0 && !persistedDownloadHeld(dl.RunnerControl) && !strings.HasPrefix(dl.ParkedReason, "operator cancellation") {
+	if !ob.AbsenceSince.IsZero() && now.Sub(ob.AbsenceSince) >= 7*24*time.Hour && dl.PlanID != 0 && !persistedDownloadHeld(dl.RunnerControl) && !operatorCancelled(&dl) {
 		if err = s.releaseUncertainRisk(ctx, dl, ob); err != nil {
 			s.log.Warn("uncertain risk retry pending", "download", dl.ID, "err", err)
 		}
@@ -451,6 +470,7 @@ func (s *Service) releaseUncertainRisk(ctx context.Context, dl sqlite.Download, 
 	if time.Since(ob.LastInventory) > 5*time.Minute {
 		return fmt.Errorf("final inventory stale")
 	}
+	origin := &sqlite.SeasonReplacementOrigin{DownloadID: dl.ID, GenerationKey: dl.GenerationKey}
 	tx, err := s.db.W.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -459,7 +479,8 @@ func (s *Service) releaseUncertainRisk(ctx context.Context, dl sqlite.Download, 
 	ob.DuplicateRisk = true
 	raw, _ := json.Marshal(ob)
 	now := time.Now().UnixMilli()
-	result, err := tx.ExecContext(ctx, `UPDATE downloads SET superseded=1,parked_at=0,parked_reason='retry_with_duplicate_risk',reserved_episodes='[]',wantables='[]',observation=?,error='Possible duplicate: uncertain original submission retried after seven days of complete successful inventories',updated_at=? WHERE id=? AND superseded=0 AND submission_phase IN ('submitting','uncertain')`, string(raw), now, dl.ID)
+	result, err := tx.ExecContext(ctx, `UPDATE downloads SET superseded=1,parked_at=0,parked_reason='retry_with_duplicate_risk',reserved_episodes='[]',wantables='[]',observation=?,error='Possible duplicate: uncertain original submission retried after seven days of complete successful inventories',updated_at=? WHERE id=? AND generation_key=? AND superseded=0 AND submission_phase IN ('submitting','uncertain')
+		AND NOT EXISTS (SELECT 1 FROM download_dispositions x WHERE x.download_id=downloads.id AND x.generation_key=downloads.generation_key)`, string(raw), now, dl.ID, dl.GenerationKey)
 	if err != nil {
 		return err
 	}
@@ -467,8 +488,9 @@ func (s *Service) releaseUncertainRisk(ctx context.Context, dl sqlite.Download, 
 	if err != nil || n == 0 {
 		return err
 	}
-	p, _ := json.Marshal(seasonCheckpoint{Version: 1, ItemID: dl.MediaItemID, CopyID: dl.CopyID, Season: dl.Season, Trigger: "retry_with_duplicate_risk", OriginalDownloadID: dl.ID})
-	if _, err = tx.ExecContext(ctx, `INSERT OR IGNORE INTO jobs(kind,payload,priority,run_after,dedupe_key,created_at,updated_at) VALUES(?,?,50,?,?,?,?)`, SeasonSearchJobKind, string(p), now, seasonJobKey(dl.MediaItemID, dl.CopyID, dl.Season), now, now); err != nil {
+	successor := seasonCheckpoint{Version: 1, ItemID: dl.MediaItemID, CopyID: dl.CopyID, Season: dl.Season, Trigger: "retry_with_duplicate_risk", OriginalDownloadID: dl.ID, ReplacementOrigin: origin}
+	p, _ := json.Marshal(successor)
+	if _, err = tx.ExecContext(ctx, `INSERT OR IGNORE INTO jobs(kind,payload,priority,run_after,dedupe_key,created_at,updated_at) VALUES(?,?,50,?,?,?,?)`, SeasonSearchJobKind, string(p), now, successor.jobKey(), now, now); err != nil {
 		return err
 	}
 	warning, _ := json.Marshal(map[string]any{"originalDownloadId": dl.ID, "evidenceSince": ob.AbsenceSince, "warning": "Possible duplicate: absence is not proof of nonacceptance"})
@@ -478,7 +500,7 @@ func (s *Service) releaseUncertainRisk(ctx context.Context, dl sqlite.Download, 
 	return tx.Commit()
 }
 func (s *Service) effectiveImportAllowlist(ctx context.Context, dl sqlite.Download) ([]int64, error) {
-	if strings.HasPrefix(dl.ParkedReason, "operator cancellation") {
+	if operatorCancelled(&dl) {
 		return nil, fmt.Errorf("operator cancellation prohibits automatic publication")
 	}
 	if dl.Superseded {
@@ -522,7 +544,7 @@ func (s *Service) effectiveImportAllowlist(ctx context.Context, dl sqlite.Downlo
 		var failed *sqlite.Download
 		for i := range rows {
 			r := &rows[i]
-			if r.CandidateKey == string(key) && r.State == "failed" && r.SubmissionPhase != "uncertain" && r.SubmissionPhase != "submitting" && !persistedDownloadHeld(r.RunnerControl) && !r.Superseded && !strings.HasPrefix(r.ParkedReason, "operator cancellation") {
+			if r.CandidateKey == string(key) && r.State == "failed" && r.SubmissionPhase != "uncertain" && r.SubmissionPhase != "submitting" && !persistedDownloadHeld(r.RunnerControl) && !r.Superseded && !operatorCancelled(r) {
 				failed = r
 				break
 			}

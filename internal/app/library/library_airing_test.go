@@ -8,6 +8,7 @@ import (
 	"github.com/pjunod/monarr/internal/domain"
 	"github.com/pjunod/monarr/internal/infra/bus"
 	"github.com/pjunod/monarr/internal/infra/sqlite"
+	"github.com/pjunod/monarr/internal/infra/sqlite/sqlitetest"
 	"github.com/pjunod/monarr/internal/ports"
 )
 
@@ -27,7 +28,7 @@ func (f *fakeAiring) Airing(_ context.Context, tvdbID int64, _ string) (ports.Ai
 
 func airingService(t *testing.T, ap ports.AiringProvider) (*Service, *sqlite.DB) {
 	t.Helper()
-	db, err := sqlite.Open(t.TempDir())
+	db, err := sqlite.Open(sqlitetest.Dir(t))
 	if err != nil {
 		t.Fatal(err)
 	}

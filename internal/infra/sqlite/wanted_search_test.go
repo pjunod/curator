@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-func TestWantedSearchStorageOwnsOneActiveRunAndCheckpointsOneOrdinal(t *testing.T) {
+func TestWantedSearchStorageDeduplicatesEquivalentActiveRunsAndCheckpointsOneOrdinal(t *testing.T) {
 	db := openTestDB(t)
 	ctx := context.Background()
 	now := time.Now().UTC()
@@ -19,8 +19,12 @@ func TestWantedSearchStorageOwnsOneActiveRunAndCheckpointsOneOrdinal(t *testing.
 	if err := db.CreateWantedSearch(ctx, run, targets); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.CreateWantedSearch(ctx, WantedSearchRun{RunID: "run-2", Scope: "all", ScopeLabel: "All", CreatedAt: now}, nil); !errors.Is(err, ErrWantedSearchActive) {
+	if err := db.CreateWantedSearch(ctx, WantedSearchRun{RunID: "run-2", Scope: "all", ScopeLabel: "All", CreatedAt: now, TargetDelay: time.Second}, nil); !errors.Is(err, ErrWantedSearchActive) {
 		t.Fatalf("second active run = %v, want ErrWantedSearchActive", err)
+	}
+
+	if err := db.CreateWantedSearch(ctx, WantedSearchRun{RunID: "run-3", Scope: "target", WantableID: "movie:1", ScopeLabel: "One", CreatedAt: now}, targets[:1]); err != nil {
+		t.Fatalf("overlapping but distinct scope: %v", err)
 	}
 
 	committed, err := db.CommitWantedSearchTarget(ctx, "run-1", 0, WantedSearchTarget{

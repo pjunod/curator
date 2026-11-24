@@ -43,7 +43,7 @@ const (
 	// A German-only release cannot fix a library that wants English, at any
 	// resolution.
 	CodeLanguageNotWanted = "language_not_wanted"
-	// CodeHDRRejected is the profile's HDR refusal list (ADR 0026 §4): a
+	// CodeHDRRejected is the profile's HDR refusal list (ADR 0031 §4): a
 	// release measured, or named outright, as a tier the profile never takes.
 	CodeHDRRejected = "hdr_rejected"
 )
@@ -67,7 +67,7 @@ func rejected(code, format string, args ...any) Decision {
 
 // Release is what the engine knows about a candidate: the quality its name
 // claims, the languages its name advertises (ADR 0022), and its HDR (ADR
-// 0026) — the name's claim, or a pre-flight probe's measurement of the
+// 0031) — the name's claim, or a pre-flight probe's measurement of the
 // release's first bytes when there is one.
 type Release struct {
 	Quality   quality.Quality

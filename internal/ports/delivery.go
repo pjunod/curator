@@ -54,6 +54,8 @@ type RunnerDelivery struct {
 	FileOutcomes          []RunnerFileOutcome    `json:"fileOutcomes,omitempty"`
 	ReadyAt               time.Time              `json:"readyAt"`
 	SourceCleanup         json.RawMessage        `json:"sourceCleanup,omitempty"`
+	// Kind is completed or salvage (Runner M1a); empty from an older Runner.
+	Kind string `json:"kind,omitempty"`
 }
 
 // RunnerDeliveryPage is one bounded response from Runner's pending-delivery
@@ -96,21 +98,30 @@ type RequestTokenIdempotency interface {
 // RequestAdmission is Runner's durable outcome for an exact transfer token,
 // independent of queue and history retention.
 type RequestAdmission struct {
-	ProtocolVersion     int    `json:"protocolVersion"`
-	RequestToken        string `json:"requestToken"`
-	JobID               string `json:"jobId"`
-	Generation          string `json:"generation"`
-	RunnerInstanceID    string `json:"runnerInstanceId"`
-	Outcome             string `json:"outcome"`
-	TerminalOutcome     string `json:"terminalOutcome,omitempty"`
-	PublicationPath     string `json:"publicationPath,omitempty"`
-	SourceArtifactID    string `json:"sourceArtifactId,omitempty"`
-	SourceGeneration    string `json:"sourceGeneration,omitempty"`
-	FailureStage        string `json:"failureStage,omitempty"`
-	FailureCause        string `json:"failureCause,omitempty"`
-	CustodyState        string `json:"custodyState,omitempty"`
-	KeepSourceOnFailure bool   `json:"keepSourceOnFailure,omitempty"`
-	SourceCleanupStatus string `json:"sourceCleanupStatus,omitempty"`
+	// Fetched supplements the receipt with transfer-correlated Runner measurements.
+	Fetched             Fetched `json:"fetched,omitempty"`
+	ProtocolVersion     int     `json:"protocolVersion"`
+	RequestToken        string  `json:"requestToken"`
+	JobID               string  `json:"jobId"`
+	Generation          string  `json:"generation"`
+	RunnerInstanceID    string  `json:"runnerInstanceId"`
+	Outcome             string  `json:"outcome"`
+	TerminalOutcome     string  `json:"terminalOutcome,omitempty"`
+	PublicationPath     string  `json:"publicationPath,omitempty"`
+	SourceArtifactID    string  `json:"sourceArtifactId,omitempty"`
+	SourceGeneration    string  `json:"sourceGeneration,omitempty"`
+	FailureStage        string  `json:"failureStage,omitempty"`
+	FailureCause        string  `json:"failureCause,omitempty"`
+	CustodyState        string  `json:"custodyState,omitempty"`
+	KeepSourceOnFailure bool    `json:"keepSourceOnFailure,omitempty"`
+	SourceCleanupStatus string  `json:"sourceCleanupStatus,omitempty"`
+	// Typed terminal fields (contract section 2.5; Runner M1a writes them as
+	// Failure:* params). Empty from an older Runner, whose TerminalOutcome is
+	// then read by the legacy string rule.
+	FailureReason string `json:"failureReason,omitempty"`
+	FetchCause    string `json:"fetchCause,omitempty"`
+	BlamesRelease *bool  `json:"blamesRelease,omitempty"`
+	Salvage       string `json:"salvage,omitempty"`
 }
 
 // RequestAdmissionProtocol looks up the receipt for a stable transfer token.
@@ -118,12 +129,6 @@ type RequestAdmission struct {
 // separately negotiated for this download.
 type RequestAdmissionProtocol interface {
 	GetRequestAdmission(ctx context.Context, transferToken string) (RequestAdmission, bool, error)
-}
-
-// DeliveryLookupProtocol exposes the immutable delivery and mutable cleanup
-// progress after it leaves the pending collection endpoint.
-type DeliveryLookupProtocol interface {
-	GetDelivery(ctx context.Context, deliveryID string) (RunnerDelivery, error)
 }
 
 // DeliverySourceCleanupRetryProtocol asks Runner to retry deletion of its

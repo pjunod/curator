@@ -8,9 +8,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
-
-	"github.com/pjunod/monarr/internal/infra/sqlite"
 )
 
 func TestDeliveryResolveRejectsMixedManifestSelectionWithoutPartialAdmission(t *testing.T) {
@@ -22,6 +19,7 @@ func TestDeliveryResolveRejectsMixedManifestSelectionWithoutPartialAdmission(t *
 	itemID := e.addMovie(t)
 	downloadID := acqGrab(t, e, itemID)
 	r := apiDeliveryReceipt(t, e, clientID, downloadID, "delivery-api-atomic-selection")
+	apiHistoricalPublication(t, e, r)
 	selected := "Season 01/épisode.mkv"
 	payload := []byte("accepted manifest payload is unchanged by a rejected mixed selection")
 	manifestPath := filepath.Join(r.MappedPath, filepath.FromSlash(selected))
@@ -31,16 +29,8 @@ func TestDeliveryResolveRejectsMixedManifestSelectionWithoutPartialAdmission(t *
 	if err := os.WriteFile(manifestPath, payload, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := e.db.PrepareDeliveryAcceptance(ctx, sqlite.DeliveryReceipt{
-		ID: r.ID, ConsumerReceiptID: "curator-receipt-atomic-selection", NextAttemptAt: time.Now(),
-	}); err != nil {
-		t.Fatal(err)
-	}
-	prepared, err := e.db.DeliveryReceiptByID(ctx, r.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := e.db.SetDeliveryAccepted(ctx, prepared); err != nil {
+	// The Runner acknowledged this legacy receipt before the v2 upgrade.
+	if _, err := e.db.W.ExecContext(ctx, `UPDATE runner_delivery_receipts SET state='ready',ack_state='accepted',consumer_receipt_id=? WHERE id=?`, "curator-receipt-atomic-selection", r.ID); err != nil {
 		t.Fatal(err)
 	}
 	acceptedSnapshot, err := e.db.DeliveryReceiptByID(ctx, r.ID)

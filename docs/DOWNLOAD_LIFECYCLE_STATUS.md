@@ -3,7 +3,7 @@
 **Status:** User authorized merge after adversarial review and passing unit tests; coverage shortfall disclosed; not deployed
 **Updated:** 2026-10-23
 
-Companion to [the approved operating proposal](DOWNLOAD_LIFECYCLE_PROPOSAL.md)
+Companion to [the approved operating proposal](archive/DOWNLOAD_LIFECYCLE_PROPOSAL.md)
 and [the replacement API draft](BAD_DOWNLOAD_API.md). This page records actual
 implementation progress, review findings, validation, and delivery. Design prose
 is not evidence that a behavior has been implemented or tested.

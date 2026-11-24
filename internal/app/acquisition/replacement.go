@@ -163,12 +163,18 @@ func (s *Service) CreateReplacement(ctx context.Context, req ReplacementRequest)
 			return sqlite.ReplacementOperation{}, false, ErrReplacementStale
 		}
 		observation, e := s.db.GetReplacementFileObservation(ctx, expected.ObservationID)
-		if e != nil || ((observation.State != "ready" && req.Intent != "replace_bad") || (observation.State != "ready" && observation.State != "absent")) || observation.MediaItemID != req.MediaItemID || observation.MediaFileID != f.ID || observation.FileGeneration != f.FileGeneration || observation.SourceGeneration != f.SourceGeneration || filepath.Clean(observation.Path) != filepath.Clean(f.Path) || observation.FileIdentity == "" || observation.FilesystemGeneration == "" || observation.StorageIdentity == "" {
+		if e != nil {
+			return sqlite.ReplacementOperation{}, false, replacementReviewErr(e)
+		}
+		if ((observation.State != "ready" && req.Intent != "replace_bad") || (observation.State != "ready" && observation.State != "absent")) || observation.MediaItemID != req.MediaItemID || observation.MediaFileID != f.ID || observation.FileGeneration != f.FileGeneration || observation.SourceGeneration != f.SourceGeneration || filepath.Clean(observation.Path) != filepath.Clean(f.Path) || observation.FileIdentity == "" || observation.FilesystemGeneration == "" || observation.StorageIdentity == "" {
 			return sqlite.ReplacementOperation{}, false, ErrReplacementStale
 		}
 		digest := observation.SHA256
 		trustedStorage, trustErr := s.trustedReplacementStorageIdentity(ctx, root, f.ID, f.FileGeneration)
-		if trustErr != nil || trustedStorage != observation.StorageIdentity {
+		if trustErr != nil {
+			return sqlite.ReplacementOperation{}, false, replacementReviewErr(trustErr)
+		}
+		if trustedStorage != observation.StorageIdentity {
 			return sqlite.ReplacementOperation{}, false, ErrReplacementStale
 		}
 		if observation.State == "absent" {
@@ -282,12 +288,15 @@ func (s *Service) CreateReplacement(ctx context.Context, req ReplacementRequest)
 	for _, f := range opFiles {
 		observation, e := s.db.GetReplacementFileObservation(decisionCtx, f.ObservationID)
 		if e != nil {
-			return sqlite.ReplacementOperation{}, false, ErrReplacementStale
+			return sqlite.ReplacementOperation{}, false, replacementReviewErr(e)
 		}
 		if observation.State == "absent" {
 			trustedStorage, trustErr := s.trustedReplacementStorageIdentity(decisionCtx, root, f.MediaFileID, f.FileGeneration)
+			if trustErr != nil {
+				return sqlite.ReplacementOperation{}, false, replacementReviewErr(trustErr)
+			}
 			parentIdentity, absenceErr := observeMissingReplacementPath(root, f.Path, trustedStorage)
-			if trustErr != nil || absenceErr != nil || trustedStorage != observation.StorageIdentity || parentIdentity != observation.FileIdentity {
+			if absenceErr != nil || trustedStorage != observation.StorageIdentity || parentIdentity != observation.FileIdentity {
 				return sqlite.ReplacementOperation{}, false, ErrReplacementStale
 			}
 		} else if validateReplacementObservation(root, f.Path, observation) != nil {
@@ -295,6 +304,17 @@ func (s *Service) CreateReplacement(ctx context.Context, req ReplacementRequest)
 		}
 	}
 	return s.db.CreateReplacementOperation(decisionCtx, op, opFiles)
+}
+
+// replacementReviewErr tells a stale review from a storage failure while
+// re-checking it: a missing observation or an unverifiable or conflicting
+// storage pin means the operator must review again; anything else is the
+// failure itself, which a retry of the same review can clear.
+func replacementReviewErr(err error) error {
+	if errors.Is(err, sqlite.ErrNotFound) || errors.Is(err, sqlite.ErrReplacementStorageIdentityConflict) {
+		return ErrReplacementStale
+	}
+	return err
 }
 
 func validateReplacementObservation(root, path string, observation sqlite.ReplacementFileObservation) error {

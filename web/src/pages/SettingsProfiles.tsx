@@ -92,7 +92,7 @@ interface Draft {
   downloadPriority: number
   /** Required audio languages, canonical codes; empty = no requirement (ADR 0022). */
   audioLanguages: string[]
-  /** HDR order, refusals and pre-flight policy (ADR 0026); video only. */
+  /** HDR order, refusals and pre-flight policy (ADR 0031); video only. */
   hdr: HDRDraft
 }
 

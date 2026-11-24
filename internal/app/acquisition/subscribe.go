@@ -205,6 +205,15 @@ func (s *Service) handleEvent(ctx context.Context, cfg ports.ClientConfig, ev po
 		}
 		return
 	}
+	if _, runner := runnerFeedsOf(s.newClient(cfg)); runner {
+		// Pipeline v2: a Runner event is a fact for the reducer. An event
+		// with no fact (job_deleted, which carries no transfer) is advisory;
+		// the terminal arrives from Runner's own record.
+		if ev.Fact != nil {
+			s.handleRunnerEvent(ctx, cfg, ev, pending, flushed)
+		}
+		return
+	}
 	if ev.Handle == "" {
 		return
 	}

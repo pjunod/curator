@@ -11,11 +11,12 @@ import (
 
 	"github.com/pjunod/monarr/internal/domain"
 	"github.com/pjunod/monarr/internal/infra/sqlite"
+	"github.com/pjunod/monarr/internal/infra/sqlite/sqlitetest"
 )
 
 func watchServer(t *testing.T) (*Server, *sqlite.DB) {
 	t.Helper()
-	db, err := sqlite.Open(t.TempDir())
+	db, err := sqlite.Open(sqlitetest.Dir(t))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -6,7 +6,7 @@
 // a file, and it must never panic on arbitrary input. Both probe paths — the
 // native container walkers and the ffprobe mapping — reduce to the facts here,
 // so a file cannot get two different answers depending on which one read it
-// (ADR 0026 §2).
+// (ADR 0031 §2).
 //
 // The RPU syntax follows the published libdovi parser (MIT, quietvoid), which
 // is the de facto reference implementation; the fixtures in testdata were

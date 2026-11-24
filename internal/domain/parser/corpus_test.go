@@ -28,7 +28,7 @@ type corpusCase struct {
 		Repack     bool   `json:"repack"`
 		Group      string `json:"group"`
 		Author     string `json:"author"`
-		// HDR, when present, pins the whole HDR claim (ADR 0026 §3); an
+		// HDR, when present, pins the whole HDR claim (ADR 0031 §3); an
 		// empty tier means the name must claim nothing.
 		HDR *struct {
 			Tier       string `json:"tier"`

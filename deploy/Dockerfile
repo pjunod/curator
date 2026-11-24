@@ -1,20 +1,22 @@
 # ---- standalone local encoder ----
-FROM rust:1.97.1-bookworm AS embed
+FROM rust:1.100.0-bookworm@sha256:ade39a710ef85f3506cffcfec3e8a24ba090badef1dff2fb798f71d878833fea AS embed
 WORKDIR /src/tools/curator-embed
 COPY tools/curator-embed/Cargo.toml tools/curator-embed/Cargo.lock ./
+COPY tools/curator-embed/vendor ./vendor
 COPY tools/curator-embed/src ./src
 RUN --mount=type=cache,target=/usr/local/cargo/registry --mount=type=cache,target=/usr/local/cargo/git cargo build --locked --release
 
 # ---- web UI ----
-FROM node:22-alpine AS web
+FROM node:26-alpine@sha256:6bd9ab43c0ec0190ca7b2d193906cb8b7edf6e7f4afa43ddeccd6452710bffb5 AS web
 WORKDIR /src/web
 COPY web/package.json web/package-lock.json ./
+COPY web/vendor ./vendor
 RUN npm ci
 COPY web/ ./
 RUN npm run build
 
 # ---- go binary ----
-FROM golang:1.25-alpine AS build
+FROM golang:1.27.4-alpine@sha256:70bd7ddea8b6cbe5d6943cde279d6b67feb10cc924fb9100d1d8757c1575b280 AS build
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
@@ -42,7 +44,7 @@ RUN mkdir -p /data-skel/backups && chown -R 1000:1000 /data-skel
 
 # ---- Cinema's Jellyfin FFmpeg 8 and its complete runtime dependencies ----
 # Match Cinema/plurx: the signed Jellyfin Bookworm repository and package major.
-FROM debian:bookworm-slim AS media-tools
+FROM debian:bookworm-slim@sha256:734a72b3d6142a71993b4bc580ca01d8ca687f77a2c422d96a961d3376b179bc AS media-tools
 RUN apt-get update \
  && apt-get install -y --no-install-recommends ca-certificates curl gnupg \
  && install -d /etc/apt/keyrings \
@@ -69,7 +71,7 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/*
 
 # Prove the bundled binaries and libraries work in the actual distroless base.
-FROM gcr.io/distroless/cc-debian12 AS media-runtime
+FROM gcr.io/distroless/cc-debian12@sha256:e5d81ddde149641e2a9ba55be4545bc125c67de07508b03ba4c22e6eb0ded5aa AS media-runtime
 COPY --from=media-tools /runtime/ /
 RUN ["/usr/lib/jellyfin-ffmpeg/ffprobe", "-version"]
 RUN ["/usr/lib/jellyfin-ffmpeg/ffmpeg", "-version"]

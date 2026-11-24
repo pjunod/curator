@@ -3,12 +3,13 @@ package acquisition
 import (
 	"context"
 	"errors"
-	"github.com/pjunod/monarr/internal/domain/quality"
 	"os"
 	"path/filepath"
 	"strings"
 	"syscall"
 	"testing"
+
+	"github.com/pjunod/monarr/internal/domain/quality"
 
 	"github.com/pjunod/monarr/internal/infra/sqlite"
 )

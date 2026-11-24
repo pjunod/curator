@@ -1,6 +1,6 @@
 """Generate independent PyTorch reference vectors for the pinned MiniLM files.
 
-Install requirements-reference.txt into a temporary Python 3.12 environment.
+Install requirements-reference.txt into a temporary Python environment supported by the pinned wheels.
 Run with a local verified model directory and an output JSON path. This script
 uses Transformers' BertModel, not the Rust/Candle encoder under test.
 """
@@ -15,6 +15,8 @@ os.environ["HF_HUB_OFFLINE"] = "1"
 os.environ["TRANSFORMERS_OFFLINE"] = "1"
 
 import torch
+import tokenizers
+import transformers
 from tokenizers import Tokenizer
 from transformers import BertModel
 
@@ -29,7 +31,9 @@ def main() -> None:
         assert hashlib.sha256(data).hexdigest() == expected["sha256"], name
 
     torch.set_num_threads(2)
-    model = BertModel.from_pretrained(model_dir, local_files_only=True).eval()
+    model = BertModel.from_pretrained(
+        model_dir, local_files_only=True, use_safetensors=True, trust_remote_code=False
+    ).eval()
     tokenizer = Tokenizer.from_file(str(model_dir / "tokenizer.json"))
     tokenizer.no_padding()
     tokenizer.enable_truncation(max_length=256)
@@ -42,7 +46,7 @@ def main() -> None:
     ]
     result = {
         "model_revision": manifest["revision"],
-        "reference": "torch-2.5.1-transformers-4.46.3-tokenizers-0.20.3",
+        "reference": f"torch-{torch.__version__}-transformers-{transformers.__version__}-tokenizers-{tokenizers.__version__}",
         "pooling": "unmasked-token-mean-l2",
         "cases": [],
     }

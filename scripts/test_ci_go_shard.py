@@ -54,5 +54,18 @@ class ShardIntegrity(unittest.TestCase):
             root = Path(directory)/'shard'; shards.shard(0, 1, root)
             self.assertEqual(json.loads((root/'plan.json').read_text())['tests'], [list(t) for t in sorted(names)])
 
+    def test_single_shard_selects_by_prefix_not_by_listing_every_name(self):
+        names = [('a', f'TestCase{i:05d}') for i in range(20000)]
+        listing = [{'Package': p, 'Action': 'output', 'Output': n+'\n'} for p, n in names]
+        patterns = []
+        def events(arguments, log):
+            if '-list' in arguments: return listing
+            patterns.append(arguments[arguments.index('-run')+1])
+            profile = next(a.split('=', 1)[1] for a in arguments if a.startswith('-coverprofile=')); Path(profile).write_text('mode: atomic\nf.go:1.1,2.1 1 1\n')
+            return [{'Package': p, 'Action': a, 'Test': n} for p, n in names for a in ('run', 'pass')]
+        with tempfile.TemporaryDirectory() as directory, patch.object(shards, 'go_events', side_effect=events), patch.object(shards.subprocess, 'check_output', return_value='fixture\n'):
+            shards.shard(0, 1, Path(directory)/'shard')
+        self.assertEqual(patterns, ['^(?:Test|Example|Fuzz)'])
+
 
 if __name__ == '__main__': unittest.main()

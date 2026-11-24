@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { retryDelivery, retryFailedDeliveries } from './api'
-import { summary } from './pages/NotifierDeliveries'
+import { retryDelivery, retryFailedDeliveries, testPassed } from './api'
+import { statusLabel, summary } from './pages/NotifierDeliveries'
 import type { Delivery } from './api'
 
 // The delivery log is where "imported, but not in plurx" gets answered, and
@@ -32,6 +32,55 @@ describe('delivery summary', () => {
     expect(summary({ ...base, status: 'pending', attempts: 0, lastError: undefined })).toBe('queued')
     expect(summary({ ...base, status: 'ok', result: 'scanned → plurx item 1201' })).toBe(
       'scanned → plurx item 1201',
+    )
+  })
+})
+
+// A Cinema sub-delivery speaks Cinema's own words (pipeline contract v2 §4.2).
+describe('sub-delivery summary', () => {
+  const sub: Delivery = {
+    ...base,
+    status: 'pending',
+    attempts: 3,
+    attempt: 2,
+    lastError: undefined,
+    directory: '/media/tv/Show/Season 01',
+    requestKey: 't-1-x/gen/0123456789abcdef/2',
+    nextAt: Date.now() + 3_600_000,
+  }
+  it('shows visible with the item id once every expected file is placed', () => {
+    const ok: Delivery = { ...sub, status: 'ok', visibleAt: 1, result: 'visible → plurx item 1201', nextAt: undefined }
+    expect(summary(ok)).toBe('visible → plurx item 1201')
+    expect(statusLabel(ok)).toEqual({ text: 'visible', pill: 'pill-ok' })
+  })
+  it("shows cinema's exact waiting_on while queued, and a warning after half an hour", () => {
+    const queued: Delivery = { ...sub, remoteRequestId: 'sr-1', remoteState: 'queued', waitingOn: 'full_scan:3', result: 'queued as sr-1, waiting on full_scan:3' }
+    expect(summary(queued)).toMatch(/^queued in cinema, waiting on full_scan:3, retrying in 1h$/)
+    expect(statusLabel(queued).text).toBe('pending')
+    const late: Delivery = { ...queued, warning: true }
+    expect(summary(late)).toMatch(/^warning: queued in cinema, waiting on full_scan:3/)
+    expect(statusLabel(late)).toEqual({ text: 'warning', pill: 'pill-warning' })
+  })
+  it("shows the file cinema did not place and cinema's reason", () => {
+    const skipped: Delivery = { ...sub, result: 'warning: expected /media/tv/Show/Season 01/e02.mkv not placed (unsupported extension)' }
+    expect(summary(skipped)).toMatch(/^warning: expected \/media\/tv\/Show\/Season 01\/e02\.mkv not placed \(unsupported extension\), retrying in 1h$/)
+  })
+  it('says an old cinema accepted the scan but reports nothing back', () => {
+    const old: Delivery = { ...sub, status: 'ok', result: 'queued (cinema does not report results)' }
+    expect(summary(old)).toBe('queued (cinema does not report results)')
+    expect(statusLabel(old).text).toBe('ok')
+  })
+  it('marks a retry still failing after half an hour as a warning', () => {
+    const down: Delivery = { ...sub, warning: true, lastError: 'cannot reach plurx: connection refused' }
+    expect(summary(down)).toMatch(/^warning: attempt 3 failed: cannot reach plurx/)
+  })
+})
+
+describe('notifier test result', () => {
+  it('says delivered, or what the pass still has to say', () => {
+    expect(testPassed(undefined)).toBe('✓ delivered')
+    expect(testPassed({ message: 'connected; checking the library paths needs a newer cinema' })).toBe(
+      '✓ connected; checking the library paths needs a newer cinema',
     )
   })
 })

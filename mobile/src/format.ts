@@ -53,11 +53,11 @@ export function formatRelative(iso: string, now = new Date()): string {
 export function completeness(item: MediaItemSummary): { label: string; tone: 'ok' | 'warning' | 'neutral' } {
   if (item.kind === 'series') {
     if (item.episodeCount === 0) return { label: 'No aired episodes', tone: 'neutral' }
-    if (item.episodeFileCount >= item.episodeCount) return { label: 'Complete', tone: 'ok' }
+    if (item.episodeFileCount >= item.episodeCount) return { label: 'All episodes recorded', tone: 'ok' }
     return { label: `${item.episodeFileCount}/${item.episodeCount} episodes`, tone: 'warning' }
   }
-  if (item.fileCount > 0) return { label: item.quality || 'On disk', tone: 'ok' }
-  return { label: 'Missing', tone: 'warning' }
+  if (item.fileCount > 0) return { label: item.quality || 'File recorded', tone: 'ok' }
+  return { label: 'No file records', tone: 'warning' }
 }
 
 export function localDateKey(date: Date): string {

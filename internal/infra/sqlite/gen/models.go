@@ -9,18 +9,68 @@ import (
 )
 
 type AcquisitionPlan struct {
-	ID                  int64
-	MediaItemID         int64
-	CopyID              int64
-	Season              int64
-	State               string
-	Revision            int64
-	PolicyVersion       int64
-	SnapshotFingerprint string
-	Decision            string
-	ReplanPending       int64
-	AddedAt             int64
-	UpdatedAt           int64
+	ID                          int64
+	MediaItemID                 int64
+	CopyID                      int64
+	Season                      int64
+	State                       string
+	Revision                    int64
+	PolicyVersion               int64
+	SnapshotFingerprint         string
+	Decision                    string
+	ReplanPending               int64
+	AddedAt                     int64
+	UpdatedAt                   int64
+	ReplacementOriginID         int64
+	ReplacementOriginGeneration string
+}
+
+type ActivityAcknowledgment struct {
+	DownloadID    int64
+	GenerationKey string
+	Epoch         int64
+	State         string
+}
+
+type ActivityActionEvent struct {
+	ID            int64
+	OperationID   string
+	DownloadID    int64
+	GenerationKey string
+	At            int64
+	Step          string
+	Message       string
+}
+
+type ActivityDispositionLink struct {
+	DownloadID       int64
+	GenerationKey    string
+	OperationID      string
+	TargetID         int64
+	TargetGeneration string
+}
+
+type ActivityOperation struct {
+	ID          string
+	Fingerprint string
+	Action      string
+	Targets     string
+	CreatedAt   int64
+	UpdatedAt   int64
+}
+
+type ActivityOperationTarget struct {
+	OperationID   string
+	DownloadID    int64
+	GenerationKey string
+	State         string
+	Payload       string
+}
+
+type ActivitySelection struct {
+	ID        string
+	Targets   string
+	CreatedAt int64
 }
 
 type AppMetum struct {
@@ -36,6 +86,56 @@ type Blocklist struct {
 	Indexer      string
 	Reason       string
 	CreatedAt    int64
+}
+
+type CinemaConnection struct {
+	ID           int64
+	BaseUrl      string
+	Issuer       string
+	ClientID     string
+	ClientSecret string
+	Redirect     string
+	Generation   int64
+}
+
+type CinemaHandoff struct {
+	StateDigest          string
+	Mode                 string
+	AccountID            int64
+	CredentialGeneration int64
+	SessionDigest        string
+	ConnectionGeneration int64
+	Verifier             string
+	CookieDigest         string
+	NativeChallenge      string
+	BrowserOpened        int64
+	Claim                string
+	GrantSecret          string
+	GrantExpires         int64
+	CompletionDigest     string
+	ReadyLink            int64
+	ExpiresAt            int64
+}
+
+type CinemaLink struct {
+	ID                   int64
+	AccountID            int64
+	Issuer               string
+	Subject              string
+	ConnectionGeneration int64
+	Generation           int64
+	Active               int64
+}
+
+type CinemaRevocation struct {
+	ID           int64
+	BaseUrl      string
+	ClientID     string
+	ClientSecret string
+	GrantSecret  string
+	CreatedAt    int64
+	NextAt       int64
+	ExpiresAt    int64
 }
 
 type CompletedCleanupAttempt struct {
@@ -123,6 +223,21 @@ type Download struct {
 	RunnerSubmissionBlockedAt     int64
 	ProviderRetryAfter            int64
 	ExactTransferCorrelation      int64
+	RunnerOutcome                 string
+	RunnerOutcomeAt               int64
+	RunnerOutcomeSeq              int64
+	RunnerOutcomeReason           string
+	RunnerFetchCause              string
+	RunnerBlamesRelease           int64
+	RunnerSalvage                 string
+	RunnerFetchedJson             string
+	Provisional                   int64
+	DeadlineAt                    int64
+	StateEnteredAt                int64
+	RunnerStage                   string
+	RateBps                       int64
+	RemainingBytes                int64
+	RunnerStageAt                 int64
 }
 
 type DownloadClient struct {
@@ -141,6 +256,17 @@ type DownloadClient struct {
 	RemoveCompleted int64
 }
 
+type DownloadDisposition struct {
+	DownloadID    int64
+	GenerationKey string
+	RequestedAt   int64
+	VerifiedAt    int64
+	State         string
+	Message       string
+	OwnerPayload  string
+	Revision      int64
+}
+
 type Episode struct {
 	ID            int64
 	MediaItemID   int64
@@ -150,6 +276,7 @@ type Episode struct {
 	Title         string
 	AirDate       string
 	Monitored     int64
+	OffloadedAt   int64
 }
 
 type HistoryEvent struct {
@@ -159,6 +286,131 @@ type HistoryEvent struct {
 	MediaItemID  int64
 	ReleaseTitle string
 	Data         string
+}
+
+type HouseholdAccount struct {
+	ID                   int64
+	Username             string
+	DisplayName          string
+	PasswordHash         string
+	LegacySalt           string
+	Role                 string
+	Status               string
+	CredentialGeneration int64
+	Revision             int64
+	CreatedAt            int64
+	InitialOwner         int64
+}
+
+type HouseholdDownloadOrigin struct {
+	DownloadID         int64
+	Generation         string
+	TargetID           int64
+	ApprovalGeneration int64
+	ScopeJson          string
+	PolicyJson         string
+}
+
+type HouseholdInvite struct {
+	TokenDigest       string
+	CreatedBy         int64
+	CreatedGeneration int64
+	CreatedAt         int64
+	ExpiresAt         int64
+	ConsumedBy        sql.NullInt64
+}
+
+type HouseholdOffloadExclusion struct {
+	OperationID string
+	Path        string
+}
+
+type HouseholdRequest struct {
+	ID            int64
+	Fingerprint   string
+	Kind          string
+	TmdbID        int64
+	IdentityJson  string
+	ScopeJson     string
+	Title         string
+	Year          int64
+	PosterPath    string
+	Overview      string
+	CreatedBy     int64
+	CreatedAt     int64
+	UpdatedAt     int64
+	Revision      int64
+	State         string
+	PublicNote    string
+	ApprovedBy    sql.NullInt64
+	PolicyJson    string
+	LibraryItemID int64
+}
+
+type HouseholdRequestDecision struct {
+	RequestID  int64
+	Revision   int64
+	AccountID  int64
+	Decision   string
+	PolicyJson string
+	CreatedAt  int64
+}
+
+type HouseholdRequestNote struct {
+	RequestID int64
+	AccountID int64
+	Note      string
+}
+
+type HouseholdRequestSubscription struct {
+	RequestID int64
+	AccountID int64
+	Active    int64
+	CreatedAt int64
+}
+
+type HouseholdRequestTarget struct {
+	ID                 int64
+	RequestID          int64
+	MediaItemID        int64
+	EpisodeID          int64
+	Season             int64
+	Episode            int64
+	ApprovalGeneration int64
+	OffloadEpoch       int64
+	State              string
+	NextCheckAt        int64
+	DownloadID         sql.NullInt64
+	DownloadGeneration string
+	CreatedAt          int64
+}
+
+type HouseholdScopeClaim struct {
+	Kind      string
+	TmdbID    int64
+	CopyID    int64
+	Season    int64
+	Episode   int64
+	RequestID int64
+}
+
+type HouseholdSecurity struct {
+	ID          int64
+	Established int64
+}
+
+type HouseholdSession struct {
+	TokenDigest             string
+	AccountID               int64
+	CredentialGeneration    int64
+	Method                  string
+	LinkID                  int64
+	LinkGeneration          int64
+	Device                  string
+	CreatedAt               int64
+	ExpiresAt               int64
+	IntegrationGrant        string
+	IntegrationGrantExpires int64
 }
 
 type IgnoredPath struct {
@@ -275,15 +527,36 @@ type Job struct {
 	FinishedAt         int64
 }
 
-type LegacyCleanupReview struct {
-	GenerationKey string
-	Path          string
+type LibraryPresenceBootstrapFile struct {
+	FileID         int64
+	MediaItemID    int64
+	CopyID         int64
+	Path           string
+	Size           int64
+	FileGeneration string
 }
 
-type LegacyInflightImportEvidence struct {
-	GenerationKey string
-	CutoverMs     int64
-	Evidence      string
+type LibraryPresenceObservation struct {
+	MediaItemID         int64
+	CopyID              int64
+	ItemRevision        int64
+	PresenceFingerprint string
+	SharedRevision      int64
+	RootID              int64
+	RootPath            string
+	RootIdentity        string
+	RootGeneration      int64
+	ScopePath           string
+	CheckedAt           int64
+	Valid               int64
+	PresentFileIds      string
+}
+
+type LibraryPresenceRoot struct {
+	RootID     int64
+	RootPath   string
+	Identity   string
+	Generation int64
 }
 
 type LibraryReviewFlag struct {
@@ -449,34 +722,102 @@ type MediaItem struct {
 	Monitor          string
 	MonitorSince     string
 	MonitorSeason    int64
+	Origin           string
+	OffloadedAt      int64
 	DiscEl           string
 }
 
+type MetadataMatchIssue struct {
+	ItemID     int64
+	Provider   string
+	ProviderID int64
+}
+
 type Notifier struct {
-	ID       int64
-	Type     string
-	Name     string
-	Settings string
-	OnGrab   int64
-	OnImport int64
-	OnFailed int64
-	OnHealth int64
-	Enabled  int64
+	ID         int64
+	Type       string
+	Name       string
+	Settings   string
+	OnGrab     int64
+	OnImport   int64
+	OnFailed   int64
+	OnHealth   int64
+	Enabled    int64
+	Features   string
+	FeaturesAt int64
 }
 
 type NotifierDelivery struct {
+	ID                int64
+	NotifierID        int64
+	DownloadID        int64
+	Event             string
+	Payload           string
+	Attempts          int64
+	LastError         string
+	Result            string
+	Status            string
+	NextAt            int64
+	CreatedAt         int64
+	UpdatedAt         int64
+	PublicationID     int64
+	Directory         string
+	IdempotencyKey    string
+	Attempt           int64
+	ExpectedFilesJson string
+	RemoteRequestID   string
+	RemoteState       string
+	WaitingOn         string
+	VisibleAt         int64
+	ItemIdsJson       string
+	MediaItemID       int64
+	FileResultsJson   string
+	OperationID       string
+	RemovedSent       int64
+}
+
+type OffloadOperation struct {
+	OperationID string
+	RequestID   string
+	Fingerprint string
+	State       string
+	MediaItemID int64
+	Scope       string
+	Plan        string
+	Result      string
+	FilesTotal  int64
+	BytesTotal  int64
+	BytesFreed  int64
+	LastError   string
+	CreatedAt   int64
+	UpdatedAt   int64
+	DismissedAt int64
+}
+
+type OffloadOperationFile struct {
+	OperationID   string
+	Path          string
+	Kind          string
+	FileID        int64
+	Size          int64
+	State         string
+	Error         string
+	UnlinkStarted int64
+}
+
+type OffloadRequestAlias struct {
+	RequestID   string
+	OperationID string
+}
+
+type PipelineTiming struct {
 	ID         int64
-	NotifierID int64
+	Transfer   string
 	DownloadID int64
-	Event      string
-	Payload    string
-	Attempts   int64
-	LastError  string
-	Result     string
-	Status     string
-	NextAt     int64
-	CreatedAt  int64
-	UpdatedAt  int64
+	Kind       string
+	StartedAt  int64
+	EndedAt    int64
+	Note       string
 }
 
 type PlurxWatched struct {
@@ -487,6 +828,46 @@ type PlurxWatched struct {
 	Episode     int64
 	WatchedAt   int64
 	CreatedAt   int64
+}
+
+type Publication struct {
+	ID                int64
+	DownloadID        sql.NullInt64
+	Generation        string
+	Kind              string
+	Path              string
+	RemotePath        string
+	ManifestJson      string
+	ManifestSource    string
+	CrossVolume       int64
+	State             string
+	Cohort            string
+	CleanupApprovedAt int64
+	Error             string
+	DiscoveredAt      int64
+	DeadlineAt        int64
+	UpdatedAt         int64
+	CleanupPausedAt   int64
+	ImportAttempts    int64
+	LastStop          string
+	RetryAt           int64
+	HoldSince         int64
+	Holds             int64
+}
+
+type PublicationFile struct {
+	PublicationID int64
+	Path          string
+	Bytes         int64
+	Sha256        string
+	WantableID    string
+	Outcome       string
+	DiscardReason string
+	LibraryPath   string
+	PlacedSha256  string
+	Reason        string
+	RemovedAt     int64
+	UpdatedAt     int64
 }
 
 type QualityProfile struct {
@@ -535,6 +916,31 @@ type ReleaseBlacklistIdentity struct {
 	AddedAt     int64
 }
 
+type RematchOperation struct {
+	OperationID  string
+	RequestID    string
+	Fingerprint  string
+	State        string
+	SourceItemID int64
+	TargetItemID int64
+	Plan         string
+	Result       string
+	BytesDone    int64
+	BytesTotal   int64
+	LastError    string
+	CreatedAt    int64
+	UpdatedAt    int64
+	DismissedAt  int64
+}
+
+type ReplacementAdmission struct {
+	ParentID         int64
+	ParentGeneration string
+	ChildID          int64
+	ChildGeneration  string
+	Phase            string
+}
+
 type ReplacementFileObservation struct {
 	ObservationID        string
 	RequestID            string
@@ -552,6 +958,16 @@ type ReplacementFileObservation struct {
 	CreatedAt            int64
 	UpdatedAt            int64
 	FilesystemGeneration string
+}
+
+type ReplacementGrab struct {
+	DownloadID  int64
+	WantableIds string
+	CreatedAt   int64
+	AttemptedAt int64
+	Attempts    int64
+	Result      string
+	NextAt      int64
 }
 
 type ReplacementOperation struct {
@@ -624,14 +1040,6 @@ type RootFolder struct {
 	Kind    string
 }
 
-type RunnerAdmissionPollSchedule struct {
-	DownloadID    int64
-	GenerationKey string
-	NextAttemptAt int64
-	Attempts      int64
-	LastError     string
-}
-
 type RunnerClientInstance struct {
 	ClientID          int64
 	RunnerInstanceID  string
@@ -650,47 +1058,12 @@ type RunnerDeliveryAttemptEvent struct {
 	Error      string
 }
 
-type RunnerDeliveryCursor struct {
-	ClientID      int64
-	AfterSequence int64
-	UpdatedAt     int64
-}
-
 type RunnerDeliveryDiscoveryRejection struct {
 	ClientID   int64
 	Sequence   int64
 	DeliveryID string
 	Reason     string
 	UpdatedAt  int64
-}
-
-type RunnerDeliveryExplicitDeleteBatch struct {
-	BatchID                      string
-	ReceiptID                    int64
-	PayloadPath                  string
-	InventoryFingerprint         string
-	PublicationDirectoryIdentity string
-	StorageIdentity              string
-	GenerationKey                string
-	RequestToken                 string
-	PublicationGeneration        string
-	RetryAttempts                int64
-	RetryNextAttemptAt           int64
-	RetryBlockedSince            int64
-	RetryError                   string
-	CreatedAt                    int64
-	AbandonedAt                  int64
-}
-
-type RunnerDeliveryExplicitDeleteFile struct {
-	BatchID          string
-	Path             string
-	ReviewedPath     string
-	SnapshotIdentity string
-	ParentIdentity   string
-	HistoryRecorded  int64
-	CompletedAt      int64
-	UnlinkStarted    int64
 }
 
 type RunnerDeliveryFileImport struct {
@@ -788,6 +1161,17 @@ type RunnerDeliverySourceRefresh struct {
 	ProviderRetryAfter int64
 }
 
+type RunnerHistoryCursor struct {
+	ClientID        int64
+	Incarnation     string
+	SinceSeq        int64
+	HeadSeq         int64
+	RetainedMinSeq  int64
+	UpdatedAt       int64
+	DeliveriesAfter int64
+	HistoryRead     int64
+}
+
 type ScheduledTask struct {
 	Name            string
 	IntervalSeconds int64
@@ -798,11 +1182,31 @@ type ScheduledTask struct {
 	UpdatedAt       int64
 }
 
+type SearchRecord struct {
+	ID           int64
+	MediaItemID  int64
+	CopyID       int64
+	WantableID   string
+	Season       int64
+	Episode      int64
+	At           int64
+	Trigger      string
+	Seen         int64
+	Matched      int64
+	Accepted     int64
+	TopRejection string
+	Grabbed      string
+	DownloadID   int64
+	Skipped      string
+	Error        string
+}
+
 type Season struct {
 	ID          int64
 	MediaItemID int64
 	Number      int64
 	Monitored   int64
+	OffloadedAt int64
 }
 
 type StorageChangeAcceptance struct {
@@ -817,6 +1221,23 @@ type StorageChangeAcceptance struct {
 type StorageChangeReviewFence struct {
 	GenerationKey string
 	Root          string
+}
+
+type StorageChangeReviewPath struct {
+	ReviewToken string
+	Path        string
+}
+
+type WantableAttempt struct {
+	WantableID string
+	DownloadID int64
+	DecidedAt  int64
+	DecidedBy  string
+}
+
+type WantedSearchRequest struct {
+	RequestID string
+	RunID     string
 }
 
 type WantedSearchRun struct {

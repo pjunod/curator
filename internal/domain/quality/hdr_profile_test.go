@@ -7,7 +7,7 @@ import (
 	"github.com/pjunod/monarr/internal/domain/quality"
 )
 
-// The rendered "UHD Reference" profile (ADR 0026 §4): FEL › MEL › 8.1 ›
+// The rendered "UHD Reference" profile (ADR 0031 §4): FEL › MEL › 8.1 ›
 // HDR10+ › HDR10, never profile 5.
 func uhdReference() quality.Profile {
 	return quality.Profile{
@@ -135,7 +135,7 @@ func TestSentenceNamesTheHDROrder(t *testing.T) {
 	}
 }
 
-// Ties (ADR 0026 §5): on a device that drops the enhancement layer, FEL, MEL
+// Ties (ADR 0031 §5): on a device that drops the enhancement layer, FEL, MEL
 // and 8.1 are one picture. They rank as one, so FEL is not hunted over 8.1
 // and an FEL file is not replaced by 8.1 either.
 func TestHDRTiesRankAsOne(t *testing.T) {

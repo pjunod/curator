@@ -20,7 +20,7 @@ func TestLegacyManualImportConsentExpiresWhenTargetIdentityChanges(t *testing.T)
 	if err := os.WriteFile(source, []byte("legacy selected bytes"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.W.ExecContext(ctx, `INSERT INTO legacy_cleanup_review(generation_key,path) VALUES('',?)`, payload); err != nil {
+	if _, err := db.W.ExecContext(ctx, `INSERT INTO storage_change_review_paths(review_token,path) VALUES('',?)`, payload); err != nil {
 		t.Fatal(err)
 	}
 	if err := svc.SetCompletedRoots(ctx, completedRoot); err != nil {
@@ -58,7 +58,7 @@ func TestLegacyManualImportConsentExpiresWhenTargetIdentityChanges(t *testing.T)
 		t.Fatal(err)
 	}
 	err = svc.runImport(ctx, dl)
-	if err == nil || !strings.Contains(err.Error(), "legacy payload review") {
+	if err == nil || !strings.Contains(err.Error(), "storage under this payload changed") {
 		t.Fatalf("worker honored approval for a changed target identity: %v", err)
 	}
 	if got, readErr := os.ReadFile(source); readErr != nil || string(got) != "legacy selected bytes" {
@@ -79,7 +79,7 @@ func TestSelectedLegacyDeletePrevalidatesAllFilesBeforeRemovingAny(t *testing.T)
 	writeCompleted(t, first, 10)
 	writeCompleted(t, second, 11)
 	dl := insertImportable(t, db, itemID, payload)
-	if _, err := db.W.ExecContext(ctx, `INSERT INTO legacy_cleanup_review(generation_key,path) VALUES(?,?)`, dl.GenerationKey, payload); err != nil {
+	if _, err := db.W.ExecContext(ctx, `INSERT INTO storage_change_review_paths(review_token,path) VALUES(?,?)`, dl.GenerationKey, payload); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.UpdateDownloadState(ctx, dl.ID, "failed", 0, "held for review"); err != nil {
@@ -120,7 +120,7 @@ func TestSelectedLegacyDeleteRechecksLibraryReferenceAfterReview(t *testing.T) {
 	writeCompleted(t, selected, 15)
 	writeCompleted(t, sibling, 16)
 	dl := insertImportable(t, db, itemID, payload)
-	if _, err := db.W.ExecContext(ctx, `INSERT INTO legacy_cleanup_review(generation_key,path) VALUES(?,?)`, dl.GenerationKey, payload); err != nil {
+	if _, err := db.W.ExecContext(ctx, `INSERT INTO storage_change_review_paths(review_token,path) VALUES(?,?)`, dl.GenerationKey, payload); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.UpdateDownloadState(ctx, dl.ID, "failed", 0, "held for review"); err != nil {

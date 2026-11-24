@@ -1,6 +1,6 @@
 {
   "name": "monarr-mobile",
-  "version": "0.27.0",
+  "version": "0.29.0",
   "private": true,
   "main": "node_modules/expo/AppEntry.js",
   "scripts": {
@@ -15,28 +15,32 @@
     "doctor": "expo-doctor"
   },
   "dependencies": {
-    "expo": "~57.0.31",
-    "expo-build-properties": "~57.0.22",
-    "expo-camera": "~57.0.6",
-    "expo-constants": "~57.0.22",
-    "expo-network": "~57.0.3",
-    "expo-secure-store": "~57.0.4",
-    "expo-splash-screen": "~57.0.10",
-    "expo-status-bar": "~57.0.1",
-    "react": "19.2.3",
-    "react-native": "0.86.3",
-    "react-native-safe-area-context": "~5.7.0",
+    "expo": "~58.0.26",
+    "expo-build-properties": "~58.0.12",
+    "expo-camera": "~58.0.14",
+    "expo-constants": "~58.0.16",
+    "expo-crypto": "~58.0.8",
+    "expo-network": "~58.0.5",
+    "expo-secure-store": "~58.0.3",
+    "expo-splash-screen": "~58.0.14",
+    "expo-status-bar": "~58.0.5",
+    "react": "19.3.0",
+    "react-native": "0.88.1",
+    "react-native-safe-area-context": "~5.11.1",
     "react-native-zeroconf": "^0.14.0"
   },
   "devDependencies": {
-    "@types/react": "~19.2.2",
+    "@types/react": "~19.3.0",
     "@types/react-test-renderer": "^19.3.0",
     "expo-doctor": "1.20.1",
-    "react-test-renderer": "^19.2.3",
+    "react-test-renderer": "19.3.0",
     "typescript": "~6.0.3",
     "vitest": "^4.1.0"
   },
   "overrides": {
-    "uuid": "11.1.1"
+    "uuid": "11.1.1",
+    "@expo/fingerprint": {
+      "minimatch": "^11.0.5"
+    }
   }
 }

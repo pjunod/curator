@@ -11,8 +11,11 @@ import (
 
 // observeTorrentStall counts fresh successful operational observations, never
 // tracker scrape counts or wall time across an outage/pause.
+//
+// Non-Runner clients only: a Runner row is never stall-retired or parked by
+// Curator (Runner owns its retries and reports a terminal).
 func (s *Service) observeTorrentStall(ctx context.Context, dl sqlite.Download, cfg ports.ClientConfig, st ports.DownloadStatus) {
-	if dl.PlanID == 0 || dl.Protocol != "torrent" || dl.Superseded {
+	if dl.PlanID == 0 || dl.Protocol != "torrent" || dl.Superseded || isRunnerClient(s.newClient(cfg)) {
 		return
 	}
 	var ob executionObservation

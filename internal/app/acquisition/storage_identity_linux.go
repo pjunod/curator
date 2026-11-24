@@ -225,3 +225,8 @@ func stableBlockStorageSource(source, uuidDirectory string) string {
 	}
 	return "UUID=" + match
 }
+
+// perFileCleanupSupported says whether this platform can bind a verified
+// publication file to its unlink (an inode generation); without it the
+// per-file cleanup refuses rather than re-hashing forever.
+const perFileCleanupSupported = true

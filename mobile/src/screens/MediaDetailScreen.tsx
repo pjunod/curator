@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from 'react'
+import { availabilityLabel } from '../availability'
+import { type ComponentRef, useEffect, useMemo, useRef, useState } from 'react'
 import { Alert, ScrollView, StyleSheet, Switch, Text, View } from 'react-native'
 import type { MonarrClient } from '../api'
 import { describeAutoSearch } from '../autosearch'
@@ -8,6 +9,7 @@ import {
   INHERIT_DOWNLOAD_PRIORITY,
   downloadPriorityLabel,
 } from '../downloadPriority'
+import { ItemStatusPanel } from '../components/ItemStatusPanel'
 import { Poster } from '../components/Media'
 import { firstSeason } from '../releaseSearch'
 import {
@@ -25,11 +27,17 @@ import {
   SectionTitle,
 } from '../components/UI'
 import { useTheme } from '../theme'
-import type { BookType, MediaCopy, QualityProfile, ReleaseSearchScope, UpdateMediaItemRequest } from '../types'
+import type { BookType, MediaCopy, OffloadOperation, OffloadRequest, QualityProfile, ReleaseSearchScope, UpdateMediaItemRequest } from '../types'
 import { useResource } from '../useResource'
+import { ImportFileSheet } from './ImportFileSheet'
+import { OffloadOperations, OffloadSheet } from './OffloadSheet'
+import { seasonOffload } from '../offload'
+import { RematchSheet } from './RematchSheet'
 
-export function MediaDetailScreen({ client, id, onBack, onInteractiveSearch }: { client: MonarrClient; id: number; onBack: () => void; onInteractiveSearch: (scope: ReleaseSearchScope) => void }) {
+export function MediaDetailScreen({ client, id, assignFolder, onBack, onInteractiveSearch, onOpenActivity }: { client: MonarrClient; id: number; assignFolder?: boolean; onBack: () => void; onInteractiveSearch: (scope: ReleaseSearchScope) => void; onOpenActivity?: () => void }) {
   const theme = useTheme()
+  const scroll = useRef<ComponentRef<typeof ScrollView>>(null)
+  const focusedFolder = useRef(false)
   const resource = useResource(() => client.getLibraryItem(id), [client, id])
   const profilesResource = useResource(() => client.getProfiles(), [client])
   const rootsResource = useResource(() => client.getRootFolders(), [client])
@@ -37,6 +45,12 @@ export function MediaDetailScreen({ client, id, onBack, onInteractiveSearch }: {
   const [actionMessage, setActionMessage] = useState('')
   const [saving, setSaving] = useState(false)
   const [searching, setSearching] = useState(false)
+  const [importing, setImporting] = useState(false)
+  const [rematching, setRematching] = useState(false)
+  // Offload… target (the title, a season or an episode) and which season shows its episodes.
+  const [offloading, setOffloading] = useState<{ request: OffloadRequest; label: string; operation?: OffloadOperation } | null>(null)
+  const [reacquiring, setReacquiring] = useState(false)
+  const [openSeason, setOpenSeason] = useState<number | null>(null)
   const [seasonSaving, setSeasonSaving] = useState<number | null>(null)
   const [draftMonitored, setDraftMonitored] = useState(false)
   const [draftProfileId, setDraftProfileId] = useState(0)
@@ -87,12 +101,14 @@ export function MediaDetailScreen({ client, id, onBack, onInteractiveSearch }: {
   const saveItem = async () => {
     if (!item) return
     const patch: UpdateMediaItemRequest = {}
-    if (draftMonitored !== item.monitored) patch.monitored = draftMonitored
-    if (draftProfileId !== item.qualityProfileId) patch.qualityProfileId = draftProfileId
-    const originalPriority = item.downloadPriorityOverride ?? INHERIT_DOWNLOAD_PRIORITY
-    if (draftDownloadPriority !== originalPriority) {
-      if (draftDownloadPriority === INHERIT_DOWNLOAD_PRIORITY) patch.inheritDownloadPriority = true
-      else patch.downloadPriority = draftDownloadPriority
+    if (!assignFolder) {
+      if (draftMonitored !== item.monitored) patch.monitored = draftMonitored
+      if (draftProfileId !== item.qualityProfileId) patch.qualityProfileId = draftProfileId
+      const originalPriority = item.downloadPriorityOverride ?? INHERIT_DOWNLOAD_PRIORITY
+      if (draftDownloadPriority !== originalPriority) {
+        if (draftDownloadPriority === INHERIT_DOWNLOAD_PRIORITY) patch.inheritDownloadPriority = true
+        else patch.downloadPriority = draftDownloadPriority
+      }
     }
     if (draftRootId !== item.rootFolderId) patch.rootFolderId = draftRootId
     if (pathEdited && draftPath !== item.path) patch.path = draftPath
@@ -159,6 +175,25 @@ export function MediaDetailScreen({ client, id, onBack, onInteractiveSearch }: {
     }
   }
 
+  // Re-acquire: clears Offloaded inside the scope, monitors it and searches at
+  // the current profile. The answer is shown at once, on this screen.
+  const reacquire = async (request: OffloadRequest, label: string) => {
+    setReacquiring(true)
+    setActionError('')
+    setActionMessage('')
+    try {
+      const res = await client.reacquire(id, request)
+      setActionMessage(res.cleared
+        ? `Re-acquire of ${label}: ${res.state === 'searching' ? 'searching at the current profile' : res.state.replace('_', ' ')}.`
+        : `${label} is not offloaded: ${res.state.replace('_', ' ')}.`)
+      await resource.refresh()
+    } catch (cause) {
+      setActionError(cause instanceof Error ? cause.message : `Could not re-acquire ${label}.`)
+    } finally {
+      setReacquiring(false)
+    }
+  }
+
   const addCopy = async () => {
     if (copyProfileId === 0) {
       setActionError('Choose a quality profile for the copy.')
@@ -199,20 +234,24 @@ export function MediaDetailScreen({ client, id, onBack, onInteractiveSearch }: {
   const episodes = item.seasons.flatMap((season) => season.episodes)
   const aired = episodes.filter((episode) => !episode.airDate || new Date(episode.airDate) <= new Date())
   const onDisk = aired.filter((episode) => episode.hasFile).length
+  const offloadedEpisodes = item.seasons.reduce((n, season) => n + season.episodes.filter((episode) => episode.offloaded).length, 0)
   const copies = item.copies ?? []
   const selectedProfileName = profileName(profiles, item.qualityProfileId)
 
   return (
     <AppScreen>
       <Header title={item.title} subtitle={item.kind === 'series' ? 'TV series' : item.kind === 'book' ? ownedBookTypes.map((bookType) => bookType === 'audiobook' ? 'Audiobook' : 'Ebook').join(' + ') : item.kind} left={<IconButton label="Back" glyph="‹" onPress={onBack} />} />
-      <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+      <ScrollView ref={scroll} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
         <View style={styles.hero}>
           <Poster path={item.posterPath} title={item.title} width={126} />
           <View style={styles.heroBody}>
             <Text style={[styles.title, { color: theme.text }]}>{item.title}</Text>
             <Text style={[styles.meta, { color: theme.muted }]}>{[item.author, item.year, item.status, item.runtime ? `${item.runtime} min` : ''].filter(Boolean).join(' · ')}</Text>
             <View style={styles.badges}>
+              {item.kind!=='book'?<Badge label={`Primary copy · ${availabilityLabel(item.availability)}`} tone={item.availability?.presence==='present'?'ok':'neutral'} />:null}
               <Badge label={item.monitored ? 'Monitored' : 'Unmonitored'} tone={item.monitored ? 'ok' : 'neutral'} />
+              {item.kind === 'movie' && item.offloaded ? <Badge label="Offloaded" tone="warning" /> : null}
+              {item.kind === 'series' && offloadedEpisodes > 0 ? <Badge label={offloadedEpisodes === episodes.length ? 'Offloaded' : `${offloadedEpisodes} offloaded`} tone="warning" /> : null}
               <Badge label={selectedProfileName} />
               {item.kind === 'book' ? ownedBookTypes.map((bookType) => (
                 <Badge key={bookType} label={bookType === 'audiobook' ? 'Audiobook' : 'Ebook'} />
@@ -225,8 +264,8 @@ export function MediaDetailScreen({ client, id, onBack, onInteractiveSearch }: {
         </View>
 
         {item.overview ? <Text style={[styles.overview, { color: theme.text }]}>{item.overview}</Text> : null}
-        <InlineError message={actionError || resource.error} />
-        {actionMessage ? <Text style={[styles.success, { color: theme.ok }]}>{actionMessage}</Text> : null}
+        {!assignFolder && <InlineError message={actionError || resource.error} />}
+        {!assignFolder && actionMessage ? <Text style={[styles.success, { color: theme.ok }]}>{actionMessage}</Text> : null}
 
         <Panel style={styles.actions}>
           <Button label={searching ? 'Starting search…' : 'Search now'} disabled={searching} onPress={() => void searchNow()} />
@@ -237,11 +276,29 @@ export function MediaDetailScreen({ client, id, onBack, onInteractiveSearch }: {
               onPress={() => onInteractiveSearch(item.kind === 'series' ? { season: firstSeason(item.seasons) } : {})}
             />
           ) : null}
+          <Button secondary label="Import file…" onPress={() => setImporting(true)} />
+          {importing ? <ImportFileSheet client={client} item={item} onClose={() => { setImporting(false); void resource.refresh() }} /> : null}
+          {item.files.length > 0 ? <Button secondary label="Re-match… / Move to…" onPress={() => setRematching(true)} /> : null}
+          {rematching ? <RematchSheet client={client} item={item} onClose={() => { setRematching(false); void resource.refresh() }} /> : null}
+          {(item.kind === 'movie' || item.kind === 'series') && item.files.length > 0 ? (
+            <Button secondary label="Offload…" onPress={() => setOffloading({ request: { scope: 'item' }, label: item.title })} />
+          ) : null}
+          {(item.kind === 'movie' && item.offloaded) || (item.kind === 'series' && offloadedEpisodes > 0) ? (
+            <Button label={reacquiring ? 'Re-acquiring…' : 'Re-acquire'} disabled={reacquiring} onPress={() => void reacquire({ scope: 'item' }, item.title)} />
+          ) : null}
+          {offloading ? <OffloadSheet client={client} itemId={id} label={offloading.label} request={offloading.request} initialOperation={offloading.operation} onClose={() => { setOffloading(null); void resource.refresh() }} /> : null}
           <Text style={[styles.actionHint, { color: theme.muted }]}>
             Search now grabs the best accepted release in the background. Interactive search lists every release the indexers return so you pick.
             {item.kind === 'series' && item.seasons.length === 0 ? ' Interactive search appears once this series has seasons.' : ''}
           </Text>
         </Panel>
+
+        <OffloadOperations client={client} itemId={id} sheetOpen={offloading != null} onOpen={(op) => setOffloading({
+          request: { scope: op.scope, season: op.season, episodeId: op.episodeId },
+          label: op.label ?? item.title,
+          operation: op,
+        })} />
+        <ItemStatusPanel client={client} id={id} kind={item.kind} onInteractiveSearch={onInteractiveSearch} onOpenActivity={onOpenActivity} />
 
         {item.kind !== 'book' ? (
           <>
@@ -269,41 +326,49 @@ export function MediaDetailScreen({ client, id, onBack, onInteractiveSearch }: {
           </>
         ) : null}
 
-        <SectionTitle>Edit item</SectionTitle>
+        {assignFolder && <View collapsable={false} onLayout={event => {
+          if (focusedFolder.current) return
+          const offset = event.nativeEvent.layout.y
+          focusedFolder.current = true
+          requestAnimationFrame(() => scroll.current?.scrollTo({ y: Math.max(0, offset), animated: false }))
+        }} />}
+        <SectionTitle>{assignFolder ? 'Assign folder' : 'Edit item'}</SectionTitle>
         <Panel style={styles.formPanel}>
-          <View style={styles.monitorRow}>
-            <View style={styles.flex}>
-              <Text style={[styles.actionTitle, { color: theme.text }]}>Monitored</Text>
-              <Text style={[styles.actionHint, { color: theme.muted }]}>Let automation keep this title complete.</Text>
+          {!assignFolder && <>
+            <View style={styles.monitorRow}>
+              <View style={styles.flex}>
+                <Text style={[styles.actionTitle, { color: theme.text }]}>Monitored</Text>
+                <Text style={[styles.actionHint, { color: theme.muted }]}>Let automation keep this title complete.</Text>
+              </View>
+              <Switch disabled={saving} value={draftMonitored} onValueChange={setDraftMonitored} trackColor={{ true: theme.accent }} />
             </View>
-            <Switch disabled={saving} value={draftMonitored} onValueChange={setDraftMonitored} trackColor={{ true: theme.accent }} />
-          </View>
 
-          <ChoiceGroup
-            label="Quality profile"
-            options={eligibleProfiles.map((profile) => ({ id: profile.id, label: profile.name }))}
-            selected={draftProfileId}
-            onChange={setDraftProfileId}
-            disabled={saving}
-            empty={profilesResource.loading ? 'Loading profiles…' : profilesResource.error || 'No quality profiles are available.'}
-          />
+            <ChoiceGroup
+              label="Quality profile"
+              options={eligibleProfiles.map((profile) => ({ id: profile.id, label: profile.name }))}
+              selected={draftProfileId}
+              onChange={setDraftProfileId}
+              disabled={saving}
+              empty={profilesResource.loading ? 'Loading profiles…' : profilesResource.error || 'No quality profiles are available.'}
+            />
 
-          <ChoiceGroup
-            label="Download priority"
-            options={[
-              {
-                id: INHERIT_DOWNLOAD_PRIORITY,
-                label: `Profile default — ${downloadPriorityLabel(
-                  profiles.find((profile) => profile.id === draftProfileId)?.downloadPriority ?? 0,
-                )}`,
-              },
-              ...DOWNLOAD_PRIORITIES.map((priority) => ({ id: priority.value, label: priority.label })),
-            ]}
-            selected={draftDownloadPriority}
-            onChange={setDraftDownloadPriority}
-            disabled={saving}
-            empty="No download priority choices are available."
-          />
+            <ChoiceGroup
+              label="Download priority"
+              options={[
+                {
+                  id: INHERIT_DOWNLOAD_PRIORITY,
+                  label: `Profile default — ${downloadPriorityLabel(
+                    profiles.find((profile) => profile.id === draftProfileId)?.downloadPriority ?? 0,
+                  )}`,
+                },
+                ...DOWNLOAD_PRIORITIES.map((priority) => ({ id: priority.value, label: priority.label })),
+              ]}
+              selected={draftDownloadPriority}
+              onChange={setDraftDownloadPriority}
+              disabled={saving}
+              empty="No download priority choices are available."
+            />
+          </>}
 
           <ChoiceGroup
             label="Root folder"
@@ -330,30 +395,65 @@ export function MediaDetailScreen({ client, id, onBack, onInteractiveSearch }: {
             <Text style={[styles.actionHint, { color: theme.muted }]}>Changing this record never moves files already on disk.</Text>
           </View>
 
-          <Button label={saving ? 'Saving…' : 'Save item'} disabled={saving || draftProfileId === 0} onPress={() => void saveItem()} />
+          <Button label={saving ? 'Saving…' : assignFolder ? 'Save folder' : 'Save item'} disabled={saving || (!assignFolder && draftProfileId === 0)} onPress={() => void saveItem()} />
+          {assignFolder && <InlineError message={actionError || resource.error} />}
+          {assignFolder && actionMessage && <Text style={[styles.success, { color: theme.ok }]}>{actionMessage}</Text>}
         </Panel>
 
         {item.kind === 'series' ? (
           <>
             <SectionTitle>Episodes</SectionTitle>
             <Panel>
-              <Text style={[styles.stat, { color: theme.text }]}>{onDisk} of {aired.length} aired episodes on disk</Text>
+              <Text style={[styles.stat, { color: theme.text }]}>{onDisk} of {aired.length} episode records linked to files (all copies)</Text>
               {item.seasons.map((season) => {
                 const present = season.episodes.filter((episode) => episode.hasFile).length
+                // The season flag only means "new episodes inherit it"; each episode's own flag says what is offloaded.
+                const { episodes: episodesOffloaded, fully: seasonOffloaded } = seasonOffload(season)
+                const label = season.number === 0 ? 'Specials' : `Season ${season.number}`
                 return (
-                  <View key={season.number} style={[styles.row, { borderTopColor: theme.border }]}>
-                    <View style={styles.flex}>
-                      <Text style={[styles.rowTitle, { color: theme.text }]}>Season {season.number}</Text>
-                      <Text style={[styles.meta, { color: theme.muted }]}>{present}/{season.episodes.length} episodes on disk</Text>
+                  <View key={season.number}>
+                    <View style={[styles.row, { borderTopColor: theme.border }]}>
+                      <View style={styles.flex}>
+                        <Text style={[styles.rowTitle, { color: theme.text }]}>{label}</Text>
+                        <Text style={[styles.meta, { color: theme.muted }]}>{present}/{season.episodes.length} episode records linked to files{seasonOffloaded ? ' · offloaded' : ''}</Text>
+                      </View>
+                      <Switch
+                        accessibilityLabel={`Monitor season ${season.number}`}
+                        disabled={seasonSaving !== null || seasonOffloaded}
+                        value={season.monitored}
+                        onValueChange={(value) => void setSeasonMonitored(season.number, value)}
+                        trackColor={{ true: theme.accent }}
+                      />
                     </View>
-                    <Button compact secondary label="Search pack" onPress={() => onInteractiveSearch({ season: season.number })} />
-                    <Switch
-                      accessibilityLabel={`Monitor season ${season.number}`}
-                      disabled={seasonSaving !== null}
-                      value={season.monitored}
-                      onValueChange={(value) => void setSeasonMonitored(season.number, value)}
-                      trackColor={{ true: theme.accent }}
-                    />
+                    <View style={styles.seasonActions}>
+                      {seasonOffloaded ? (
+                        <Button compact label="Re-acquire" disabled={reacquiring} onPress={() => void reacquire({ scope: 'season', season: season.number }, label)} />
+                      ) : (
+                        <>
+                          <Button compact secondary label="Search pack" onPress={() => onInteractiveSearch({ season: season.number })} />
+                          {present > 0 ? <Button compact secondary label="Offload…" onPress={() => setOffloading({ request: { scope: 'season', season: season.number }, label: `${item.title} · ${label}` })} /> : null}
+                          {episodesOffloaded > 0 ? <Button compact label={`Re-acquire ${episodesOffloaded}`} disabled={reacquiring} onPress={() => void reacquire({ scope: 'season', season: season.number }, label)} /> : null}
+                        </>
+                      )}
+                      <Button compact secondary label={openSeason === season.number ? 'Hide episodes' : 'Episodes'} onPress={() => setOpenSeason(openSeason === season.number ? null : season.number)} />
+                    </View>
+                    {openSeason === season.number ? season.episodes.map((episode) => {
+                      const gone = Boolean(episode.offloaded)
+                      const token = `${episode.seasonNumber}x${String(episode.episodeNumber).padStart(2, '0')}`
+                      return (
+                        <View key={episode.id} style={[styles.row, { borderTopColor: theme.border }]}>
+                          <View style={styles.flex}>
+                            <Text style={[styles.rowTitle, { color: theme.text }]}>{token} {episode.title || 'TBA'}</Text>
+                            <Text style={[styles.meta, { color: theme.muted }]}>{gone ? 'offloaded' : episode.hasFile ? 'file recorded' : 'no file record'}</Text>
+                          </View>
+                          {gone ? (
+                            <Button compact label="Re-acquire" disabled={reacquiring} onPress={() => void reacquire({ scope: 'episode', episodeId: episode.id }, token)} />
+                          ) : episode.hasFile ? (
+                            <Button compact secondary label="Offload…" onPress={() => setOffloading({ request: { scope: 'episode', episodeId: episode.id }, label: `${item.title} · ${token}` })} />
+                          ) : null}
+                        </View>
+                      )
+                    }) : null}
                   </View>
                 )
               })}
@@ -466,7 +566,7 @@ export function MediaDetailScreen({ client, id, onBack, onInteractiveSearch }: {
 
         <SectionTitle>Files</SectionTitle>
         {item.files.length === 0 ? (
-          <Panel><Text style={[styles.meta, { color: theme.muted }]}>Nothing on disk yet.</Text></Panel>
+          <Panel><Text style={[styles.meta, { color: theme.muted }]}>No file records yet.</Text></Panel>
         ) : item.files.map((file) => {
           const copy = file.copyId ? copies.find((candidate) => candidate.id === file.copyId) : undefined
           return (
@@ -751,6 +851,7 @@ const styles = StyleSheet.create({
   choices: { flexDirection: 'row', flexWrap: 'wrap', gap: 7 },
   sectionHint: { fontSize: 13, lineHeight: 19, marginTop: -4, marginBottom: 10 },
   stat: { fontSize: 14, fontWeight: '700', marginBottom: 5 },
+  seasonActions: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, paddingTop: 8 },
   row: { borderTopWidth: StyleSheet.hairlineWidth, paddingTop: 10, marginTop: 10, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 },
   rowTitle: { fontSize: 13, fontWeight: '600' },
   copyCard: { gap: 14, marginBottom: 10 },

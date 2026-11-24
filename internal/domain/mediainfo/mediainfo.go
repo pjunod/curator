@@ -92,7 +92,7 @@ type VideoInfo struct {
 	HDR        []string `json:"hdr,omitempty"`     // "dv" | "hdr10" | "hdr10plus" | "hlg", sorted, deduped
 	Interlaced bool     `json:"interlaced"`        // container says the content is interlaced
 	Profile    string   `json:"profile,omitempty"` // codec profile string when cheap to read
-	// DoVi is what kind of Dolby Vision the file carries (ADR 0026). Nil when
+	// DoVi is what kind of Dolby Vision the file carries (ADR 0031). Nil when
 	// there is none, and also when a container names Dolby Vision without a
 	// configuration record or RPU the probe could read — HDR still says "dv"
 	// then, but nothing more is known.
@@ -232,7 +232,7 @@ type Info struct {
 // §4 uses for files never probed at all, rather than a one-off migration.
 //
 //	1  ADR 0013: container, codecs, dimensions, HDR transfer, audio
-//	2  ADR 0026: Dolby Vision record and first RPU, HDR10+ (HEVC only)
+//	2  ADR 0031: Dolby Vision record and first RPU, HDR10+ (HEVC only)
 const ProberRevision = 2
 
 // Outdated reports whether the current prober would measure more than this
@@ -246,7 +246,7 @@ func (i Info) Outdated() bool {
 	return i.Video != nil && i.Video.Codec == "hevc"
 }
 
-// HDRTier reduces the measurement to the shared HDR vocabulary (ADR 0026).
+// HDRTier reduces the measurement to the shared HDR vocabulary (ADR 0031).
 // A record that measured no video is unknown; one that measured video and no
 // HDR format is SDR, because the probe would have seen one.
 func (i Info) HDRTier() hdr.Tier {

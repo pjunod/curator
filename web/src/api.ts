@@ -57,7 +57,25 @@ export interface BookEditionSummary {
   fileCount: number
 }
 
+export interface SeasonAvailability { number: number; expected: number; present: number; offloaded: number; unknownDates: number }
+export interface Availability {
+ catalog: 'present' | 'absent' | 'ambiguous' | 'unknown'
+ presence: 'present' | 'partial' | 'missing' | 'offloaded' | 'unknown'
+ libraryItemId?: number
+ copyId: number
+ expected: number
+ present: number
+ offloaded: number
+ acquisition: 'none' | 'active' | 'unknown'
+ checkedAt?: string
+ reason?: string
+ seasons?: SeasonAvailability[]
+}
+export interface LibrarySeedPage {items: SearchResult[]; hasMore: boolean}
+export interface LibraryShelf {title: string; source: string; seed: SearchResult; items: SearchResult[]}
+
 export interface MediaItemSummary {
+ availability?: Availability
   id: number
   kind: MediaKind
   title: string
@@ -71,6 +89,10 @@ export interface MediaItemSummary {
   bookEditions?: BookEditionSummary[]
   posterPath: string
   monitored: boolean
+  /** Offloaded (ADR 0028): a movie whose files were deleted on purpose, or a show with an offloaded episode. */
+  offloaded?: boolean
+  /** Shows only: how many episodes are offloaded. */
+  offloadedEpisodes?: number
   path: string
   rating: number // provider scale: TMDB /10, Open Library /5
   ratingVotes: number // 0 = no rating known
@@ -143,12 +165,14 @@ export interface EpisodeInfo {
   title: string
   airDate: string
   monitored: boolean
+  offloaded?: boolean
   hasFile: boolean
 }
 
 export interface SeasonInfo {
   number: number
   monitored: boolean
+  offloaded?: boolean
   episodes: EpisodeInfo[]
 }
 
@@ -168,7 +192,7 @@ export interface MediaFileInfo {
   verified?: boolean
   /** Measured facts as one line: "1080p · HEVC · HDR10 · TrueHD · 23 Mbps". */
   facts?: string
-  /** The measured HDR tier (ADR 0026); absent when the file was never measured. */
+  /** The measured HDR tier (ADR 0031); absent when the file was never measured. */
   hdrTier?: HDRTier
   /** The measured Dolby Vision record, when the file carries one. */
   dolbyVision?: DolbyVision
@@ -281,7 +305,7 @@ export interface MediaItemDetail extends Omit<MediaItemSummary, 'episodeCount' |
   // quality / qualityTarget / upgrade are inherited from MediaItemSummary —
   // the detail response carries the same three fields.
   monitor?: SeriesMonitorMode
-  /** The primary copy's measured HDR tier, when every file shares one (ADR 0026). */
+  /** The primary copy's measured HDR tier, when every file shares one (ADR 0031). */
   hdrTier?: HDRTier
   /**
    * The title's Dolby Vision disc master as measurement has shown it: 'fel'
@@ -344,6 +368,7 @@ export interface UpdateMediaItemRequest {
 }
 
 export interface SearchResult {
+ availability?: Availability
   kind: MediaKind
   tmdbId: number
   /** Set when the series came from the provider chain rather than TMDB. */
@@ -581,16 +606,16 @@ async function parseError(res: Response, fallback: string): Promise<never> {
   throw new ApiError(msg, res.status, code, activeRunId)
 }
 
-async function get<T>(path: string): Promise<T> {
-  const res = await fetch(`/api/v1${path}`)
+async function get<T>(path: string,principal?:string): Promise<T> {
+  const res = await fetch(`/api/v1${path}`,{headers:principal?{'X-Curator-Principal':principal}:undefined})
   if (!res.ok) await parseError(res, `GET ${path}: ${res.status} ${res.statusText}`)
   return res.json() as Promise<T>
 }
 
-async function send<T = void>(method: string, path: string, body?: unknown): Promise<T> {
+async function send<T = void>(method: string, path: string, body?: unknown,principal?:string): Promise<T> {
   const res = await fetch(`/api/v1${path}`, {
     method,
-    headers: body !== undefined ? { 'Content-Type': 'application/json' } : undefined,
+    headers: {...(body!==undefined?{'Content-Type':'application/json'}:{}),...(principal?{'X-Curator-Principal':principal}:{})},
     body: body !== undefined ? JSON.stringify(body) : undefined,
   })
   if (!res.ok) await parseError(res, `${method} ${path}: ${res.status} ${res.statusText}`)
@@ -785,7 +810,7 @@ export interface QualityProfile {
    * or empty means no requirement.
    */
   audioLanguages?: string[]
-  /** Preferred HDR tiers, best first (ADR 0026); absent = no opinion. */
+  /** Preferred HDR tiers, best first (ADR 0031); absent = no opinion. */
   hdrOrder?: HDRTier[]
   /** HDR tiers the profile never takes. */
   hdrReject?: HDRTier[]
@@ -799,7 +824,7 @@ export interface QualityProfile {
 }
 
 /**
- * An HDR presentation (ADR 0026). Profiles order and refuse the first eight;
+ * An HDR presentation (ADR 0031). Profiles order and refuse the first eight;
  * dv-p7 (EL type unknown), dv (profile unknown) and '' only describe what was
  * seen.
  */
@@ -813,7 +838,7 @@ export interface HDRTierOption {
   label: string
 }
 
-/** A profile's pre-flight probe policy (ADR 0026). Zero values mean the defaults. */
+/** A profile's pre-flight probe policy (ADR 0031). Zero values mean the defaults. */
 export interface PreflightPolicy {
   /** How many of the best releases to probe; 0 = 5, 1000 = every one. */
   top?: number
@@ -823,7 +848,7 @@ export interface PreflightPolicy {
   skipUnreadable?: boolean
 }
 
-/** The measured Dolby Vision record of a file or probed release (ADR 0026). */
+/** The measured Dolby Vision record of a file or probed release (ADR 0031). */
 export interface DolbyVision {
   profile: number
   level?: number
@@ -853,7 +878,7 @@ export interface ReleaseHDR {
   measured: boolean
 }
 
-/** What a pre-flight probe found (ADR 0026). */
+/** What a pre-flight probe found (ADR 0031). */
 export interface ProbeEvidence {
   status: 'measured' | 'unavailable' | 'failed'
   /** encrypted | compressed | missing_articles | no_media | unreadable */
@@ -886,7 +911,7 @@ export interface ProfileInput {
   preflight?: PreflightPolicy
 }
 
-/** One playback device a plurx connection reports, and the order it suggests (ADR 0026). */
+/** One playback device a plurx connection reports, and the order it suggests (ADR 0031). */
 export interface HDRDevice {
   source: string
   id: string
@@ -999,7 +1024,7 @@ export interface ReleaseCandidate {
   languages?: string[]
   /** What the name claims about HDR; absent when it says nothing. */
   hdr?: ReleaseHDR
-  /** What a pre-flight probe measured, when one ran (ADR 0026). */
+  /** What a pre-flight probe measured, when one ran (ADR 0031). */
   measuredHdr?: ReleaseHDR
   /** The pre-flight probe's evidence. */
   probe?: ProbeEvidence
@@ -1054,6 +1079,7 @@ export interface QueueItem {
  planId?: number
  planState?: string
  submissionPhase?: string
+ reservationActionable?: boolean
  parkedReason?: string
  selection?: SeasonSelection
   control?: { version: number; revision: string; lifecycle: string; cause: string; stage: string; retry_policy: string; message: string; instance: string }
@@ -1094,7 +1120,66 @@ export interface QueueItem {
   bytesPerSecond?: number
   /** Persisted explanation of why this release was accepted. */
   match?: MatchEvidence
+  /** Pipeline contract v2: the recorded terminal (completed | failed | cancelled). */
+  runnerOutcome?: string
+  /** health | fetch | par | unpack | script | publish | io | identity | hold_expired, or Curator's own submit | lost | parked. */
+  runnerReason?: string
+  fetchCause?: string
+  blamesRelease?: boolean
+  /** Curator's own terminal: any later Runner fact re-opens it. */
+  provisional?: boolean
+  /** When the row's current state becomes overdue. */
+  deadlineAt?: string
+  stateEnteredAt?: string
+  /** A held row past its deadline: Runner has not reported since. Never a Curator failure. */
+  stale?: boolean
+  heldReason?: string
+  publications?: QueuePublication[]
 }
+
+/** One Runner generation and what became of each of its files. */
+export interface QueuePublication {
+  id: number
+  generation?: string
+  kind: string
+  state: string
+  cohort: string
+  path: string
+  manifestSource?: string
+  error?: string
+  cleanupApprovedAt?: string
+  cleanupPausedAt?: string
+  cleanupState?: 'queued' | 'running'
+  cleanupReason?: string
+  /** The environment is holding it: it waits, retried on the ladder, never ended by its deadline. */
+  held?: boolean
+  heldReason?: string
+  heldSince?: string
+  files: QueuePublicationFile[]
+}
+
+/** The line a held publication shows: why it waits and since when. */
+export function publicationHoldText(p: Pick<QueuePublication, 'held' | 'heldReason' | 'heldSince'>, now: Date = new Date()): string | null {
+  if (!p.held) return null
+  const why = p.heldReason?.trim() || 'the environment cannot take it now'
+  if (!p.heldSince) return `Held: ${why}`
+  const since = new Date(p.heldSince)
+  const minutes = Math.max(0, Math.round((now.getTime() - since.getTime()) / 60000))
+  const age = minutes < 60 ? `${minutes} min` : minutes < 48 * 60 ? `${Math.round(minutes / 60)} h` : `${Math.round(minutes / 1440)} d`
+  return `Held ${age}: ${why}`
+}
+
+export interface QueuePublicationFile {
+  path: string
+  bytes?: number
+  outcome: string
+  discardReason?: string
+  reason?: string
+  libraryPath?: string
+  removed?: boolean
+}
+
+export type PublicationFileAction = 'place' | 'discard' | 'keep'
 
 export interface ScannedFile {
   path: string
@@ -1105,6 +1190,48 @@ export interface ScannedFile {
   season: number // -1 when not a series file
   episodes: number[]
   snapshotIdentity?: string
+  /** Subtitle files that travel with this video (one-level listing only). */
+  subtitles?: number
+  /** The runner delivery this file is part of; placed through Resolve. */
+  publication?: ScannedPublication
+  /** Why this entry cannot be imported (a symlink, an unreadable file). */
+  skipped?: string
+}
+
+export interface ScannedPublication {
+  downloadId: number
+  publicationId: number
+  /** Relative to the publication. */
+  path: string
+  outcome: string
+}
+
+export interface EpisodeTarget { path: string; season: number; episodes: number[] }
+
+export interface ImportPlanRequest {
+  mediaItemId: number
+  copyId?: number
+  removeOriginal?: boolean
+  files: { path: string; season?: number; episodes?: number[] }[]
+}
+
+export type ImportPlanMode = 'runner' | 'hardlink' | 'copy' | 'rename' | 'copy_remove'
+
+export interface ImportPlanFile {
+  path: string
+  quality: string
+  season: number
+  episodes: number[]
+  destination?: string
+  action?: 'new' | 'replace' | 'beside'
+  existing?: string
+  reason?: string
+  mode?: ImportPlanMode
+  /** What else placing it does (a runner delivery moved here from another title). */
+  note?: string
+  subtitles: number
+  publication?: ScannedPublication
+  error?: string
 }
 
 export interface ManualImportRequest {
@@ -1118,6 +1245,10 @@ export interface ManualImportRequest {
   reviewLegacy?: boolean
   reviewLegacyFingerprint?: string
   reviewLegacyFiles?: CompletedFileSelection[]
+  /** A series file's chosen episode(s), per selected path. */
+  episodeTargets?: EpisodeTarget[]
+  /** Remove each loose source once its library copy is placed. */
+  removeOriginal?: boolean
 }
 
 export const getProfiles = () => get<QualityProfile[]>('/profiles')
@@ -1128,7 +1259,7 @@ export const updateProfile = (id: number, body: ProfileInput) =>
 export const deleteProfile = (id: number) => send('DELETE', `/profiles/${id}`)
 /** The audio languages a profile may require, in display order (ADR 0022). */
 export const listLanguages = () => get<LanguageOption[]>('/languages')
-/** The HDR tiers a profile may order or refuse, in default order (ADR 0026). */
+/** The HDR tiers a profile may order or refuse, in default order (ADR 0031). */
 export const listHDRTiers = () => get<HDRTierOption[]>('/hdr-tiers')
 /** Playback devices from the plurx connections, each with its derived HDR order. */
 export const listHDRDevices = () => get<HDRDevices>('/hdr/devices')
@@ -1199,6 +1330,8 @@ export const getHistory = (mediaItemId?: number, limit = 100, offset = 0) => {
 }
 export const removeQueueItem = (id: number, fromClient: boolean) =>
   send('DELETE', `/queue/${id}?fromClient=${fromClient}`)
+/** The item page's Cancel download: cancel in the client and blocklist the release. */
+export const cancelAndBlocklist = (id: number) => send('DELETE', `/queue/${id}?fromClient=true&blocklist=true`)
 export const resumeQueueItem = (id: number) => send('POST', `/queue/${id}/resume`)
 export const importQueueItem = (id: number) => send('POST', `/queue/${id}/import`)
 export const cancelQueueImport = (id: number, identity: ImportAttemptIdentity) => send('POST', `/queue/${id}/cancel-import`,{generationKey:identity.generationKey,epoch:identity.epoch})
@@ -1236,6 +1369,10 @@ export const removeLibraryFile = (itemId: number, fileId: number, opts: RemoveFi
 }
 export const scanImportPath = (path: string) =>
   get<ScannedFile[]>(`/import/scan?path=${encodeURIComponent(path)}`)
+/** One folder's own files (no descent), with subtitles and runner delivery. */
+export const scanImportFolder = (path: string) =>
+  get<ScannedFile[]>(`/import/scan?path=${encodeURIComponent(path)}&depth=1`)
+export const planImport = (req: ImportPlanRequest) => send<ImportPlanFile[]>('POST', '/import/plan', req)
 export const getManualImportDefaultPath = () => get<{ path: string }>('/import/default-path')
 export interface ManualImportAccepted {
   downloadId: number
@@ -1384,7 +1521,7 @@ export type WantedSearchScope =
   | { scope: 'group'; mediaItemId: number; reason?: WantedReason }
   | { scope: 'target'; wantableId: string }
 
-export type WantedSearchRequest = WantedSearchScope & { targetDelayMs?: number }
+export type WantedSearchRequest = WantedSearchScope & { targetDelayMs?: number; requestId?: string }
 
 export interface WantedSearchRun {
   runId: string
@@ -1437,6 +1574,7 @@ export interface BlocklistEntry {
 export const getCalendar = (start: string, end: string) =>
   get<CalendarEntry[]>(`/calendar?start=${start}&end=${end}`)
 export const getWanted = () => get<WantedItem[]>('/wanted')
+export const getWantedSearches = () => get<{ items: WantedSearchRun[] }>('/wanted/searches')
 export const createWantedSearch = (request: WantedSearchRequest) =>
   send<WantedSearchRun>('POST', '/wanted/searches', request)
 export const getWantedSearch = (runId: string) =>
@@ -1463,6 +1601,10 @@ export interface NotifierInput {
 
 export interface Notifier extends NotifierInput {
   id: number
+  /** What the far side's Test said it supports (Cinema: removed_paths). Advisory. */
+  features?: string[]
+  /** When features were last read, Unix ms; absent = never. */
+  featuresReadAt?: number
 }
 
 export interface BackupInfo {
@@ -1473,9 +1615,21 @@ export interface BackupInfo {
 
 export const getNotifiers = () => get<Notifier[]>('/notifiers')
 export const addNotifier = (n: NotifierInput) => send<Notifier>('POST', '/notifiers', n)
-export const testNotifier = (n: NotifierInput) => send('POST', '/notifiers/test', n)
+// A pass may still have something to say — e.g. that checking the library
+// paths needs a newer Cinema.
+export interface NotifierTestResult {
+  message?: string
+}
+export const testNotifier = (n: NotifierInput) =>
+  send<NotifierTestResult | undefined>('POST', '/notifiers/test', n)
 // The SAVED config, not the typed one — those diverge the moment anyone edits.
-export const testNotifierByID = (id: number) => send('POST', `/notifiers/${id}/test`)
+export const testNotifierByID = (id: number) =>
+  send<NotifierTestResult | undefined>('POST', `/notifiers/${id}/test`)
+
+// testPassed is the line a passing Test shows.
+export const testPassed = (r: NotifierTestResult | undefined) =>
+  r?.message ? `✓ ${r.message}` : '✓ delivered'
+
 export const deleteNotifier = (id: number) => send('DELETE', `/notifiers/${id}`)
 export const updateNotifier = (id: number, n: NotifierInput) =>
   send<Notifier>('PUT', `/notifiers/${id}`, n)
@@ -1495,6 +1649,23 @@ export interface Delivery {
   nextAt?: number
   createdAt: number
   updatedAt: number
+  // A sub-delivery (Cinema): one directory of one import, read back until
+  // Cinema reports every expected file placed (pipeline contract v2 §4).
+  directory?: string
+  publicationId?: number
+  /** The suffix of the request key; advances when a fresh scan is needed. */
+  attempt?: number
+  requestKey?: string
+  remoteRequestId?: string
+  remoteState?: string
+  /** What Cinema says a queued request is waiting on, e.g. full_scan:3. */
+  waitingOn?: string
+  /** When Cinema reported every expected file placed (epoch ms). */
+  visibleAt?: number
+  itemIds?: number[]
+  expectedFiles?: { path: string; bytes: number; mtimeNs: number }[]
+  /** Still not visible half an hour after the import; never given up on. */
+  warning?: boolean
 }
 
 export const getDeliveries = (id: number) => get<Delivery[]>(`/notifiers/${id}/deliveries`)
@@ -1548,9 +1719,11 @@ export type Stage =
   | 'cleanup'
   | 'move'
   | 'post_unpack_rename'
+  | 'publication_verify'
   | 'script'
   | 'importing'
   | 'notifying'
+  | 'publication_cleanup'
 
 export interface Transfer {
   downloadId: number
@@ -1570,6 +1743,54 @@ export interface Transfer {
 export const getTransfers = () => get<Transfer[]>('/system/transfers')
 
 export const getConnections = () => get<Connections>('/system/connections')
+
+/** One seam between Runner, Curator and Cinema (GET /system/pipeline). */
+export interface PipelineTiming {
+  kind: 'failure_to_next_grab' | 'runner_done_to_import' | 'import_to_cinema_visible'
+  /** Timings that finished inside the window. */
+  samples: number
+  /** Started inside the window and not finished; never folded into p50/p95. */
+  waiting: number
+  p50Seconds?: number
+  p95Seconds?: number
+}
+
+export interface PipelineSummary {
+  issues?: { id: number; kind: string; title: string; reason: string }[]
+  windowHours: number
+  /** Downloads older than their state's allowance (the pipeline:overdue check). */
+  overdueRows: number
+  /** Publications the environment is holding (they wait; each row says why). */
+  heldPublications: number
+  timings: PipelineTiming[]
+}
+
+export const getPipeline = () => get<PipelineSummary>('/system/pipeline')
+
+const PIPELINE_TITLE: Record<PipelineTiming['kind'], string> = {
+  failure_to_next_grab: 'Failure to next grab',
+  runner_done_to_import: 'Download done to imported',
+  import_to_cinema_visible: 'Imported to visible in Cinema',
+}
+
+/** What one System tile shows. */
+export function pipelineTile(t: PipelineTiming): {
+  title: string
+  value: string
+  detail: string
+} {
+  const title = PIPELINE_TITLE[t.kind] ?? t.kind
+  const waiting = t.waiting > 0 ? `${t.waiting} waiting` : 'none waiting'
+  if (t.samples === 0 || t.p50Seconds === undefined || t.p95Seconds === undefined) {
+    return { title, value: 'no data yet', detail: waiting }
+  }
+  const secs = (v: number) => (v < 1 ? '<1s' : fmtDuration(v))
+  return {
+    title,
+    value: `p50 ${secs(t.p50Seconds)} · p95 ${secs(t.p95Seconds)}`,
+    detail: `${t.samples} in last 24 h · ${waiting}`,
+  }
+}
 export const getBackups = () => get<BackupInfo[]>('/system/backups')
 
 // ---- Phase 5: depth ----
@@ -1605,10 +1826,10 @@ export const bulkEditLibrary = (req: {
   ids: number[]
   monitored?: boolean
   qualityProfileId?: number
-}) => send<{ updated: number }>('POST', '/library/bulk', req)
+}) => send<{ updated: number; failed?: { id: number; code: string; reason: string }[] }>('POST', '/library/bulk', req)
 export const login = (username: string, password: string) =>
   send('POST', '/auth/login', { username, password })
-export const logout = () => send('POST', '/auth/logout')
+export const logout = (principal?:string) => send('POST', '/auth/logout',undefined,principal)
 
 // composeHostPort joins a host (bare, or with scheme/path) with a port,
 // unless the host already carries one. The download-client form uses it to
@@ -1650,8 +1871,8 @@ export interface AutoSearchResult {
 
 export const autoSearchItem = (id: number) =>
   send<AutoSearchResult>('POST', `/library/${id}/autosearch`)
-export const refreshLibraryItem = (id: number) =>
-  send<MediaItemDetail>('POST', `/library/${id}/refresh`)
+export const refreshLibraryItem = (id: number, match?: { previousTmdbId: number; tmdbId: number }) =>
+  send<MediaItemDetail>('POST', `/library/${id}/refresh`, match)
 export const addMediaCopy = (id: number, req: MediaCopyInput) =>
   send<MediaItemDetail>('POST', `/library/${id}/copies`, req)
 export const updateMediaCopy = (
@@ -1723,6 +1944,7 @@ export interface RecoveryPreviewTask { id: string; state: string; preview?: Reco
 export const getRecoveryPreview = (id: string) => get<RecoveryPreviewTask>('/import/recovery/previews/' + encodeURIComponent(id))
 
 export interface CompletedReceipt {
+  archived?: boolean
   downloadId: number
   mediaItemId?: number
   copyId?: number
@@ -1745,6 +1967,7 @@ export interface CompletedEntry {
   reason: string
   legacyReview?: boolean
   deliveryManaged?: boolean
+  wholeDeletable?: boolean
   reviewFiles?: CompletedReviewFile[]
   receipts: CompletedReceipt[]
 }
@@ -1756,6 +1979,8 @@ export interface CompletedReviewFile {
   snapshotIdentity: string
 }
 export interface CompletedRoot {
+  freeBytes?: number
+  totalBytes?: number
   storageIdentity?: string
   observedStorageIdentity?: string
   path: string
@@ -1825,7 +2050,6 @@ export interface DeliveryLifecycleReceipt {
   lifecycleTiming?: RunnerLifecycleTiming
   runnerStages?: RunnerStages
   sourceCopies?: RunnerSourceCopy[]
-  pendingDeleteRequests?: Array<{ id: string; paths: string[]; error?: string }>
   receiptId: number
   clientId: number
   downloadId: number
@@ -1902,12 +2126,412 @@ export interface SeasonSelection {
  scopes: { IndexerID:number; EpisodeID:number; Complete:boolean; Reasons:string[]; Degraded:boolean }[]
 }
 
+export const resolvePublicationFile = (id: number, publicationId: number, path: string, action: PublicationFileAction) =>
+  send<void>('POST', `/queue/${id}/publications/${publicationId}/files/resolve`, { path, action })
+
+export interface PlaceRequest {
+  mediaItemId: number
+  copyId?: number
+  files: { path: string; season?: number; episodes?: number[] }[]
+}
+/** Resolve's place for one or more files of a publication, in one import. */
+export const placePublicationFiles = (id: number, publicationId: number, req: PlaceRequest) =>
+  send<void>('POST', `/queue/${id}/publications/${publicationId}/files/place`, req)
+/** One Activity row in any state (follows an import to its end). */
+export const getQueueItem = (id: number) => get<QueueItem>(`/queue/${id}`)
+
+export const setPublicationCleanup = (publicationId: number, action: 'pause' | 'resume') =>
+  send<void>('POST', `/downloads/publications/${publicationId}/cleanup`, { action })
+
 export const resolveQueueReservation = (id: number) => send<void>('POST', `/queue/${id}/resolve-reservation`, {acknowledgeDuplicateRisk:true})
 
-export const abandonDeliveryDeleteRequest = (receiptId: number, requestId: string) =>
- send('POST', `/downloads/deliveries/${receiptId}/delete-batches/${encodeURIComponent(requestId)}/abandon`)
 
 export interface StorageChangeRequest { root: string; expectedIdentity: string; observedIdentity: string; reviewToken?: string }
 export interface StorageChangeReview extends StorageChangeRequest { expectedDescription: string; observedDescription: string; existingPayloads: number; existingRequests: number; inFlightRequests: number; activeImports: number }
 export const previewCompletedStorageChange = (request: StorageChangeRequest) => send<StorageChangeReview>('POST', '/downloads/inventory/storage-change/preview', request)
 export const acceptCompletedStorageChange = (request: StorageChangeRequest) => send('POST', '/downloads/inventory/storage-change/accept', request)
+
+/** Dedicated, server-paged import activity. History follows Activity retention. */
+export type ImportCategory = 'active' | 'queued' | 'attention' | 'imported' | 'progress' | 'history'
+export interface ImportActivityItem {
+  download: QueueItem
+  category: ImportCategory
+  title: string
+  kind: string
+  destination: string
+  updatedAt: string
+}
+export interface ImportActivityPage {
+  items: ImportActivityItem[]
+  counts: Record<'all' | ImportCategory, number>
+  total: number
+  hasMore: boolean
+  retentionDays: number
+}
+export const getImportActivity = (filter: 'all' | ImportCategory, q: string, limit: number, offset: number) =>
+  get<ImportActivityPage>(`/imports?${new URLSearchParams({ filter, q, limit: String(limit), offset: String(offset) })}`)
+
+// Re-match (ADR 0027): move files to the right item or episode.
+export interface RematchTarget {
+  itemId?: number
+  kind?: MediaKind
+  tmdbId?: number
+  tvdbId?: number
+  imdbId?: string
+  olid?: string
+  hydrationSource?: string
+}
+export interface RematchChoice { fileId: number; season?: number; episodes?: number[]; leave?: boolean }
+export interface RematchRequest {
+  target: RematchTarget
+  copyId?: number
+  /** Move to… these files; absent = every file (Re-match…). */
+  fileIds?: number[]
+  choices?: RematchChoice[]
+  blocklist?: boolean
+  requestId?: string
+  sourceRevision?: number
+  targetRevision?: number
+  fingerprint?: string
+}
+export interface RematchMove {
+  fileId: number
+  from: string
+  to?: string
+  season: number
+  episodes: number[]
+  label?: string
+  mode?: 'rename' | 'copy' | 'relink'
+  bytes: number
+  quality?: string
+  sidecars?: { from: string; to: string }[]
+  note?: string
+  /** What happens to a file the target already has (import's rule). */
+  action?: 'new' | 'replace' | 'beside'
+  existing?: string
+  reason?: string
+  replaces?: { fileId: number; path: string; quality?: string }[]
+  /** Why it is left out: it stays on disk and leaves the library. */
+  problem?: string
+  needsPick?: boolean
+  /** Left out by the person: it leaves the library (stays on disk). */
+  leave?: boolean
+}
+export interface RematchBlocked { reason: string; ref: string; itemId: number; message: string; retry: boolean }
+export interface RematchItemRef { id: number; kind: string; title: string; year?: number; inLibrary: boolean; folder?: string; folderChosen?: boolean }
+export interface RematchPreview {
+  source: RematchItemRef
+  target: RematchItemRef
+  targetCopyId?: number
+  moves: RematchMove[]
+  leftOut: RematchMove[]
+  sourceOutcome: 'stays' | 'removed'
+  sourceReason: string
+  blocklist: { fileId: number; release: string; indexer?: string }[]
+  blocklistOn: boolean
+  blocklistNote?: string
+  cinema?: string
+  episodes?: { season: number; episode: number; title?: string; hasFile: boolean }[]
+  copies?: { id: number; name: string; bookType?: string }[]
+  blocked?: RematchBlocked
+  sourceRevision: number
+  targetRevision: number
+  fingerprint: string
+  /** leftOut lines that need a choice; Move refuses while it is not 0. */
+  unresolved: number
+  summary: string
+}
+export type RematchState = 'planned' | 'moving' | 'moved' | 'committed' | 'complete' | 'cancel_pending' | 'cancelled' | 'failed'
+export interface RematchResult {
+  moved?: { from: string; to: string; episodes?: number[]; mode: string }[]
+  leftOut?: string[]
+  failed?: { from: string; to: string }[]
+  blocklisted?: { release: string }[]
+  sourceRemoved?: boolean
+  leftBehind?: string[]
+  cinemaNote?: string
+}
+export interface RematchOperation {
+  operationId: string
+  requestId: string
+  state: RematchState
+  sourceItemId: number
+  targetItemId: number
+  result?: RematchResult
+  bytesDone: number
+  bytesTotal: number
+  lastError?: string
+  cinema?: { directory: string; status: string; result?: string; lastError?: string; visibleAt?: number }[]
+}
+export const previewRematch = (itemId: number, req: RematchRequest) =>
+  send<RematchPreview>('POST', `/library/${itemId}/rematch/preview`, req)
+export const startRematch = (itemId: number, req: RematchRequest) =>
+  send<RematchOperation>('POST', `/library/${itemId}/rematch`, req)
+/** The open Re-match for an item; undefined when there is none (204). */
+export const getLibraryRematch = (itemId: number) => send<RematchOperation | undefined>('GET', `/library/${itemId}/rematch`).then((op) => op ?? null)
+export const getRematch = (operationId: string) => get<RematchOperation>(`/rematch/${encodeURIComponent(operationId)}`)
+export const dismissRematch = (operationId: string) => send<void>('POST', `/rematch/${encodeURIComponent(operationId)}/dismiss`)
+export const cancelRematch = (operationId: string) => send<void>('POST', `/rematch/${encodeURIComponent(operationId)}/cancel`)
+// Offload (ADR 0028): free the space, keep the title.
+export type OffloadScope = 'item' | 'season' | 'episode'
+export type OffloadState = 'queued' | 'needs_review' | 'deleting' | 'waiting' | 'retrying' | 'stopping' | 'complete' | 'cancelled' | 'failed'
+export interface OffloadRequest {
+  scope: OffloadScope
+  season?: number
+  episodeId?: number
+  requestId?: string
+  fingerprint?: string
+}
+export interface OffloadFile { path: string; kind: 'media' | 'sidecar'; bytes: number; shared?: boolean; episodes?: string[] }
+export interface OffloadBlocked { reason: string; ref?: string; message: string; retry: boolean }
+export interface OffloadPreview {
+  item: { id: number; kind: string; title: string; year?: number }
+  scope: OffloadScope
+  label: string
+  files: OffloadFile[]
+  bytes: number
+  freed: number
+  /** Library volume free bytes before and after; -1 = unknown. */
+  freeBefore: number
+  freeAfter: number
+  root?: string
+  episodes?: string[]
+  /** Episodes the request did not name but a multi-episode file takes with it. */
+  widened?: string[]
+  cinema?: string
+  /** Cinema will drop the title and its watch history (it does not advertise offload). Advisory. */
+  cinemaWarning?: boolean
+  blocked?: OffloadBlocked
+  fingerprint: string
+  summary: string
+}
+export interface OffloadOperation {
+  operationId: string
+  requestId: string
+  state: OffloadState
+  itemId: number
+  scope: OffloadScope
+  season?: number
+  episodeId?: number
+  label?: string
+  filesTotal: number
+  filesDone: number
+  failed?: string[]
+  bytesTotal: number
+  bytesFreed: number
+  lastError?: string
+  stoppable: boolean
+  cinemaLine?: string
+  cinema?: { directory: string; status: string; result?: string; lastError?: string; visibleAt?: number }[]
+}
+export interface ReacquireResult { mediaItemId: number; state: 'searching' | 'downloading' | 'importing' | 'on_disk' | 'not_offloaded' | 'offloading' | 'offloaded'; cleared: boolean; message?: string }
+export const previewOffload = (itemId: number, req: OffloadRequest) =>
+  send<OffloadPreview>('POST', `/library/${itemId}/offload/preview`, req)
+export const startOffload = (itemId: number, req: OffloadRequest) =>
+  send<OffloadOperation>('POST', `/library/${itemId}/offload`, req)
+/** The open (or newest undismissed) Offload for an item; null when there is none (204). */
+export const getLibraryOffload = (itemId: number) => send<OffloadOperation | undefined>('GET', `/library/${itemId}/offload`).then((op) => op ?? null)
+export const listLibraryOffloads = (itemId: number) => get<OffloadOperation[]>(`/library/${itemId}/offload/operations`)
+export const getOffload = (operationId: string) => get<OffloadOperation>(`/offload/${encodeURIComponent(operationId)}`)
+export const cancelOffload = (operationId: string) => send<void>('POST', `/offload/${encodeURIComponent(operationId)}/cancel`)
+export const dismissOffload = (operationId: string) => send<void>('POST', `/offload/${encodeURIComponent(operationId)}/dismiss`)
+export const reacquire = (itemId: number, req: OffloadRequest) => send<ReacquireResult>('POST', `/library/${itemId}/reacquire`, req)
+export const OFFLOAD_RUNNING = new Set<OffloadState>(['queued', 'deleting', 'waiting', 'retrying', 'stopping'])
+
+// ---- item status panel (0.46.0) ----
+
+export type StatusState = 'done' | 'active' | 'waiting' | 'failed' | 'todo'
+export type StatusStageKey = 'searched' | 'downloading' | 'processed' | 'moved' | 'cinema_notified' | 'in_cinema'
+export type StatusAction =
+  | 'search'
+  | 'interactive_search'
+  | 'open_activity'
+  | 'cancel_download'
+  | 'retry_import'
+  | 'resend_cinema'
+  | 'confirm_cinema'
+
+export interface StatusStage {
+  key: StatusStageKey
+  state: StatusState
+  at?: number
+  detail?: string
+  actions?: StatusAction[]
+}
+
+export interface StatusDownload {
+  id: number
+  release: string
+  indexer?: string
+  state: string
+  bytes: number
+  total: number
+  progress: number
+  rateBps?: number
+  etaSeconds?: number
+  stage?: string
+  stageSince?: number
+  episodes?: number
+}
+
+export interface StatusCinema {
+  /** Cinema's lasting answers about files that left (a Re-match). */
+  warnings?: string[]
+  deliveryId: number
+  notifierId: number
+  status: string
+  waitingOn?: string
+  visibleAt?: number
+  itemIds?: number[]
+  error?: string
+}
+
+export interface StatusAttempt {
+  downloadId: number
+  release: string
+  indexer?: string
+  at: number
+  outcome: string
+  reason?: string
+}
+
+export interface StatusSeason {
+  season: number
+  episodes: number
+  inCinema: number
+  onDisk: number
+  active: boolean
+  summary: string
+  download?: StatusDownload
+}
+
+export interface StatusEpisode {
+  episodeId: number
+  season: number
+  episode: number
+  title?: string
+  wantableId: string
+  summary: string
+  at?: number
+  inPack: boolean
+  downloadId?: number
+  cinema?: StatusCinema
+  stages: StatusStage[]
+}
+
+export interface ItemStatus {
+  mediaItemId: number
+  kind: string
+  generatedAt: number
+  active: boolean
+  done: boolean
+  headline: { state: StatusState; title: string; detail?: string; at?: number }
+  stages?: StatusStage[]
+  download?: StatusDownload
+  cinema?: StatusCinema
+  attempts?: StatusAttempt[]
+  seasons?: StatusSeason[]
+  episodes?: StatusEpisode[]
+  rematch?: StatusRematch
+  offload?: StatusOffload
+}
+export interface StatusOffload {
+  operationId: string
+  state: OffloadState
+  scope: OffloadScope
+  label: string
+  /** The stage in words; once over: "Offloaded <date> · <bytes> freed". */
+  headline: string
+  filesDone: number
+  filesTotal: number
+  bytesTotal: number
+  bytesFreed: number
+  failed?: string[]
+  error?: string
+  cinemaLine?: string
+  cinema?: { directory: string; status: string; result?: string; lastError?: string; visibleAt?: number }[]
+  ended: boolean
+  stoppable: boolean
+  finishedAt?: number
+}
+export interface StatusRematch {
+  operationId: string
+  state: 'planned' | 'moving' | 'moved' | 'committed' | 'cancel_pending' | 'complete' | 'cancelled' | 'failed'
+  /** Over, but ended badly: shown for 24 h or until dismissed. */
+  ended: boolean
+  failedMoves?: { from: string; reason: string }[]
+  role: 'source' | 'target'
+  sourceItemId: number
+  targetItemId: number
+  sourceTitle: string
+  targetTitle: string
+  headline: string
+  bytesDone: number
+  bytesTotal: number
+  filesDone: number
+  filesTotal: number
+  moves?: { from: string; to: string; state: string; bytes: number }[]
+  cinema?: { directory: string; status: string; result?: string; lastError?: string; visibleAt?: number }[]
+  cinemaLine?: string
+  warnings?: string[]
+  error?: string
+  stoppable: boolean
+}
+
+export const getItemStatus = (id: number, season?: number) =>
+  get<ItemStatus>(`/library/${id}/status${season === undefined ? '' : `?season=${season}`}`)
+export const confirmItemInCinema = (id: number, episodeId?: number) =>
+  send<{ queued: number }>('POST', `/library/${id}/status/confirm${episodeId ? `?episode=${episodeId}` : ''}`)
+
+export const getActivity = (view: 'progress' | 'attention' | 'history', scope: 'all' | 'imports', q: string, limit: number, offset: number) =>
+  get<ImportActivityPage>(`/activity?${new URLSearchParams({ view, scope, q, limit: String(limit), offset: String(offset) })}`)
+
+export const getAvailability = (items: Pick<SearchResult, 'kind'|'tmdbId'|'tvdbId'|'imdbId'|'olid'>[]) => send<Availability[]>('POST', '/metadata/availability', items.map(item=>({kind:item.kind,tmdbId:item.tmdbId,...(item.tvdbId?{tvdbId:item.tvdbId}:{}),...(item.imdbId?{imdbId:item.imdbId}:{}),...(item.olid?{olid:item.olid}:{})})))
+export const getLibraryDiscoverySeeds = (q='',offset=0) => get<LibrarySeedPage>(`/discover/library/seeds?q=${encodeURIComponent(q)}&offset=${offset}`)
+export const getLibraryDiscoveryItems = (seed:SearchResult,shelf:'related'|'collection') => get<LibraryShelf>(`/discover/library/${seed.availability!.libraryItemId}/items?kind=${seed.kind}&tmdbId=${seed.tmdbId}&shelf=${shelf}`)
+
+export interface LibraryVolumeReview {
+ state:{rootId:number;path:string;expectedIdentity:string;generation:number;sharedRevision:number;libraryRevision:number;fileRecords:number;activeWork:number}
+ observedIdentity:string
+ empty:boolean
+ blocker?:string
+ fingerprint:string
+}
+export const previewLibraryVolume=(id:number)=>get<LibraryVolumeReview>(`/rootfolders/${id}/volume`)
+export const confirmLibraryVolume=(id:number,fingerprint:string,acknowledged:boolean)=>send('POST',`/rootfolders/${id}/volume`,{fingerprint,acknowledged})
+
+// Household clients use their own safe endpoints and never hydrate owner DTOs.
+export interface LocalAccount {id:number;revision:number;username:string;displayName:string;role:'owner'|'member';status:'active'|'suspended';createdAt:string}
+export interface AccountIdentity {accessRole:'owner'|'member';account:LocalAccount;method:'local'|'cinema'|'machine';machine:boolean}
+export interface HouseholdTitle {kind:'movie'|'series';tmdbId:number;title:string;year:number;overview:string;posterPath:string;releaseDate?:string;seasons:{number:number;aired:number;unknownDates:number}[];availability:Availability}
+export interface HouseholdRequest {id:number;revision:number;kind:'movie'|'series';tmdbId:number;scope:{episodes?:{season:number;episode:number}[]};title:string;year:number;posterPath:string;overview:string;state:'pending'|'approved'|'acquiring'|'fulfilled'|'declined'|'withdrawn'|'needs_review';publicNote:string;privateNote?:string;subscribed:boolean;subscriberCount:number;createdAt:string;updatedAt:string}
+export const getSignInInfo=()=>get<{required:boolean;household:boolean;cinema:boolean}>('/auth/info')
+export async function getCurrentAccount():Promise<AccountIdentity|null>{const response=await fetch('/api/v1/auth/me',{cache:'no-store'});if(response.status===401)return null;if(!response.ok)return parseError(response,'Account check unavailable');return response.json()}
+export const getHouseholdRequests=(before=0,principal?:string)=>get<HouseholdRequest[]>(`/household/requests?before=${before}`,principal)
+export const getHouseholdRequest=(id:number)=>get<HouseholdRequest>(`/household/requests/${id}`)
+export const searchHouseholdCatalogue=(kind:'movie'|'series',q:string)=>get<HouseholdTitle[]>(`/household/catalogue?kind=${kind}&q=${encodeURIComponent(q)}`)
+export const getHouseholdTitle=(kind:'movie'|'series',id:number)=>get<HouseholdTitle>(`/household/titles/${id}?kind=${kind}`)
+export const submitHouseholdRequest=(kind:'movie'|'series',tmdbId:number,seasons:number[],principal?:string)=>send<HouseholdRequest>('POST','/household/requests',{kind,tmdbId,seasons},principal)
+export const changeHouseholdSubscription=(id:number,withdraw:boolean,principal?:string)=>send<HouseholdRequest>('POST',`/household/requests/${id}/${withdraw?'withdraw':'join'}`,undefined,principal)
+export const declineHouseholdRequest=(id:number,revision:number,publicNote:string,privateNote:string,principal?:string)=>send('POST',`/household/requests/${id}/decline`,{revision,publicNote,privateNote},principal)
+export const saveHouseholdRequestNote=(id:number,note:string,principal?:string)=>send('PUT',`/household/requests/${id}/note`,{note},principal)
+export const getHouseholdAccounts=(principal?:string)=>get<LocalAccount[]>('/household/accounts',principal)
+export const updateOwnAccount=(revision:number,password:string,displayName:string,newPassword:string,principal?:string)=>send('PUT','/auth/account',{revision,password,displayName,newPassword},principal)
+export const updateHouseholdAccount=(id:number,revision:number,password:string,role:string,status:string,principal?:string)=>send('PATCH',`/household/accounts/${id}`,{revision,password,role,status},principal)
+export const createHouseholdInvitation=(password:string,principal?:string)=>send<{token:string;expiresAt:string}>('POST','/household/invitations',{password},principal)
+export const acceptHouseholdInvitation=(token:string,username:string,displayName:string,password:string)=>send<LocalAccount>('POST','/auth/invitations/accept',{token,username,displayName,password})
+
+export interface HouseholdReview {requestId:number;revision:number;title:string;scope:string;destination:string;rootId:number;profileId:number;profileName:string;present:number;missing:number;offloaded:number;checkedAt:string;fingerprint:string;newTitle:boolean}
+export const reviewHouseholdRequest=(id:number,rootId=0,profileId=0,principal?:string)=>get<HouseholdReview>(`/household/requests/${id}/review?rootId=${rootId}&profileId=${profileId}`,principal)
+export const approveHouseholdRequest=(id:number,rootId:number,profileId:number,fingerprint:string,privateNote:string,reacquire:boolean,principal?:string)=>send('POST',`/household/requests/${id}/approve`,{rootId,profileId,fingerprint,privateNote,reacquire},principal)
+
+export interface CinemaConnectionInfo {configured:boolean;baseUrl?:string;issuer?:string;clientId?:string;redirect?:string}
+export const getCinemaConnection=(principal?:string)=>get<CinemaConnectionInfo>('/auth/cinema/connection',principal)
+export const saveCinemaConnection=(body:{password:string;baseUrl:string;clientId:string;clientSecret:string;redirect:string;disconnect?:boolean},principal?:string)=>send('PUT','/auth/cinema/connection',body,principal)
+export const getCinemaLink=(principal?:string)=>get<{linked:boolean;issuer?:string}>('/auth/cinema/link',principal)
+export const startCinemaLink=(password:string,principal?:string)=>send<{url:string}>('POST','/auth/cinema/link',{password},principal)
+export const unlinkCinema=(password:string,principal?:string)=>send('DELETE','/auth/cinema/link',{password},principal)
+export const startCinemaSignIn=()=>send<{url:string}>('POST','/auth/cinema/start')
+
+export const getHouseholdSeeds=(q='',offset=0)=>get<{items:HouseholdTitle[];hasMore:boolean}>(`/household/discovery/seeds?q=${encodeURIComponent(q)}&offset=${offset}`)
+export const getHouseholdShelf=(kind:'movie'|'series',tmdbId:number,shelf:'related'|'collection')=>get<{title:string;items:HouseholdTitle[]}>(`/household/discovery/shelf?kind=${kind}&tmdbId=${tmdbId}&shelf=${shelf}`)

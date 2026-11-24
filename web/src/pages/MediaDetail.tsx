@@ -1,9 +1,10 @@
 import { DolbyVisionFacts } from '../HDRBadges'
+import { AvailabilityBadge } from '../AvailabilityBadge'
 import { SERIES_MONITOR_MODES, monitorLabel, type SeriesMonitorMode } from '../monitoring'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { MouseEvent } from 'react'
 import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Link, useNavigate, useParams, useSearch } from '@tanstack/react-router'
+import { Link, useNavigate, useParams, useSearch, useLocation } from '@tanstack/react-router'
 import {
   ACTIVE_DOWNLOAD_STATES,
   addLibraryAlias,
@@ -26,6 +27,7 @@ import {
   posterUrl,
   RATING_SOURCE_LABELS,
   refreshLibraryItem,
+  searchMetadata,
   removeLibraryFile,
   resolveLibraryReviewFlag,
   ApiError,
@@ -38,14 +40,20 @@ import {
   rescanManualEntry,
   setEpisodeMonitored,
   setSeasonMonitored,
+  reacquire,
   updateLibraryItem,
   updateMediaCopy,
 } from '../api'
-import type { BookType, MediaFileInfo, MediaItemDetail, QualityProfile } from '../api'
+import type { BookType, MediaFileInfo, MediaItemDetail, OffloadOperation, OffloadRequest, QualityProfile } from '../api'
 import { describeAutoSearch } from '../autosearch'
 import { audioUndeterminedNote } from '../language'
 import { DOWNLOAD_PRIORITIES, downloadPriorityLabel } from '../downloadPriority'
 import { ActionDialog, ActionNotice, focusActionTrigger } from '../ActionDialog'
+import { ImportFileDialog } from '../ImportFileDialog'
+import { RematchDialog } from '../RematchDialog'
+import { OffloadDialog, OffloadOperations } from '../OffloadDialog'
+import { ItemStatusPanel } from '../ItemStatusPanel'
+import { seasonOffload } from '../libraryPresence'
 import { ReleaseSearch } from './ReleaseSearch'
 import { Pager, PageSizePicker, clampPage, sliceForPage } from '../Pager'
 import { mapReplacementObservationsByFileID } from '../replacementObservations'
@@ -97,26 +105,35 @@ function IdentityPanel({ item }: { item: MediaItemDetail }) {
   const [title, setTitle] = useState('')
   const [searchable, setSearchable] = useState(false)
   const [message, setMessage] = useState('')
+  const [noticeRevision, setNoticeRevision] = useState(0)
+  const say = (text: string) => {
+    setMessage(text)
+    setNoticeRevision((r) => r + 1)
+  }
   const aliases = item.aliases ?? []
   const [aliasesOpen, setAliasesOpen] = useState(() => aliases.length <= 3)
+  const aliasUserToggle = useRef(false)
   const sources = item.identitySources ?? []
   const add = useMutation({
     mutationFn: () => addLibraryAlias(item.id, title.trim(), searchable),
-    onSuccess: () => {
+    // The result is revealed once the refreshed alias list has rendered:
+    // revealed earlier, the list growing above it pushed it back out of the
+    // viewport (CLAUDE.md §5).
+    onSuccess: async () => {
       setTitle('')
       setSearchable(false)
-      setMessage('Alias added.')
-      void qc.invalidateQueries({ queryKey: ['library-item', String(item.id)] })
+      await qc.invalidateQueries({ queryKey: ['library-item', String(item.id)] })
+      say('Alias added.')
     },
-    onError: (error) => setMessage(`✕ ${(error as Error).message}`),
+    onError: (error) => say(`✕ ${(error as Error).message}`),
   })
   const remove = useMutation({
     mutationFn: (aliasId: number) => deleteLibraryAlias(item.id, aliasId),
-    onSuccess: () => {
-      setMessage('Alias removed.')
-      void qc.invalidateQueries({ queryKey: ['library-item', String(item.id)] })
+    onSuccess: async () => {
+      await qc.invalidateQueries({ queryKey: ['library-item', String(item.id)] })
+      say('Alias removed.')
     },
-    onError: (error) => setMessage(`✕ ${(error as Error).message}`),
+    onError: (error) => say(`✕ ${(error as Error).message}`),
   })
 
   return (
@@ -140,8 +157,12 @@ function IdentityPanel({ item }: { item: MediaItemDetail }) {
         <div>{sources.length > 0 ? sources.map((s) => `${s.source}: ${s.fetchedAt ? new Date(s.fetchedAt).toLocaleString() : s.lastError ? `failed — ${s.lastError}` : 'pending'}`).join(' · ') : <span className="muted">identity enrichment pending</span>}</div>
       </div>
       {aliases.length > 0 && (
-        <details open={aliasesOpen} onToggle={(event) => setAliasesOpen(event.currentTarget.open)}>
-          <summary>Alternate names ({aliases.length})</summary>
+        <details open={aliasesOpen} onToggle={(event) => {
+          const node=event.currentTarget;setAliasesOpen(node.open)
+          if(aliasUserToggle.current&&node.open)requestAnimationFrame(()=>node.scrollIntoView({block:'start',behavior:'instant'}))
+          aliasUserToggle.current=false
+        }}>
+          <summary onClick={()=>{aliasUserToggle.current=true}}>Alternate names ({aliases.length})</summary>
           <ul className="result-list">
             {aliases.map((alias) => (
               <li key={alias.id} className="result-note">
@@ -158,7 +179,9 @@ function IdentityPanel({ item }: { item: MediaItemDetail }) {
         <label className="inline"><input type="checkbox" checked={searchable} onChange={(event) => setSearchable(event.target.checked)} /> Include in indexer searches</label>
         <button disabled={!title.trim() || add.isPending} onClick={() => add.mutate()}>{add.isPending ? 'Adding…' : 'Add alias'}</button>
       </div>
-      {message && <p className={message.startsWith('✕') ? 'error-text' : 'ok-text'}>{message}</p>}
+      {/* Revealed, not just appended: the result must land in the viewport
+          wherever Identity sits on the page (CLAUDE.md §5). */}
+      {message && <ActionNotice warning={message.startsWith('✕')} revision={noticeRevision}>{message}</ActionNotice>}
     </section>
   )
 }
@@ -597,6 +620,8 @@ function EditPanel(props: {
           <input
             type="checkbox"
             checked={monitored}
+            disabled={item.kind === 'movie' && Boolean(item.offloaded)}
+            title={item.kind === 'movie' && item.offloaded ? 'Offloaded — use Re-acquire on the item page to get it back' : undefined}
             onChange={(e) => setMonitored(e.target.checked)}
           />
         </label>
@@ -877,6 +902,7 @@ function ProvenanceBadge({ f }: { f: MediaFileInfo }) {
 function FileActions({ item, file, onDone, onDeleted }: { item: MediaItemDetail; file: MediaFileInfo; onDone: () => void; onDeleted: (message: string) => void }) {
   const qc = useQueryClient()
   const [dialog, setDialog] = useState<'delete' | 'report' | 'replace_bad' | 'replace_quality' | null>(null)
+  const [moving, setMoving] = useState(false)
   const [reason, setReason] = useState('Reported by user')
   const [reasonCode, setReasonCode] = useState('user_reported_bad')
   const [blacklist, setBlacklist] = useState<boolean | null>(null)
@@ -998,8 +1024,10 @@ function FileActions({ item, file, onDone, onDeleted }: { item: MediaItemDetail;
       <button onClick={(event) => begin('report', event)}>Report</button>
       <button onClick={(event) => begin('replace_bad', event)}>Mark bad &amp; replace</button>
       <button onClick={(event) => begin('replace_quality', event)}>Replace quality</button>
+      <button onClick={(event) => { focusActionTrigger(event); setMoving(true) }}>Move to…</button>
       <button onClick={(event) => { focusActionTrigger(event); setDialog('delete') }}>Delete…</button>
     </div>
+    {moving && <RematchDialog item={item} file={file} onClose={() => { setMoving(false); onDone() }} />}
     {dialog && <ActionDialog title={dialog === 'report' ? 'Report library file' : dialog === 'delete' ? 'Delete library file' : operation ? 'Replacement started' : 'Review replacement'} onClose={() => setDialog(null)}>
       <p className="mono">{name}</p>
       {dialog === 'delete' ? <>
@@ -1213,11 +1241,33 @@ function FilesPanel({ item: m, onChanged }: { item: MediaItemDetail; onChanged: 
 
 export function MediaDetailPage() {
   const { id } = useParams({ from: '/library/$id' })
+  const location=useLocation()
   const search = useSearch({ from: '/library/$id' })
   const navigate = useNavigate()
   const qc = useQueryClient()
   const [confirming, setConfirming] = useState(false)
   const [editing, setEditing] = useState(search.assignFolder === true)
+  const [importing, setImporting] = useState(false)
+  const [rematching, setRematching] = useState(false)
+  const [matchQuery, setMatchQuery] = useState<string | null>(null)
+  const [matchSearch, setMatchSearch] = useState('')
+  const matches = useQuery({
+    queryKey: ['movie-match', matchSearch],
+    queryFn: () => searchMetadata('movie', matchSearch),
+    enabled: matchQuery !== null && !!matchSearch,
+  })
+  const correctMatch = useMutation({
+    mutationFn: (match: {previousTmdbId: number; tmdbId: number}) => refreshLibraryItem(Number(id), match),
+    onSuccess: () => {
+      setMatchQuery(null)
+      void qc.invalidateQueries({queryKey: ['library-item', id]})
+      void qc.invalidateQueries({queryKey: ['library']})
+      void qc.invalidateQueries({queryKey: ['pipeline']})
+      setAutoMsg('Metadata match updated.')
+    },
+  })
+  // Offload… target: the title, one season or one episode.
+  const [offloading, setOffloading] = useState<{ request: OffloadRequest; label: string; operation?: OffloadOperation } | null>(null)
   // Interactive search target: null = closed. copyId selects an additional
   // quality copy or book edition; zero/absent is the primary target.
   const [searching, setSearching] = useState<{
@@ -1234,6 +1284,17 @@ export function MediaDetailPage() {
     queryKey: ['library-item', id],
     queryFn: () => getLibraryItem(Number(id)),
   })
+  const seasonMatch=/^#?season-(\d+)$/.exec(location.hash)
+  const requestedSeason=seasonMatch?Number(seasonMatch[1]):undefined
+  const seasonReady=requestedSeason!==undefined&&item.data?.seasons.some(season=>season.number===requestedSeason)
+  useLayoutEffect(()=>{
+    if(!seasonReady||requestedSeason===undefined)return
+    setOpenSeasons(previous=>({...previous,[requestedSeason]:true}))
+    const node=document.getElementById(`season-${requestedSeason}`)
+    const disclosure=node?.closest('details');if(disclosure)disclosure.open=true
+    const frame=requestAnimationFrame(()=>{node?.scrollIntoView({block:'start'});node?.querySelector<HTMLButtonElement>('.season-toggle')?.focus({preventScroll:true})})
+    return()=>cancelAnimationFrame(frame)
+  },[id,location.hash,seasonReady,requestedSeason])
   const profiles = useQuery({ queryKey: ['profiles'], queryFn: getProfiles })
   const queue = useQuery({ queryKey: ['queue'], queryFn: getQueue, refetchInterval: 15_000 })
 
@@ -1369,6 +1430,38 @@ export function MediaDetailPage() {
     },
   })
 
+  // First season only: a later season arrives unmonitored. "Monitor and search"
+  // ticks it and searches, in one click, and says what happened.
+  const monitorAndSearch = useMutation({
+    mutationFn: async (v: { season: number; label: string }) => {
+      await setSeasonMonitored(Number(id), v.season, true)
+      return autoSearchItem(Number(id))
+    },
+    onSuccess: (res, v) => {
+      setAutoMsg(`${v.label} monitored. ${describeAutoSearch(res)}`)
+      void qc.invalidateQueries({ queryKey: ['library-item', id] })
+      void qc.invalidateQueries({ queryKey: ['library'] })
+      void qc.invalidateQueries({ queryKey: ['wanted'] })
+    },
+    onError: (e, v) => setAutoMsg(`✕ could not monitor and search ${v.label}: ${(e as Error).message}`),
+  })
+
+  // Re-acquire: clears Offloaded inside the scope, monitors it and searches at
+  // the current profile. The answer is on screen at once (the page notice).
+  const reacq = useMutation({
+    mutationFn: (v: { request: OffloadRequest; label: string }) => reacquire(Number(id), v.request),
+    onSuccess: (res, v) => {
+      setAutoMsg(res.cleared
+        ? `Re-acquire of ${v.label}: ${res.state === 'searching' ? 'searching at the current profile' : res.state.replace('_', ' ')}.`
+        : `${v.label} is not offloaded: ${res.state.replace('_', ' ')}.`)
+      void qc.invalidateQueries({ queryKey: ['library-item', id] })
+      void qc.invalidateQueries({ queryKey: ['library'] })
+      void qc.invalidateQueries({ queryKey: ['wanted'] })
+      void qc.invalidateQueries({ queryKey: ['item-status'] })
+    },
+    onError: (e, v) => setAutoMsg(`✕ could not re-acquire ${v.label}: ${(e as Error).message}`),
+  })
+
   if (item.isLoading) return <p className="muted">Loading…</p>
   if (item.isError || !item.data) return <div className="banner warning">Item not found.</div>
 
@@ -1396,6 +1489,15 @@ export function MediaDetailPage() {
     }
   }
   const comp = completeness(m.kind, epHave, epAired, fileCount)
+  let offloadedEpisodes = 0
+  let allEpisodes = 0
+  for (const season of m.seasons) {
+    for (const e of season.episodes) {
+      allEpisodes++
+      if (e.offloaded) offloadedEpisodes++
+    }
+  }
+  const canOffload = (m.kind === 'movie' || m.kind === 'series') && (!m.offloaded || m.files.length > 0 || offloadedEpisodes < allEpisodes)
 
   return (
     <>
@@ -1425,6 +1527,8 @@ export function MediaDetailPage() {
             {m.runtime > 0 && <span>{m.runtime} min</span>}
             {m.genres.length > 0 && <span>{m.genres.join(', ')}</span>}
           </div>
+          <AvailabilityBadge value={m.availability} checked />
+          <p className="muted small">Availability covers the primary copy and known aired regular episodes.</p>
           <p className="detail-overview">{m.overview}</p>
 
           <div className="fact-grid">
@@ -1444,6 +1548,12 @@ export function MediaDetailPage() {
               <span className={`pill ${m.monitored ? 'pill-ok' : 'pill-neutral'}`}>
                 {m.monitored ? 'monitored' : 'unmonitored'}
               </span>
+              {m.kind === 'movie' && m.offloaded && <span className="pill pill-warning" title="Files deleted on purpose; the title is kept. Re-acquire to get it back.">offloaded</span>}
+              {m.kind === 'series' && offloadedEpisodes > 0 && (
+                <span className="pill pill-warning" title="Files deleted on purpose; the titles are kept. Re-acquire to get them back.">
+                  {offloadedEpisodes === allEpisodes ? 'offloaded' : `${offloadedEpisodes} episode${offloadedEpisodes === 1 ? '' : 's'} offloaded`}
+                </span>
+              )}
               {m.kind === 'series' && <span className="muted">{monitorLabel(m.monitor)}</span>}
               <span
                 className={`pill ${comp.cls}`}
@@ -1533,6 +1643,21 @@ export function MediaDetailPage() {
             {m.kind === 'movie' && (
               <button onClickCapture={focusActionTrigger} onClick={() => setSearching({})}>Interactive search</button>
             )}
+            <button onClickCapture={focusActionTrigger} onClick={() => setImporting(true)}>Import file…</button>
+            {m.files.length > 0 && <button onClickCapture={focusActionTrigger} onClick={() => setRematching(true)}>Re-match…</button>}
+            {m.kind === 'movie' && m.source === 'tmdb' && !m.files.length && <button onClickCapture={focusActionTrigger} onClick={() => {
+              correctMatch.reset(); setMatchQuery(m.title); setMatchSearch(m.title)
+            }}>Correct metadata match…</button>}
+            {canOffload && (
+              <button onClickCapture={focusActionTrigger} title="Delete the files and keep the title; Re-acquire gets it back"
+                onClick={() => setOffloading({ request: { scope: 'item' }, label: m.title })}>Offload…</button>
+            )}
+            {((m.kind === 'movie' && m.offloaded) || (m.kind === 'series' && offloadedEpisodes > 0)) && (
+              <button className="btn-accent" disabled={reacq.isPending} title="Clear Offloaded, monitor it again and search at the current profile"
+                onClick={() => reacq.mutate({ request: { scope: 'item' }, label: m.title })}>
+                {reacq.isPending ? 'Re-acquiring…' : 'Re-acquire'}
+              </button>
+            )}
             <button onClickCapture={focusActionTrigger} onClick={() => setEditing(true)}>Edit</button>
             {m.kind !== 'book' && (
               <button
@@ -1591,6 +1716,13 @@ export function MediaDetailPage() {
         />
       )}
 
+      <ItemStatusPanel
+        key={`status-${m.id}`}
+        itemId={m.id}
+        kind={m.kind}
+        onInteractiveSearch={(t) => setSearching(t)}
+      />
+
       {m.kind !== 'book' && <IdentityPanel key={m.id} item={m} />}
 
       {m.kind === 'book' ? (
@@ -1605,6 +1737,30 @@ export function MediaDetailPage() {
         <CopiesPanel item={m} />
       )}
 
+      {importing && <ImportFileDialog item={m} onClose={() => setImporting(false)} />}
+      {matchQuery !== null && <ActionDialog title={`Correct metadata match for ${m.title}`} onClose={() => setMatchQuery(null)}>
+        <p>Current TMDB movie ID {m.ids.tmdb}. Choose the movie to associate with this library entry.</p>
+        <form onSubmit={e => { e.preventDefault(); setMatchSearch(matchQuery.trim()) }}>
+          <label>Movie title <input value={matchQuery} onChange={e => setMatchQuery(e.target.value)} /></label>
+          <button disabled={!matchQuery.trim()}>Search TMDB</button>
+        </form>
+        {matches.isFetching && <p role="status">Searching…</p>}
+        {matches.error && <p role="alert">{matches.error.message}</p>}
+        {matches.data?.length === 0 && <p>No matching movies.</p>}
+        <ul>{matches.data?.filter(r => r.tmdbId > 0).map(r => <li key={r.tmdbId}>
+          {r.title} {r.year || ''} · TMDB {r.tmdbId}{' '}
+          <button disabled={r.inLibrary || r.tmdbId === m.ids.tmdb || correctMatch.isPending} onClick={() => correctMatch.mutate({previousTmdbId: m.ids.tmdb, tmdbId: r.tmdbId})}>{r.inLibrary ? 'In library' : 'Use this match'}</button>
+        </li>)}</ul>
+        {correctMatch.error && <p role="alert">{correctMatch.error.message}</p>}
+      </ActionDialog>}
+      {rematching && <RematchDialog item={m} onClose={() => setRematching(false)} />}
+      <OffloadOperations itemId={m.id} onOpen={(op) => setOffloading({
+        request: { scope: op.scope, season: op.season, episodeId: op.episodeId },
+        label: op.label ?? m.title,
+        operation: op,
+      })} />
+      {offloading && <OffloadDialog itemId={m.id} title={offloading.label} request={offloading.request} initialOperation={offloading.operation} onClose={() => setOffloading(null)} />}
+
       {searching && (
         <ReleaseSearch
           mediaItemId={m.id}
@@ -1612,6 +1768,8 @@ export function MediaDetailPage() {
           episode={searching.episode}
           copyId={searching.copyId}
           label={searching.label}
+          seasons={m.kind === 'series' ? m.seasons : undefined}
+          onScopeChange={(scope) => setSearching({ ...scope, copyId: searching.copyId })}
           onClose={() => setSearching(null)}
         />
       )}
@@ -1631,19 +1789,25 @@ export function MediaDetailPage() {
               const have = s.episodes.filter((e) => e.hasFile).length
               const open = openSeasons[s.number] ?? s.number === 1
               const label = s.number === 0 ? 'Specials' : `Season ${s.number}`
+              // The season flag only means "new episodes inherit it"; what is offloaded is
+              // each episode's own flag (a re-acquired episode of a flagged season is wanted).
+              const { episodes: episodesOffloaded, fully: seasonOffloaded } = seasonOffload(s)
               return (
-                <div key={s.number} className="season">
+                <div key={s.number} className="season" id={`season-${s.number}`} style={{scrollMarginTop:100}}>
                   <div className="season-head">
                     <input
                       type="checkbox"
                       className="monitor-box"
                       title={
-                        s.monitored
-                          ? 'Monitored — untick to stop wanting this season'
-                          : 'Unmonitored — tick to want this season'
+                        seasonOffloaded
+                          ? 'Offloaded — Re-acquire to get it back'
+                          : s.monitored
+                            ? 'Monitored — untick to stop wanting this season'
+                            : 'Unmonitored — tick to want this season'
                       }
                       aria-label={`Monitor ${label}`}
                       checked={s.monitored}
+                      disabled={seasonOffloaded}
                       onChange={(e) =>
                         monitorSeason.mutate({ season: s.number, monitored: e.target.checked })
                       }
@@ -1661,8 +1825,23 @@ export function MediaDetailPage() {
                       <span className="muted">
                         {have}/{s.episodes.length} on disk{s.monitored ? '' : ' · unmonitored'}
                       </span>
+                      {seasonOffloaded && <> <span className="pill pill-warning">offloaded</span></>}
                     </button>
-                    <button onClickCapture={focusActionTrigger} onClick={() => setSearching({ season: s.number })}>Search pack</button>
+                    {seasonOffloaded ? (
+                      <button className="btn-accent" disabled={reacq.isPending} onClick={() => reacq.mutate({ request: { scope: 'season', season: s.number }, label })}>Re-acquire</button>
+                    ) : (
+                      <>
+                        {m.monitor === 'first_season' && !s.monitored && s.number > 0 && (
+                          <button className="btn-accent" disabled={monitorAndSearch.isPending} title="Monitor this season and search for it now"
+                            onClick={() => monitorAndSearch.mutate({ season: s.number, label })}>
+                            {monitorAndSearch.isPending ? 'Searching…' : 'Monitor and search'}
+                          </button>
+                        )}
+                        <button onClickCapture={focusActionTrigger} onClick={() => setSearching({ season: s.number })}>Search pack</button>
+                        <button onClickCapture={focusActionTrigger} onClick={() => setOffloading({ request: { scope: 'season', season: s.number }, label: `${m.title} · ${label}` })}>Offload…</button>
+                        {episodesOffloaded > 0 && <button className="btn-accent" disabled={reacq.isPending} onClick={() => reacq.mutate({ request: { scope: 'season', season: s.number }, label })}>Re-acquire {episodesOffloaded}</button>}
+                      </>
+                    )}
                   </div>
                   {open && (
                     <table>
@@ -1683,9 +1862,10 @@ export function MediaDetailPage() {
                               <input
                                 type="checkbox"
                                 className="monitor-box"
-                                title={e.monitored ? 'Monitored' : 'Unmonitored'}
+                                title={e.offloaded ? 'Offloaded — Re-acquire to get it back' : e.monitored ? 'Monitored' : 'Unmonitored'}
                                 aria-label={`Monitor episode ${e.seasonNumber}x${e.episodeNumber}`}
                                 checked={e.monitored}
+                                disabled={Boolean(e.offloaded)}
                                 onChange={(ev) =>
                                   monitorEpisode.mutate({
                                     episodeId: e.id,
@@ -1702,19 +1882,32 @@ export function MediaDetailPage() {
                             <td>
                               {e.hasFile ? (
                                 <span className="pill pill-ok">✓</span>
+                              ) : e.offloaded ? (
+                                <span className="pill pill-warning">offloaded</span>
                               ) : (
                                 <span className="muted">—</span>
                               )}
                             </td>
                             <td>
-                              <button
-                                onClickCapture={focusActionTrigger}
-                                onClick={() =>
-                                  setSearching({ season: e.seasonNumber, episode: e.episodeNumber })
-                                }
-                              >
-                                Search
-                              </button>
+                              {e.offloaded ? (
+                                <button className="btn-accent" disabled={reacq.isPending}
+                                  onClick={() => reacq.mutate({ request: { scope: 'episode', episodeId: e.id }, label: `${e.seasonNumber}x${String(e.episodeNumber).padStart(2, '0')}` })}>Re-acquire</button>
+                              ) : (
+                                <>
+                                  <button
+                                    onClickCapture={focusActionTrigger}
+                                    onClick={() =>
+                                      setSearching({ season: e.seasonNumber, episode: e.episodeNumber })
+                                    }
+                                  >
+                                    Search
+                                  </button>
+                                  <button onClickCapture={focusActionTrigger}
+                                      onClick={() => setOffloading({ request: { scope: 'episode', episodeId: e.id }, label: `${m.title} · ${e.seasonNumber}x${String(e.episodeNumber).padStart(2, '0')}` })}>
+                                    Offload…
+                                  </button>
+                                </>
+                              )}
                             </td>
                           </tr>
                         ))}

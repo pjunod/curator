@@ -2,6 +2,7 @@ package sqlite
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"strconv"
@@ -171,11 +172,22 @@ func checkFamily(kind domain.MediaKind, p quality.Profile) error {
 // Only explicit settings count: a profile that merely happens to be the
 // built-in fallback is not a reference, and refusing to delete profile 1 on
 // that basis would be a rule nobody asked for.
-func (d *DB) defaultingKinds(ctx context.Context, id int64) []string {
+func (d *DB) defaultingKinds(ctx context.Context, id int64) ([]string, error) {
 	var out []string
 	want := strconv.FormatInt(id, 10)
+	names := func(key string) (bool, error) {
+		raw, err := d.GetMeta(ctx, key)
+		if errors.Is(err, sql.ErrNoRows) {
+			return false, nil // no default chosen for this kind
+		}
+		return err == nil && raw == want, err
+	}
 	for _, k := range []domain.MediaKind{domain.KindMovie, domain.KindSeries, domain.KindBook} {
-		if raw, err := d.GetMeta(ctx, DefaultProfileSetting(k)); err == nil && raw == want {
+		named, err := names(DefaultProfileSetting(k))
+		if err != nil {
+			return nil, err
+		}
+		if named {
 			label := string(k)
 			if k == domain.KindBook {
 				label = "ebook"
@@ -183,8 +195,12 @@ func (d *DB) defaultingKinds(ctx context.Context, id int64) []string {
 			out = append(out, label)
 		}
 	}
-	if raw, err := d.GetMeta(ctx, DefaultAudiobookProfileSetting); err == nil && raw == want {
+	named, err := names(DefaultAudiobookProfileSetting)
+	if err != nil {
+		return nil, err
+	}
+	if named {
 		out = append(out, "audiobook")
 	}
-	return out
+	return out, nil
 }

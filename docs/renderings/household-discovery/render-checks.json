@@ -1,0 +1,13 @@
+{
+  "desktopWidth": 1280,
+  "phoneWidth": 390,
+  "browserErrors": [],
+  "overflow": false,
+  "allCardsVisible": true,
+  "requestSubmit": "passed",
+  "ownerReviewAndBack": "passed",
+  "privateNoteVisible": true,
+  "approvalInViewport": true,
+  "partialAndUnknown": "rendered",
+  "nativeAppTested": false
+}

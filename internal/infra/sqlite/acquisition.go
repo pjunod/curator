@@ -32,7 +32,7 @@ type profileDef struct {
 	// every definition written before the rule existed reads back as
 	// "no opinion" without a migration.
 	Languages []string `json:"languages,omitempty"`
-	// HDROrder and HDRReject are the ADR 0026 HDR preferences, omitted when
+	// HDROrder and HDRReject are the ADR 0031 HDR preferences, omitted when
 	// empty for the same reason.
 	HDROrder  []hdr.Tier    `json:"hdrOrder,omitempty"`
 	HDRReject []hdr.Tier    `json:"hdrReject,omitempty"`
@@ -202,7 +202,13 @@ func (d *DB) DeleteProfile(ctx context.Context, id int64) error {
 	// A default is a reference too, even though no row points at it. Deleting
 	// it would leave the setting dangling and every future add of that kind
 	// would quietly land back on the built-in.
-	if kinds := d.defaultingKinds(ctx, id); len(kinds) > 0 {
+	// A failed read is not "no default": deleting a default would leave the
+	// setting dangling.
+	kinds, err := d.defaultingKinds(ctx, id)
+	if err != nil {
+		return err
+	}
+	if len(kinds) > 0 {
 		return fmt.Errorf("%w: new %s items use it — pick a different default first",
 			ErrProfileIsDefault, strings.Join(kinds, " and "))
 	}
@@ -435,6 +441,39 @@ type HandoffEntry struct {
 	TargetMediaItemID int64                 `json:"targetMediaItemId,omitempty"`
 	TargetCopyID      int64                 `json:"targetCopyId,omitempty"`
 	TargetIdentity    string                `json:"targetIdentity,omitempty"`
+	// EpisodeTargets is a person's episode choice per selected file, keyed
+	// by the file's absolute path (Import file… on the item page). It is
+	// part of the admitted selection, so every retry of this attempt places
+	// each file as the same episode(s) whatever its name says.
+	EpisodeTargets map[string]HandoffEpisodeTarget `json:"episodeTargets,omitempty"`
+	// RemoveOriginal asks a standalone manual import to remove each source
+	// once its library copy is placed and proven. SourceIdentities is each
+	// admitted source's identity (object, size, modification time): a source
+	// is removed only while it is still that object.
+	RemoveOriginal   bool              `json:"removeOriginal,omitempty"`
+	SourceIdentities map[string]string `json:"sourceIdentities,omitempty"`
+	// Placement marks a person's exact placement of runner-delivery files
+	// (Resolve or Import file…): every later attempt of this publication,
+	// approved or not, imports exactly these paths.
+	Placement bool `json:"placement,omitempty"`
+	// Removals is a pending Remove original, written before the import
+	// completes so a restart finishes it: each source, its library copy and
+	// its admitted identity.
+	Removals []HandoffRemoval `json:"removals,omitempty"`
+}
+
+// HandoffRemoval is one source Remove original takes away once its library
+// copy is confirmed.
+type HandoffRemoval struct {
+	Source   string `json:"source"`
+	Library  string `json:"library"`
+	Identity string `json:"identity,omitempty"`
+}
+
+// HandoffEpisodeTarget is the season and episode(s) one file is placed as.
+type HandoffEpisodeTarget struct {
+	Season   int   `json:"season"`
+	Episodes []int `json:"episodes"`
 }
 
 type HandoffFileSnapshot struct {
@@ -496,6 +535,28 @@ type Download struct {
 	SourceIndexerID           int64
 	RunnerInstanceID          string
 	RunnerAdmissionGeneration string
+
+	// The reducer's columns (pipeline contract v2, section 3.2). RunnerOutcome
+	// is the recorded terminal; Provisional marks one Curator authored that a
+	// later Runner fact may re-open. DeadlineAt is when the row's current state
+	// becomes overdue (0 = no deadline).
+	RunnerOutcome       string
+	RunnerOutcomeAt     time.Time
+	RunnerOutcomeSeq    int64
+	RunnerOutcomeReason string
+	RunnerFetchCause    string
+	RunnerBlamesRelease bool
+	RunnerSalvage       string
+	RunnerFetchedJSON   string
+	Provisional         bool
+	DeadlineAt          time.Time
+	StateEnteredAt      time.Time
+	RunnerStage         string // last post-processing stage Runner reported
+	RunnerStageAt       time.Time
+	// Runner's own transfer numbers, relayed unchanged: bytes per second and
+	// bytes still to fetch (0 = not reported). The ETA is their ratio.
+	RateBps        int64
+	RemainingBytes int64
 }
 
 type ManualGrabRequest struct {
@@ -536,10 +597,24 @@ func downloadFromRow(r sqlitegen.Download) Download {
 		Handoff: handoff, MatchEvidence: evidence, RunnerControl: r.RunnerControl,
 		AddedAt: time.UnixMilli(r.AddedAt), UpdatedAt: time.UnixMilli(r.UpdatedAt),
 	}
+	dl.RunnerOutcome, dl.RunnerOutcomeSeq, dl.RunnerOutcomeReason = r.RunnerOutcome, r.RunnerOutcomeSeq, r.RunnerOutcomeReason
+	dl.RunnerFetchCause, dl.RunnerBlamesRelease, dl.RunnerSalvage = r.RunnerFetchCause, r.RunnerBlamesRelease != 0, r.RunnerSalvage
+	dl.RunnerFetchedJSON, dl.Provisional = r.RunnerFetchedJson, r.Provisional != 0
+	dl.RunnerOutcomeAt, dl.DeadlineAt, dl.StateEnteredAt = msTime(r.RunnerOutcomeAt), msTime(r.DeadlineAt), msTime(r.StateEnteredAt)
+	dl.RunnerStage, dl.RunnerStageAt = r.RunnerStage, msTime(r.RunnerStageAt)
+	dl.RateBps, dl.RemainingBytes = r.RateBps, r.RemainingBytes
 	if r.CopyID.Valid {
 		dl.CopyID = r.CopyID.Int64
 	}
 	return dl
+}
+
+// msTime is a Unix-millisecond column as a time, with 0 as the zero time.
+func msTime(ms int64) time.Time {
+	if ms == 0 {
+		return time.Time{}
+	}
+	return time.UnixMilli(ms)
 }
 
 // InsertDownload records a grab.
@@ -609,6 +684,7 @@ func downloadInsertParams(dl Download) (sqlitegen.InsertDownloadParams, error) {
 		ExactTransferCorrelation: boolInt(dl.ExactTransferCorrelation),
 		ReplacementOperationID:   dl.ReplacementOperationID, SourceGuid: dl.SourceGUID, SourceIndexerID: dl.SourceIndexerID,
 		Transfer: dl.Transfer, SubmissionPhase: submissionPhase, ExecutionPayload: dl.ExecutionPayload,
+		DeadlineAt: unixMilliOrZero(dl.DeadlineAt), StateEnteredAt: now,
 	}
 	if dl.CopyID != 0 {
 		p.CopyID = sql.NullInt64{Int64: dl.CopyID, Valid: true}
@@ -819,10 +895,14 @@ func (d *DB) ListFolderlessFailedDownloadIDsForItem(ctx context.Context, itemID 
 
 // UpdateDownloadControl commits suppression and control facts atomically.
 func (d *DB) UpdateDownloadControl(ctx context.Context, dl Download) error {
-	return d.Write.UpdateDownloadControl(ctx, sqlitegen.UpdateDownloadControlParams{
+	n, err := d.Write.UpdateDownloadControl(ctx, sqlitegen.UpdateDownloadControlParams{
 		RunnerControl: dl.RunnerControl, State: dl.State, Progress: dl.Progress,
 		Error: dl.Error, UpdatedAt: time.Now().UnixMilli(), ID: dl.ID,
 	})
+	if err == nil && n == 0 {
+		return fmt.Errorf("transfer is no longer accepting Runner controls")
+	}
+	return err
 }
 
 // UpdateDownloadState transitions a queue row.
@@ -875,7 +955,7 @@ func (d *DB) CommitManualImportAdmission(ctx context.Context, dl Download) (Down
 		}
 		// Selection, target and epoch advance commit together. A failed or
 		// refused manual request cannot unsuppress the previous selection.
-		if _, err = beginImportRetry(ctx, tx, dl.ID, dl.GenerationKey, false); err != nil {
+		if _, err = beginImportRetry(ctx, tx, dl.ID, dl.GenerationKey, false, false); err != nil {
 			return Download{}, err
 		}
 	}
@@ -909,6 +989,65 @@ func (d *DB) CommitManualImportAdmission(ctx context.Context, dl Download) (Down
 		return Download{}, err
 	}
 	return downloadFromRow(row), nil
+}
+
+// CommitPublicationPlacement records a person's placement of runner-delivery
+// files in one transaction: the download's target item and copy, its
+// handoff trace (the selection), and the publication offered for import
+// again. Nothing of it is written unless all of it is.
+func (d *DB) CommitPublicationPlacement(ctx context.Context, dl Download, publicationID int64) error {
+	handoff, err := json.Marshal(dl.Handoff)
+	if err != nil {
+		return err
+	}
+	tx, err := d.W.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	now := time.Now().UnixMilli()
+	res, err := tx.ExecContext(ctx, `UPDATE downloads SET media_item_id=?,copy_id=?,handoff_log=?,updated_at=? WHERE id=? AND generation_key=?`,
+		dl.MediaItemID, sql.NullInt64{Int64: dl.CopyID, Valid: dl.CopyID != 0}, string(handoff), now, dl.ID, dl.GenerationKey)
+	if err != nil {
+		return err
+	}
+	if n, err := res.RowsAffected(); err != nil || n != 1 {
+		if err == nil {
+			err = ErrNotFound
+		}
+		return err
+	}
+	res, err = tx.ExecContext(ctx, `UPDATE publications SET state='discovered', error='', updated_at=? WHERE id=? AND download_id=?`, now, publicationID, dl.ID)
+	if err != nil {
+		return err
+	}
+	if n, err := res.RowsAffected(); err != nil || n != 1 {
+		if err == nil {
+			err = ErrNotFound
+		}
+		return err
+	}
+	return tx.Commit()
+}
+
+// CountCommittedPlacements counts the library placements a download's
+// generation committed, whatever its publications recorded since: a partial
+// or failed attempt's placed files count too.
+func (d *DB) CountCommittedPlacements(ctx context.Context, downloadID int64, generation string) (int, error) {
+	var n int
+	err := d.R.QueryRowContext(ctx, `SELECT count(*) FROM import_placements WHERE state IN ('committed','cleaned') AND json_extract(data,'$.download_id')=? AND json_extract(data,'$.source_generation')=?`, downloadID, generation).Scan(&n)
+	return n, err
+}
+
+// AppendHandoffEntry adds one entry to a download's trace without touching
+// its state.
+func (d *DB) AppendHandoffEntry(ctx context.Context, downloadID int64, entry HandoffEntry) error {
+	dl, err := d.GetDownload(ctx, downloadID)
+	if err != nil {
+		return err
+	}
+	dl.Handoff = append(dl.Handoff, entry)
+	return d.UpdateDownloadHandoff(ctx, dl)
 }
 
 // UpdateDownloadTarget persists the target chosen in a manual-import form.
@@ -965,6 +1104,19 @@ func (d *DB) DeleteDownload(ctx context.Context, id int64) error {
 	}
 	if n, err := d.Write.DismissImportedDownload(ctx, id); err != nil || n > 0 {
 		return err
+	}
+	if dl.State == "failed" && dl.RunnerSalvage == "pending" {
+		// Runner has said a salvage publication is coming for this row; the
+		// row is how it is attributed when it arrives, so it is hidden, not
+		// deleted (a publication arriving for a deleted row has no owner).
+		var salvage int
+		if err := d.R.QueryRowContext(ctx, `SELECT COUNT(*) FROM publications WHERE download_id=? AND kind='salvage'`, id).Scan(&salvage); err != nil {
+			return err
+		}
+		if salvage == 0 {
+			_, err := d.W.ExecContext(ctx, `UPDATE downloads SET activity_dismissed=1 WHERE id=?`, id)
+			return err
+		}
 	}
 	n, err := d.Write.DeleteDownload(ctx, id)
 	if err == nil && n == 0 {
@@ -1112,7 +1264,7 @@ func (d *DB) ClearFailedDownloads(ctx context.Context) (int64, error) {
 	}
 	defer func() { _ = tx.Rollback() }()
 	q := d.Write.WithTx(tx)
-	dismissed, err := q.DismissFailedDownloadsWithPendingRunnerReceipt(ctx)
+	dismissed, err := q.DismissFailedDownloadsWithLivePublication(ctx)
 	if err != nil {
 		return 0, err
 	}
@@ -1197,4 +1349,22 @@ func (d *DB) HistoryPage(ctx context.Context, item int64, limit, offset int) ([]
 		})
 	}
 	return out, nil
+}
+
+// LibraryFolders lists every item's and every copy's library folder.
+func (d *DB) LibraryFolders(ctx context.Context) ([]string, error) {
+	rows, err := d.R.QueryContext(ctx, `SELECT path FROM media_items WHERE path<>'' UNION SELECT path FROM media_copies WHERE path<>''`)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var out []string
+	for rows.Next() {
+		var p string
+		if err := rows.Scan(&p); err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
 }

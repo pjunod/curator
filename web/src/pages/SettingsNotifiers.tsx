@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import type { Notifier, NotifierInput, NotifierType } from '../api'
 import {
@@ -7,8 +7,10 @@ import {
   getNotifiers,
   testNotifier,
   testNotifierByID,
+  testPassed,
   updateNotifier,
 } from '../api'
+import { CinemaConnectionFeatures } from './CinemaFeatures'
 import { NotifierDeliveries } from './NotifierDeliveries'
 
 const TYPE_FIELDS: Record<NotifierType, { key: string; label: string }[]> = {
@@ -42,10 +44,11 @@ const MEDIA_SERVER: NotifierType[] = ['plex', 'jellyfin', 'plurx']
 // your typing. Download clients and indexers have had a per-row test since the
 // beginning; this closes the gap.
 function RowTest({ id }: { id: number }) {
+  const qc = useQueryClient()
   const [msg, setMsg] = useState('')
   const run = useMutation({
     mutationFn: () => testNotifierByID(id),
-    onSuccess: () => setMsg('✓ delivered'),
+    onSuccess: (r) => { setMsg(testPassed(r)); void qc.invalidateQueries({ queryKey: ['notifiers'] }) },
     onError: (e: Error) => setMsg(`✗ ${e.message}`),
   })
   return (
@@ -59,8 +62,29 @@ function RowTest({ id }: { id: number }) {
       >
         {run.isPending ? 'Testing…' : 'Test'}
       </button>
-      {msg && <div className={msg.startsWith('✓') ? 'ok-text' : 'error-text'}>{msg}</div>}
+      {msg && <TestResult text={msg} className={msg.startsWith('✓') ? 'ok-text' : 'error-text'} />}
     </>
+  )
+}
+
+// TestResult is a Test's answer, revealed where it lands (CLAUDE.md section
+// 5). The notifier table scrolls sideways inside its panel on a phone, so the
+// row's actions column — and the answer under its Test button — can sit past
+// the panel's visible edge: scroll every scrolling ancestor until it is in
+// view (the root's scroll padding keeps it clear of the fixed bars) and move
+// focus to it, so keyboard and screen-reader users land on it too.
+function TestResult({ text, className }: { text: string; className: string }) {
+  const ref = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    const el = ref.current
+    if (!el) return
+    el.scrollIntoView?.({ block: 'nearest', inline: 'nearest' })
+    el.focus({ preventScroll: true })
+  }, [text])
+  return (
+    <div ref={ref} role="status" tabIndex={-1} className={className}>
+      {text}
+    </div>
   )
 }
 
@@ -118,7 +142,7 @@ export function NotifierSettings() {
   })
   const test = useMutation({
     mutationFn: () => testNotifier(input()),
-    onSuccess: () => setTestResult('✓ delivered'),
+    onSuccess: (r) => setTestResult(testPassed(r)),
     onError: (e) => setTestResult(`✗ ${(e as Error).message}`),
   })
   const del = useMutation({
@@ -184,12 +208,14 @@ export function NotifierSettings() {
                   ) : (
                     <>
                       <RowTest id={n.id} />
+                      {n.type === 'plurx' && <CinemaConnectionFeatures notifier={n} />}
                       <button onClick={() => startEdit(n)}>Edit</button>
-                      {MEDIA_SERVER.includes(n.type) && (
-                        <button onClick={() => setShowLog(showLog === n.id ? null : n.id)}>
-                          {showLog === n.id ? 'Hide log' : 'Delivery log'}
-                        </button>
-                      )}
+                      {/* Every notifier's imports are rows now, so every
+                          notifier has a log: a Discord that refused an
+                          import says so here. */}
+                      <button onClick={() => setShowLog(showLog === n.id ? null : n.id)}>
+                        {showLog === n.id ? 'Hide log' : 'Delivery log'}
+                      </button>
                       <button onClick={() => del.mutate(n.id)}>Remove</button>
                     </>
                   )}
@@ -245,7 +271,7 @@ export function NotifierSettings() {
         >
           Add
         </button>
-        {testResult && <span className="muted">{testResult}</span>}
+        {testResult && <TestResult text={testResult} className="muted" />}
       </div>
       {add.isError && <div className="banner warning">{String((add.error as Error).message)}</div>}
     </section>

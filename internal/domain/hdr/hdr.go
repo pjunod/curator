@@ -1,5 +1,5 @@
 // Package hdr is the one vocabulary for "what kind of HDR is this" (ADR
-// 0026). A release name's claim, a probe's measurement and a target
+// 0031). A release name's claim, a probe's measurement and a target
 // profile's preference order all reduce to a Tier, so they can be compared
 // with each other without any of them knowing about the others.
 package hdr

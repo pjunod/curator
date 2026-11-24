@@ -11,6 +11,7 @@ export type HealthStatus = 'ok' | 'warning' | 'error'
 export interface Connection {
   baseUrl: string
   apiKey: string
+  sessionToken?: string
 }
 
 export interface SystemStatus {
@@ -45,7 +46,25 @@ export interface Rating {
   scale: number
 }
 
+export interface SeasonAvailability { number: number; expected: number; present: number; offloaded: number; unknownDates: number }
+export interface Availability {
+ catalog: 'present' | 'absent' | 'ambiguous' | 'unknown'
+ presence: 'present' | 'partial' | 'missing' | 'offloaded' | 'unknown'
+ libraryItemId?: number
+ copyId: number
+ expected: number
+ present: number
+ offloaded: number
+ acquisition: 'none' | 'active' | 'unknown'
+ checkedAt?: string
+ reason?: string
+ seasons?: SeasonAvailability[]
+}
+export interface LibrarySeedPage {items: SearchResult[]; hasMore: boolean}
+export interface LibraryShelf {title: string; source: string; seed: SearchResult; items: SearchResult[]}
+
 export interface MediaItemSummary {
+ availability?: Availability
   id: number
   kind: MediaKind
   title: string
@@ -54,6 +73,9 @@ export interface MediaItemSummary {
   bookType?: BookType
   bookTypes?: BookType[]
   bookEditions?: BookEditionSummary[]
+  /** Offloaded (ADR 0028): files deleted on purpose, title kept. A show: any episode offloaded. */
+  offloaded?: boolean
+  offloadedEpisodes?: number
   posterPath: string
   monitored: boolean
   path: string
@@ -83,12 +105,14 @@ export interface EpisodeInfo {
   title: string
   airDate: string
   monitored: boolean
+  offloaded?: boolean
   hasFile: boolean
 }
 
 export interface SeasonInfo {
   number: number
   monitored: boolean
+  offloaded?: boolean
   episodes: EpisodeInfo[]
 }
 
@@ -183,6 +207,7 @@ export interface UpdateMediaCopyRequest {
 }
 
 export interface SearchResult {
+ availability?: Availability
   kind: MediaKind
   tmdbId: number
   tvdbId?: number
@@ -232,7 +257,7 @@ export interface AddMediaRequest {
   qualityProfileId?: number
   downloadPriority?: number
   monitored?: boolean
-  monitor?: 'all' | 'latest' | 'none'
+  monitor?: 'all' | 'latest' | 'first_season' | 'none'
   searchNow?: boolean
 }
 
@@ -279,6 +304,24 @@ export interface WantedItem {
   copy: string
 }
 
+export type WantedSearchScope =
+  | { scope: 'all' }
+  | { scope: 'reason'; reason: 'missing' | 'upgrade' }
+  | { scope: 'group'; mediaItemId: number; reason?: 'missing' | 'upgrade' }
+  | { scope: 'target'; wantableId: string }
+
+export interface WantedSearchRun {
+  runId: string
+  scope: WantedSearchScope
+  scopeLabel: string
+  status: 'queued' | 'running' | 'completed' | 'failed' | 'interrupted' | 'cancelled'
+  cancelRequestedAt?: string
+  selected: number
+  processed: number
+  grabbed: number
+  error?: string
+}
+
 export interface MatchEvidence {
   version: number
   matched: boolean
@@ -295,12 +338,18 @@ export interface MatchEvidence {
 }
 
 export interface QueueItem {
+ /** The row's handoff trace (Import file… reads what Remove original did). */
+ handoff?: { step: string; at: number; detail?: string }[]
  importControl?: { generationKey:string;epoch:string;outcome:''|'pending'|'cancelled'|'completed';pendingPublications:number;retainedPublications:number;heldStages:number }
  importState?: 'queued'|'running'
  planId?: number
  planState?: string
  submissionPhase?: string
  parkedReason?: string
+ /** Pipeline v2: a hold past Runner's deadline (Curator is reconciling). */
+ stale?: boolean
+ /** Pipeline v2: a failure Curator concluded; a later Runner fact re-opens it. */
+ provisional?: boolean
  selection?: {reason:string;target:string;partial:boolean;trigger:string}
   id: number
   mediaItemId: number
@@ -439,3 +488,236 @@ export interface AutoSearchResult {
   grabbed: number
   targets: AutoSearchTarget[]
 }
+
+/** Import file… (item page): the server's view of one folder. */
+export interface BrowseResult { path: string; parent: string; dirs: { name: string; path: string; registered: boolean }[] }
+
+export interface ScannedPublication { downloadId: number; publicationId: number; path: string; outcome: string }
+
+export interface ScannedFile {
+  path: string
+  name: string
+  size: number
+  kind: string
+  quality: string
+  season: number
+  episodes: number[]
+  subtitles?: number
+  publication?: ScannedPublication
+  /** Why this entry cannot be imported (a symlink, an unreadable file). */
+  skipped?: string
+}
+
+export interface ImportPlanRequest {
+  mediaItemId: number
+  copyId?: number
+  removeOriginal?: boolean
+  files: { path: string; season?: number; episodes?: number[] }[]
+}
+
+export type ImportPlanMode = 'runner' | 'hardlink' | 'copy' | 'rename' | 'copy_remove'
+
+export interface ImportPlanFile {
+  path: string
+  quality: string
+  season: number
+  episodes: number[]
+  destination?: string
+  action?: 'new' | 'replace' | 'beside'
+  existing?: string
+  reason?: string
+  mode?: ImportPlanMode
+  note?: string
+  subtitles: number
+  publication?: ScannedPublication
+  error?: string
+}
+
+export interface ManualImportRequest {
+  path: string
+  paths: string[]
+  mediaItemId: number
+  copyId?: number
+  removeOriginal?: boolean
+  episodeTargets?: { path: string; season: number; episodes: number[] }[]
+}
+
+export interface PlaceRequest { mediaItemId: number; copyId?: number; files: { path: string; season?: number; episodes?: number[] }[] }
+
+// Re-match (ADR 0027): the same shapes the web uses.
+export interface RematchTarget { itemId?: number; kind?: MediaKind; tmdbId?: number; tvdbId?: number; imdbId?: string; olid?: string; hydrationSource?: string }
+export interface RematchChoice { fileId: number; season?: number; episodes?: number[]; leave?: boolean }
+export interface RematchRequest {
+  target: RematchTarget
+  copyId?: number
+  fileIds?: number[]
+  choices?: RematchChoice[]
+  blocklist?: boolean
+  requestId?: string
+  sourceRevision?: number
+  targetRevision?: number
+  fingerprint?: string
+}
+export interface RematchMove {
+  fileId: number
+  from: string
+  to?: string
+  season: number
+  episodes: number[]
+  label?: string
+  mode?: 'rename' | 'copy' | 'relink'
+  bytes: number
+  sidecars?: { from: string; to: string }[]
+  note?: string
+  /** What happens to a file the target already has (import's rule). */
+  action?: 'new' | 'replace' | 'beside'
+  existing?: string
+  reason?: string
+  replaces?: { fileId: number; path: string; quality?: string }[]
+  problem?: string
+  needsPick?: boolean
+  leave?: boolean
+}
+export interface RematchItemRef { id: number; kind: string; title: string; year?: number; inLibrary: boolean; folder?: string; folderChosen?: boolean }
+export interface RematchPreview {
+  source: RematchItemRef
+  target: RematchItemRef
+  moves: RematchMove[]
+  leftOut: RematchMove[]
+  sourceOutcome: 'stays' | 'removed'
+  sourceReason: string
+  blocklist: { fileId: number; release: string }[]
+  blocklistOn: boolean
+  blocklistNote?: string
+  cinema?: string
+  episodes?: { season: number; episode: number; title?: string; hasFile: boolean }[]
+  copies?: { id: number; name: string; bookType?: string }[]
+  blocked?: { reason: string; ref: string; itemId: number; message: string; retry: boolean }
+  sourceRevision: number
+  targetRevision: number
+  fingerprint: string
+  unresolved: number
+  summary: string
+}
+export interface RematchOperation {
+  operationId: string
+  state: 'planned' | 'moving' | 'moved' | 'committed' | 'complete' | 'cancel_pending' | 'cancelled' | 'failed'
+  bytesDone: number
+  bytesTotal: number
+  lastError?: string
+  result?: { moved?: { from: string; to: string }[]; leftOut?: string[]; failed?: { from: string; to: string }[]; blocklisted?: { release: string }[] }
+  cinema?: { directory: string; status: string; result?: string; visibleAt?: number }[]
+}
+
+// ---- item status panel (GET /library/{id}/status, 0.46.0) ----
+export type StatusState = 'done' | 'active' | 'waiting' | 'failed' | 'todo'
+export type StatusStageKey = 'searched' | 'downloading' | 'processed' | 'moved' | 'cinema_notified' | 'in_cinema'
+export type StatusAction = 'search' | 'interactive_search' | 'open_activity' | 'cancel_download' | 'retry_import' | 'resend_cinema' | 'confirm_cinema'
+export interface StatusStage { key: StatusStageKey; state: StatusState; at?: number; detail?: string; actions?: StatusAction[] }
+export interface StatusDownload {
+  id: number; release: string; indexer?: string; state: string; bytes: number; total: number; progress: number
+  rateBps?: number; etaSeconds?: number; stage?: string; stageSince?: number; episodes?: number
+}
+export interface StatusCinema { deliveryId: number; notifierId: number; status: string; waitingOn?: string; visibleAt?: number; itemIds?: number[]; error?: string; warnings?: string[] }
+export interface StatusSeason { season: number; episodes: number; inCinema: number; onDisk: number; active: boolean; summary: string; download?: StatusDownload }
+export interface StatusEpisode {
+  episodeId: number; season: number; episode: number; title?: string; wantableId: string; summary: string; at?: number
+  inPack: boolean; downloadId?: number; cinema?: StatusCinema; stages: StatusStage[]
+}
+export interface ItemStatus {
+  mediaItemId: number; kind: string; generatedAt: number; active: boolean; done: boolean
+  headline: { state: StatusState; title: string; detail?: string; at?: number }
+  stages?: StatusStage[]; download?: StatusDownload; cinema?: StatusCinema
+  attempts?: { downloadId: number; release: string; indexer?: string; at: number; outcome: string; reason?: string }[]
+  seasons?: StatusSeason[]; episodes?: StatusEpisode[]
+  rematch?: StatusRematch
+  offload?: StatusOffload
+}
+export interface StatusOffload {
+  operationId: string
+  state: OffloadState
+  scope: OffloadScope
+  label: string
+  headline: string
+  filesDone: number
+  filesTotal: number
+  bytesTotal: number
+  bytesFreed: number
+  failed?: string[]
+  error?: string
+  cinemaLine?: string
+  ended: boolean
+  stoppable: boolean
+}
+// Offload (ADR 0028): free the space, keep the title.
+export type OffloadScope = 'item' | 'season' | 'episode'
+export type OffloadState = 'queued' | 'needs_review' | 'deleting' | 'waiting' | 'retrying' | 'stopping' | 'complete' | 'cancelled' | 'failed'
+export interface OffloadRequest { scope: OffloadScope; season?: number; episodeId?: number; requestId?: string; fingerprint?: string }
+export interface OffloadFile { path: string; kind: 'media' | 'sidecar'; bytes: number; shared?: boolean; episodes?: string[] }
+export interface OffloadPreview {
+  item: { id: number; kind: string; title: string; year?: number }
+  scope: OffloadScope
+  label: string
+  files: OffloadFile[]
+  bytes: number
+  freed: number
+  freeBefore: number
+  freeAfter: number
+  root?: string
+  episodes?: string[]
+  widened?: string[]
+  cinema?: string
+  cinemaWarning?: boolean
+  blocked?: { reason: string; ref?: string; message: string; retry: boolean }
+  fingerprint: string
+  summary: string
+}
+export interface OffloadOperation {
+  operationId: string
+  requestId: string
+  state: OffloadState
+  itemId: number
+  scope: OffloadScope
+  season?: number
+  episodeId?: number
+  label?: string
+  filesTotal: number
+  filesDone: number
+  failed?: string[]
+  bytesTotal: number
+  bytesFreed: number
+  lastError?: string
+  stoppable: boolean
+  cinemaLine?: string
+}
+export interface ReacquireResult { mediaItemId: number; state: 'searching' | 'downloading' | 'importing' | 'on_disk' | 'not_offloaded' | 'offloading' | 'offloaded'; cleared: boolean; message?: string }
+export interface StatusRematch {
+  operationId: string
+  state: 'planned' | 'moving' | 'moved' | 'committed' | 'cancel_pending' | 'complete' | 'cancelled' | 'failed'
+  ended: boolean
+  failedMoves?: { from: string; reason: string }[]
+  role: 'source' | 'target'
+  sourceItemId: number
+  targetItemId: number
+  sourceTitle: string
+  targetTitle: string
+  headline: string
+  bytesDone: number
+  bytesTotal: number
+  filesDone: number
+  filesTotal: number
+  moves?: { from: string; to: string; state: string; bytes: number }[]
+  cinema?: { directory: string; status: string; result?: string; lastError?: string; visibleAt?: number }[]
+  cinemaLine?: string
+  warnings?: string[]
+  error?: string
+  stoppable: boolean
+}
+
+
+export interface LocalAccount {id:number;revision:number;username:string;displayName:string;role:'owner'|'member';status:'active'|'suspended';createdAt:string}
+export interface AccountIdentity {accessRole:'owner'|'member';account:LocalAccount;method:'local'|'cinema'|'machine';machine:boolean}
+export interface HouseholdTitle {kind:'movie'|'series';tmdbId:number;title:string;year:number;overview:string;posterPath:string;releaseDate?:string;seasons:{number:number;aired:number;unknownDates:number}[];availability:Availability}
+export interface HouseholdRequest {id:number;revision:number;kind:'movie'|'series';tmdbId:number;scope:{episodes?:{season:number;episode:number}[]};title:string;year:number;posterPath:string;overview:string;state:'pending'|'approved'|'acquiring'|'fulfilled'|'declined'|'withdrawn'|'needs_review';publicNote:string;privateNote?:string;subscribed:boolean;subscriberCount:number;createdAt:string;updatedAt:string}
+
+export interface HouseholdReview {requestId:number;revision:number;title:string;scope:string;destination:string;rootId:number;profileId:number;profileName:string;present:number;missing:number;offloaded:number;checkedAt:string;fingerprint:string;newTitle:boolean}

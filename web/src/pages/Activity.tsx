@@ -1,87 +1,24 @@
-import { ActionDialog, focusActionTrigger } from '../ActionDialog'
-import { useState,useRef } from 'react'
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Link } from '@tanstack/react-router'
-import {
-  type ManualImportRequest,
-  type ImportAttemptIdentity,
-  type CompletedEntry,
-  type CompletedRoot,
-  type QueueItem,
-  type ScannedFile,
-  type Stage,
-  blocklistQueueItem,
-  cancelQueueImport,
-  getImportReview,
-  resolveImportReview,
-  clearFailedQueue,
-  clearFinishedQueue,
-  fmtBytes,
-  fmtRelative,
-  getCompletedInventory,
-  getLibrary,
-  getLibraryItem,
-  getManualImportDefaultPath,
-  getQueuePage,
-  getQueueSummary,
-  getTasks,
-  importQueueItem,
-  resumeQueueItem,
-  manualImport,
-  removeQueueItem,
-  resolveQueueReservation,
-  scanImportPath,
-  runTask,
-} from '../api'
+import { useEffect, useRef, useState, type RefObject, type SyntheticEvent } from 'react'
+import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query'
+import { Link, useLocation } from '@tanstack/react-router'
+import { ActionDialog, ActionNotice, focusActionTrigger } from '../ActionDialog'
+import { ImportFileDialog } from '../ImportFileDialog'
 import { PathInput } from '../PathInput'
-import { CompletedFolders } from '../CompletedFolders'
-import { DeliveryLifecycleArchive, DeliveryLifecycleForDownload } from '../DeliveryLifecycle'
-import '../LegacyReview.css'
+import {
+  ApiError, fmtBytes, fmtRelative, getLibrary, getLibraryItem, getManualImportDefaultPath,
+  manualImport, resolveQueueReservation, scanImportPath, type QueueItem, type ScannedFile, type Stage,
+} from '../api'
+import {
+  activityFileScope, activityIdentityKey, activityOperationChange, createActivitySelection, getActivityJobLog,
+  getActivityOperation, getJobActivity, newActivityRequestId, postActivityAction,
+  readActivityOperationIds, updateActivityOperationIds, type ActivityActionKind, type ActivityIdentity,
+  type ActivityItem, type ActivityOperation, type ActivityOperationTarget, type ActivityRequest,
+  type ActivityScope, type ActivitySelection, type ActivityTargets, type ActivityView,
+} from '../activityActions'
+import { fmtDuration } from '../queueTime'
+import '../ImportQueue.css'
+import '../Activity.css'
 
-const STATE_PILL: Record<string, string> = {
-  imported: 'pill-ok',
-  failed: 'pill-error',
-  awaiting_import: 'pill-warning',
-  downloaded: 'pill-neutral',
-  downloading: 'pill-neutral',
-  importing: 'pill-neutral',
-  grabbed: 'pill-neutral',
-  planned: 'pill-neutral',
-}
-
-// Friendlier labels for the state pill and the trace steps.
-const STATE_LABEL: Record<string, string> = {
-  awaiting_import: 'awaiting approval',
-}
-
-const STEP_LABEL: Record<string, string> = {
-  grabbed: 'Grabbed',
-  downloading: 'Downloading',
-  downloaded: 'Downloaded',
-  awaiting_import: 'Awaiting approval',
-  import_queued: 'Queued for import',
-  importing: 'Importing',
-  import_cancelled: 'Import cancelled',
-  import_recovered: 'Import recovered',
-  imported: 'Imported',
-  failed: 'Failed',
-}
-
-function label(map: Record<string, string>, key: string): string {
-  return map[key] ?? key.replace(/_/g, ' ')
-}
-
-// One job, one row, and the stage word changes as it moves.
-//
-// Fetching, repairing, extracting and copying into the library are parts of
-// one job, not different kinds of work that belong on different screens. They
-// are separate SECTIONS because lumping them into one pile answers "how many
-// things are busy" and not "what is this one doing" — and the second question
-// is the one anybody actually opens this page with.
-//
-// The keys are the download client's own stage names. Translating them here,
-// at the edge, is deliberate: nothing between nzbd and this line has to agree
-// on English.
 const STAGE_LABEL: Record<Stage, string> = {
   downloading: 'Downloading',
   par_rename: 'Renaming',
@@ -92,88 +29,11 @@ const STAGE_LABEL: Record<Stage, string> = {
   cleanup: 'Cleaning up',
   move: 'Moving',
   post_unpack_rename: 'Renaming',
+  publication_verify: 'Verifying publication',
   script: 'Running scripts',
   importing: 'Copying to library',
   notifying: 'Notifying',
-}
-
-const STAGE_TITLE: Record<Stage, string> = {
-  downloading: 'The download client is fetching articles from the newsgroup server',
-  par_rename: 'The download client is restoring real filenames from the par2 set',
-  par_verify: 'The download client is checking the payload against its par2 blocks',
-  par_repair: 'The download client is rebuilding damaged blocks. This can take a while on a big release',
-  rar_rename: 'The download client is putting the archive volumes back in order',
-  unpack: 'The download client is extracting the archive',
-  cleanup: 'The download client is deleting the archive volumes it no longer needs',
-  move: 'The download client is moving the payload to its finished folder',
-  post_unpack_rename: 'The download client is tidying names after extraction',
-  script: 'The download client is running its post-processing scripts',
-  importing: 'Curator is copying the files into your library. This is the one stage Curator does itself',
-  notifying: 'Curator is telling the media server an import landed',
-}
-
-// Sections, in the order a job passes through them. Rendered only when
-// occupied, so an idle instance shows nothing rather than eleven empty
-// headings.
-const STAGES: Stage[] = [
-  'downloading',
-  'par_rename',
-  'par_verify',
-  'par_repair',
-  'rar_rename',
-  'unpack',
-  'cleanup',
-  'move',
-  'post_unpack_rename',
-  'script',
-  'importing',
-  'notifying',
-]
-
-// Rows with nothing in flight still have to go somewhere, grouped by what a
-// person would do about them: one needs a decision, one is finished, one went
-// wrong.
-const RESTING = [
-  { key: 'waiting', label: 'Waiting', states: ['planned', 'grabbed', 'downloaded', 'awaiting_import'] },
-  { key: 'done', label: 'Finished', states: ['imported'] },
-  { key: 'failed', label: 'Failed', states: ['failed'] },
-] as const
-
-type Section = { key: string; label: string; title?: string; rows: QueueItem[] }
-
-function sections(rows: QueueItem[]): Section[] {
-  const out: Section[] = []
-  const live = new Set<number>()
-  const queued = rows.filter((r) => r.importState === 'queued')
-  for (const stage of STAGES) {
-    if (stage === 'importing' && queued.length > 0) {
-      queued.forEach((r) => live.add(r.id))
-      out.push({
-        key: 'import-queued',
-        label: 'Waiting to copy',
-        title: 'Accepted by Curator and waiting for an available import worker',
-        rows: queued,
-      })
-    }
-    const inStage = rows.filter(
-      (r) => !live.has(r.id) && r.importState !== 'queued' && r.stage === stage,
-    )
-    inStage.forEach((r) => live.add(r.id))
-    if (inStage.length > 0) {
-      out.push({ key: stage, label: STAGE_LABEL[stage], title: STAGE_TITLE[stage], rows: inStage })
-    }
-  }
-  for (const group of RESTING) {
-    const inGroup = rows.filter((r) => !live.has(r.id) && group.states.includes(r.state as never))
-    if (inGroup.length > 0) out.push({ key: group.key, label: group.label, rows: inGroup })
-  }
-  // Anything in a state this build has not heard of still gets shown. A row
-  // that silently vanishes because of an unrecognised word is worse than an
-  // ugly heading.
-  const placed = new Set(out.flatMap((s) => s.rows.map((r) => r.id)))
-  const rest = rows.filter((r) => !placed.has(r.id))
-  if (rest.length > 0) out.push({ key: 'other', label: 'Other', rows: rest })
-  return out
+  publication_cleanup: 'Cleaning up publication',
 }
 
 // Progress the row can actually stand behind.
@@ -183,12 +43,10 @@ function sections(rows: QueueItem[]): Section[] {
 // is a different and usually false statement about a job that is midway
 // through repairing a 60 GB archive.
 function StageProgress({ d }: { d: QueueItem }) {
-  if(d.importControl?.outcome==='pending') return <span role="status">{d.importControl.pendingPublications>0&&!d.importState ? 'Cancellation pending · publication review required' : 'Cancelling · waiting for actual writer exit'}</span>
-  if(d.importControl?.retainedPublications) return <span className="warning-text">Cancelled · retained publication requires Library review</span>
-  if(d.importControl?.outcome==='cancelled') return <span className="muted">Cancelled · files retained; explicit retry available</span>
+  if (d.importControl?.outcome === 'pending') return <span className="muted">Waiting for import to stop</span>
 
   if (d.control && (d.control.lifecycle === 'held' || d.control.version !== 1)) {
-    return <div><span className="pill pill-neutral">Held</span><div className="muted">{d.control.message}</div><div className="muted">Transfer {Math.round(d.progress * 100)}% · import pending</div></div>
+    return <p className="muted">Transfer {Math.round(d.progress * 100)}% · import pending</p>
   }
   if (d.importState === 'queued') {
     return <span className="muted">Waiting for an import worker</span>
@@ -197,23 +55,23 @@ function StageProgress({ d }: { d: QueueItem }) {
     return <span className="muted">Starting importer…</span>
   }
   if (d.state === 'importing' && !d.stage && !d.importState) {
-    return <span className="error-text">No importer is running</span>
+    return <span className="muted">Waiting for automatic import retry</span>
   }
-  const known = typeof d.total === 'number' && d.total > 0
+  const known = typeof d.total === 'number' && d.total > 0 && typeof d.bytes === 'number'
   const done = d.bytes ?? 0
-  const fraction = known ? Math.min(1, done / (d.total as number)) : d.stage ? null : d.progress
+  const fraction = known ? Math.max(0, Math.min(1, done / (d.total as number))) : !d.stage && d.state === 'downloading' ? d.progress : null
 
   return (
     <div className="stage-progress">
       {fraction !== null && (
-        <div className="progress-track">
+        <div className="progress-track" role="progressbar" aria-label="Measured stage progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(fraction * 100)}>
           <i style={{ width: `${Math.round(fraction * 100)}%` }} />
         </div>
       )}
       {known ? (
         <div className="muted stage-bytes">
           {fmtBytes(done)} / {fmtBytes(d.total as number)}
-          {d.bytesPerSecond ? ` · ${fmtBytes(d.bytesPerSecond)}/s` : ''}
+          {d.bytesPerSecond ? ` · ${fmtBytes(d.bytesPerSecond)}/s · ${fmtDuration(Math.max(0, ((d.total as number) - done) / d.bytesPerSecond))} remaining` : ''}
         </div>
       ) : d.stage ? (
         // Words, not digits — so this one wraps. Forcing the numeric
@@ -228,689 +86,433 @@ function StageProgress({ d }: { d: QueueItem }) {
   )
 }
 
-function clock(ms: number): string {
-  const d = new Date(ms)
-  return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+const PAGE_SIZE = 50
+const VIEWS = [['progress', 'In progress'], ['attention', 'Needs attention'], ['history', 'History']] as const
+const EMPTY_TITLES = { progress: 'Nothing in progress', attention: 'Nothing needs your attention', history: 'No retained history' }
+
+type Selection = {
+  items: Record<string, { identity: ActivityIdentity; retryable: boolean }>
+  snapshot?: ActivitySelection
+  excludeIds: number[]
 }
 
-// How many terminal rows one "show more" adds. Small on purpose: the point
-// of this page is what is happening, and the history behind it is opened
-// deliberately, a screenful at a time.
-const PAGE = 25
+type ActionDraft = {
+  request: ActivityRequest
+  total: number
+  label: string
+  confirm: boolean
+  retryOf?: string
+}
 
-// The groups, in the order they matter. Active is never collapsed and never
-// paged — it is the answer to "what is happening", and an answer that is
-// partly hidden is not one. Finished and Failed are history: collapsed to a
-// count, opened when asked, and paged from there.
-const GROUPS = [
-  { key: 'imported' as const, label: 'Finished' },
-  { key: 'failed' as const, label: 'Failed' },
-]
+type Dialog =
+  | { kind: 'submit'; draft: ActionDraft }
+  | { kind: 'operation'; id: string }
+  | { kind: 'log'; item: ActivityItem }
+  | { kind: 'manual' }
+  | { kind: 'choose-files'; item: ActivityItem }
+  | { kind: 'reservation'; item: ActivityItem }
+
+const emptySelection = (): Selection => ({ items: {}, excludeIds: [] })
+const readyToRetry = (item: ActivityItem) => item.actions?.some(action => action.kind === 'retry' && action.enabled) ?? false
+const ACTION_TITLES = { delete: 'Delete jobs', retry: 'Retry jobs', approve: 'Approve import', archive: 'Clear from attention', recheck: 'Check Runner receipt' }
+const operationQueryKey = (id: string) => ['activity-operation', id]
+function operationOptions(id: string) {
+  return {
+    queryKey: operationQueryKey(id),
+    queryFn: () => getActivityOperation(id),
+    retry: false as const,
+    refetchInterval: (query: { state: { data?: ActivityOperation; error: Error | null } }) =>
+      query.state.data?.state === 'completed' || (query.state.error instanceof ApiError && query.state.error.status === 404) ? false : 2000,
+  }
+}
 
 export function ActivityPage() {
- const actionTrigger=useRef<HTMLElement|null>(null)
- const rememberAction=()=>{actionTrigger.current=document.activeElement instanceof HTMLElement?document.activeElement:null}
   const qc = useQueryClient()
-  const [expanded, setExpanded] = useState<Set<number>>(new Set())
-  const [manual, setManual] = useState<Partial<ManualImportRequest> | null>(null)
-  const [resolveMode, setResolveMode] = useState<'files' | 'delivery' | 'legacy'>('files')
-  const [search, setSearch] = useState('')
-  const [open, setOpen] = useState<Record<string, boolean>>({})
-  const [shown, setShown] = useState<Record<string, number>>({ imported: PAGE, failed: PAGE })
-  const [confirmClear, setConfirmClear] = useState<'imported' | 'failed' | null>(null)
-  const [actionErr, setActionErr] = useState('')
+  const hash = useLocation({ select: location => location.hash.replace(/^#/, '') })
+  const [view, setView] = useState<ActivityView>(() => hash === 'history' || hash === 'attention' ? hash : 'progress')
+  const [scope, setScope] = useState<ActivityScope>(() => new URLSearchParams(window.location.search).get('scope') === 'imports' ? 'imports' : 'all')
+  const [linkedJob] = useState(() => new URLSearchParams(window.location.search).get('job'))
+  const [search, setSearch] = useState(() => linkedJob && /^\d+$/.test(linkedJob) ? `#${linkedJob}` : '')
+  const [offset, setOffset] = useState(0)
+  const [dialog, setDialog] = useState<Dialog | null>(null)
+  const [selection, setSelection] = useState<Selection>(emptySelection)
+  const [manualQueued, setManualQueued] = useState(0)
+  const [operationIds, setOperationIds] = useState(readActivityOperationIds)
+  const submitting = useRef(false)
+  const opener = useRef<HTMLElement | null>(null)
+  const heading = useRef<HTMLHeadingElement | null>(null)
+  const query = useQuery({
+    queryKey: ['activity', view, scope, search, offset],
+    queryFn: () => getJobActivity(view, scope, search, PAGE_SIZE, offset),
+    refetchInterval: 4000,
+    retry: false,
+  })
+  const data = query.data
+  useEffect(() => {
+    if (linkedJob && search === `#${linkedJob}` && data?.total === 0) {
+      const found = VIEWS.find(([key]) => data.counts[key] > 0)
+      if (found) setView(found[0])
+    }
+  }, [linkedJob, search, data])
+  const operations = useQueries({ queries: operationIds.map(operationOptions) })
+  const completedIds = operations.flatMap(({ data }) => data?.state === 'completed' ? [data.id] : []).join(',')
+  const currentDialogOperation = dialog?.kind === 'operation'
+    ? operations[operationIds.indexOf(dialog.id)]
+    : undefined
 
-  // Only the active list polls. Finished and Failed do not change on their
-  // own — something has to finish or fail first, and that moves the counts,
-  // which is what tells this page to look again.
-  const summary = useQuery({
-    queryKey: ['queue-summary'],
-    queryFn: getQueueSummary,
-    refetchInterval: 4_000,
-  })
-  const active = useQuery({
-    queryKey: ['queue', 'active', search],
-    queryFn: () => getQueuePage('active', search, 200),
-    refetchInterval: 4_000,
-  })
-  const finished = useQuery({
-    queryKey: ['queue', 'imported', search, shown.imported],
-    queryFn: () => getQueuePage('imported', search, shown.imported),
-    enabled: !!open.imported,
-  })
-  const failed = useQuery({
-    queryKey: ['queue', 'failed', search, shown.failed],
-    queryFn: () => getQueuePage('failed', search, shown.failed),
-    enabled: !!open.failed,
-  })
+  useEffect(() => {
+    const sync = () => setOperationIds(readActivityOperationIds())
+    window.addEventListener('storage', sync)
+    window.addEventListener(activityOperationChange, sync)
+    return () => {
+      window.removeEventListener('storage', sync)
+      window.removeEventListener(activityOperationChange, sync)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (completedIds) void qc.invalidateQueries({ queryKey: ['activity'] })
+  }, [completedIds, qc])
+
+  useEffect(() => {
+    if (hash === 'history' || hash === 'attention') {
+      setView(hash)
+      setOffset(0)
+      setSelection(emptySelection())
+    }
+  }, [hash])
+
+  useEffect(() => {
+    if (data && offset > 0 && offset >= data.total) {
+      setOffset(Math.max(0, Math.ceil(data.total / PAGE_SIZE) - 1) * PAGE_SIZE)
+    }
+  }, [data, offset])
 
   const invalidate = () => {
-    void qc.invalidateQueries({ queryKey: ['queue'] })
-    void qc.invalidateQueries({ queryKey: ['queue-summary'] })
-  }
-  const remove = useMutation({ mutationFn: (id: number) => removeQueueItem(id, false), onSettled: invalidate })
-  const doImport = useMutation({
-    mutationFn: (id: number) => {
-      const row = active.data?.find((d) => d.id === id)
-      return row?.control?.lifecycle === 'held' ? resumeQueueItem(id) : importQueueItem(id)
-    },
-    onMutate: () => setActionErr(''),
-    onError: (e: Error) => setActionErr(e.message),
-    onSettled: invalidate,
-  })
-  const cancelImport = useMutation({
-    mutationFn: ({id,identity}:{id:number;identity:ImportAttemptIdentity}) => cancelQueueImport(id,identity),
-    onMutate: () => setActionErr(''),
-    onError: (e: Error) => setActionErr(e.message),
-    onSettled: invalidate,
-  })
-  const doBlocklist = useMutation({ mutationFn: (id: number) => blocklistQueueItem(id), onSettled: invalidate })
-  const clearFinished = useMutation({
-    mutationFn: clearFinishedQueue,
-    onSettled: () => {
-      setConfirmClear(null)
-      invalidate()
-    },
-  })
-  const clearFailed = useMutation({
-    mutationFn: clearFailedQueue,
-    onSettled: () => {
-      setConfirmClear(null)
-      invalidate()
-    },
-  })
-
-  const busy =
-    remove.isPending || doImport.isPending || cancelImport.isPending || doBlocklist.isPending ||
-    clearFinished.isPending || clearFailed.isPending
-  const toggle = (id: number) =>
-    setExpanded((prev) => {
-      const next = new Set(prev)
-      if (next.has(id)) next.delete(id)
-      else next.add(id)
-      return next
-    })
-
-  const counts = summary.data?.counts ?? {}
-  const activeRows = active.data ?? []
-  const groupRows: Record<string, QueueItem[]> = {
-    imported: finished.data ?? [],
-    failed: failed.data ?? [],
-  }
-  const retention = summary.data?.retentionDays
-  const nothingAtAll = (summary.data?.total ?? 0) === 0
-
-  const rowProps = (d: QueueItem) => ({
-    d,
-    open: expanded.has(d.id),
-    busy,
-    onToggle: () => toggle(d.id),
-    onImport: () => {rememberAction();doImport.mutate(d.id)},
-    onCancelImport: () => {rememberAction();if(d.importControl)cancelImport.mutate({id:d.id,identity:d.importControl});else setActionErr('Refresh Activity before cancelling this import.')},
-    onBlocklist: () => doBlocklist.mutate(d.id),
-    onRemove: () => remove.mutate(d.id),
-    onManual: () =>
-      setManual({
-        path: d.importPath || d.savePath || '',
-        mediaItemId: d.mediaItemId,
-        copyId: d.copyId,
-        downloadId: d.id,
-      }),
-  })
-
-  const columns = (
-    <>
-      <colgroup>
-        <col className="col-toggle" />
-        <col className="col-release" />
-        <col className="col-quality" />
-        <col className="col-state" />
-        <col className="col-progress" />
-        <col className="col-added" />
-        <col className="col-actions" />
-      </colgroup>
-      <thead>
-        <tr>
-          <th></th>
-          <th>Release</th>
-          <th>Quality</th>
-          <th>Doing it</th>
-          <th>Progress</th>
-          <th>Added</th>
-          <th>Actions</th>
-        </tr>
-      </thead>
-    </>
-  )
-
-  return (
-    <>
-      <header className="page-head">
-        <h1>Activity</h1>
-        <button onClick={() => { setResolveMode('files'); setManual(manual ? null : {}) }} aria-expanded={!!manual}>
-          {manual ? 'Close Resolve' : 'Resolve'}
-        </button>
-      </header>
-
-      {manual && <ActionDialog title="Resolve" className="resolve-dialog" onClose={() => setManual(null)}>
-        <ResolvePanel key={manual.path ?? 'resolve'} embedded initialMode={resolveMode} prefill={manual} onDone={() => { setManual(null); invalidate() }} />
-      </ActionDialog>}
-
-      {actionErr && <ActionDialog returnFocus={actionTrigger} title="Activity action failed" onClose={()=>setActionErr('')}><p role="alert">{actionErr}</p></ActionDialog>}
-
-      <CompletedFolders onImport={(path, mode, downloadId) => { setResolveMode(mode === 'legacy' ? 'legacy' : mode === 'delivery' ? 'delivery' : 'files'); setManual({ path, downloadId }) }} />
-
-      <DeliveryLifecycleArchive />
-
-      <div className="activity-toolbar">
-        <input
-          type="search"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          placeholder="Filter by release title"
-          aria-label="Filter by release title"
-        />
-        <span className="muted" data-testid="activity-counts">
-          {summary.data?.active ?? 0} active · {counts.imported ?? 0} finished ·{' '}
-          {counts.failed ?? 0} failed
-        </span>
-      </div>
-
-      {/* ACTIVE — always whole, never paged. */}
-      <section className="panel">
-        {activeRows.length === 0 && (
-          <p className="muted">
-            {nothingAtAll
-              ? 'Nothing in the queue. Grab something from a title\'s search.'
-              : search
-                ? 'Nothing moving matches that.'
-                : 'Nothing moving right now.'}
-          </p>
-        )}
-        {activeRows.length > 0 && (
-          <table className="queue-table">
-            {columns}
-            {sections(activeRows).map((section) => (
-              <tbody key={section.key}>
-                <tr className="section-row">
-                  <td colSpan={7}>
-                    <span className="section-label" title={section.title}>
-                      {section.label}
-                    </span>
-                    <span className="section-count">{section.rows.length}</span>
-                  </td>
-                </tr>
-                {section.rows.map((d) => (
-                  <RowGroup key={d.id} {...rowProps(d)} />
-                ))}
-              </tbody>
-            ))}
-          </table>
-        )}
-      </section>
-
-      {/* FINISHED and FAILED — collapsed to a count. This is the part that
-          used to grow without limit: every receipt Curator ever wrote, in one
-          table, forever. */}
-      {GROUPS.map((group) => {
-        const total = counts[group.key] ?? 0
-        const rows = groupRows[group.key]
-        const isOpen = !!open[group.key]
-        const action = group.key === 'imported' ? clearFinished : clearFailed
-        const actionLabel = group.key === 'imported' ? 'finished' : 'failed'
-        return (
-          <section className="panel activity-group" key={group.key}>
-            <div className="activity-group-head">
-              <button
-                className="link-button"
-                aria-expanded={isOpen}
-                data-testid={`toggle-${group.key}`}
-                onClick={() => setOpen((p) => ({ ...p, [group.key]: !p[group.key] }))}
-              >
-                {isOpen ? '▾' : '▸'} {group.label}
-                <span className="section-count">{total}</span>
-              </button>
-              {total > 0 && (
-                confirmClear === group.key ? (
-                  <span className="confirm-inline">
-                    Clear {total} {actionLabel} row{total === 1 ? '' : 's'}?
-                    <button disabled={busy} onClick={() => action.mutate()}>
-                      Yes, clear
-                    </button>
-                    <button className="link-button" onClick={() => setConfirmClear(null)}>
-                      Cancel
-                    </button>
-                  </span>
-                ) : (
-                  <button
-                    className="link-button"
-                    data-testid={`clear-${actionLabel}`}
-                    onClick={() => setConfirmClear(group.key)}
-                  >
-                    Clear {actionLabel}
-                  </button>
-                )
-              )}
-            </div>
-            {isOpen && (
-              <>
-                {rows.length === 0 && (
-                  <p className="muted">{search ? 'Nothing here matches that.' : 'Nothing here.'}</p>
-                )}
-                {rows.length > 0 && (
-                  <table className="queue-table">
-                    {columns}
-                    <tbody>
-                      {rows.map((d) => (
-                        <RowGroup key={d.id} {...rowProps(d)} />
-                      ))}
-                    </tbody>
-                  </table>
-                )}
-                {rows.length >= (shown[group.key] ?? PAGE) && (
-                  <button
-                    className="link-button"
-                    onClick={() =>
-                      setShown((p) => ({ ...p, [group.key]: (p[group.key] ?? PAGE) + PAGE }))
-                    }
-                  >
-                    Show {PAGE} more
-                  </button>
-                )}
-              </>
-            )}
-          </section>
-        )
-      })}
-
-      <p className="muted" style={{ fontSize: 13 }}>
-        Grouped by what each job is doing right now. Stages up to and including{' '}
-        <span className="mono">Moving</span> happen inside the download client;{' '}
-        <span className="mono">Copying to library</span> is the one Curator does itself. Clients that
-        push report a change within a second; the rest are reconciled by the 30s sweep (task{' '}
-        <span className="mono">queue.refresh</span>). Expand a row for the handoff — every step from
-        grab to import, and the exact paths Curator used.
-        {typeof retention === 'number' && (
-          <>
-            {' '}
-            Finished and failed rows are kept for{' '}
-            {retention === 0 ? 'ever' : `${retention} days`} (Settings → Library).
-          </>
-        )}
-      </p>
-    </>
-  )
-}
-
-export function ResolvePanel({
-  initialMode = 'files',
-  prefill = {},
-  embedded = false,
-  onDone = () => {},
-}: {
-  initialMode?: 'files' | 'delivery' | 'legacy'
-  prefill?: Partial<ManualImportRequest>
-  embedded?: boolean
-  onDone?: () => void
-}) {
-  const [mode, setMode] = useState<'files' | 'delivery' | 'legacy'>(initialMode)
-  const [selectedPath, setSelectedPath] = useState(prefill.path ?? '')
-  const [selectedLegacy, setSelectedLegacy] = useState(false)
-  const [legacyFingerprint, setLegacyFingerprint] = useState('')
-  return <section className={`resolve-panel${embedded ? ' resolve-panel-embedded' : ''}`} aria-label="Resolve downloads">
-    {!embedded && <header className="resolve-heading">
-      <div>
-        <h2>Resolve</h2>
-        <p className="muted">Choose a destination for unassociated files, inspect an existing legacy backlog, or resolve files from an accepted Runner manifest.</p>
-      </div>
-    </header>}
-    <nav className="resolve-modes" aria-label="Resolve source">
-      <button aria-pressed={mode === 'files'} onClick={() => setMode('files')}>Completed files</button>
-      <button aria-pressed={mode === 'delivery'} onClick={() => setMode('delivery')}>Runner delivery</button>
-      <button aria-pressed={mode === 'legacy'} onClick={() => setMode('legacy')}>Legacy backlog</button>
-    </nav>
-    {mode === 'files' ? <ManualImportPanel prefill={{ ...prefill, path: selectedPath || prefill.path, reviewLegacy: selectedLegacy, reviewLegacyFingerprint: legacyFingerprint }} onDone={onDone} /> : mode === 'delivery' ? prefill.downloadId ? <DeliveryLifecycleForDownload downloadId={prefill.downloadId} /> : <DeliveryLifecycleArchive initiallyOpen /> : <LegacyReviewReport onResolve={(path, fingerprint) => { setSelectedPath(path); setSelectedLegacy(true); setMode('files'); setLegacyFingerprint(fingerprint) }} />}
-  </section>
-}
-
-function LegacyReviewReport({ onResolve }: { onResolve: (path: string, fingerprint: string) => void }) {
-  const inventory = useQuery({ queryKey: ['completed-inventory'], queryFn: getCompletedInventory })
-  const tasks = useQuery({ queryKey: ['tasks'], queryFn: getTasks, refetchInterval: 2_000 })
-  const qc = useQueryClient()
-  const [scanRequestedFrom, setScanRequestedFrom] = useState<string | null>(null)
-  const scanTask = tasks.data?.find((task) => task.name === 'downloads.inventory')
-  const scan = useMutation({
-    mutationFn: () => runTask('downloads.inventory'),
-    onMutate: () => setScanRequestedFrom(scanTask?.lastRunAt ?? ''),
-    onSuccess: () => { void qc.invalidateQueries({ queryKey: ['tasks'] }) },
-    onError: () => setScanRequestedFrom(null),
-  })
-  const scanFinished = scanRequestedFrom !== null && !!scanTask && !scanTask.running && scanTask.lastRunAt !== scanRequestedFrom
-  const [selected, setSelected] = useState<Record<string, boolean>>({})
-  const rows = inventory.data?.roots.flatMap((root) => root.entries
-    .filter((entry) => entry.legacyReview || entry.receipts.some((receipt) => receipt.legacyReview))
-    .map((entry) => ({ root, entry }))) ?? []
-  const selectedRows = rows.filter(({ entry }) => selected[entry.path])
-  const selectedBytes = selectedRows.reduce((sum, row) => sum + row.entry.bytes, 0)
-  const exportReport = () => {
-    const quote = (value: string) => `"${value.replaceAll('"', '""')}"`
-    const lines = [['payload', 'file', 'bytes', 'modified_at', 'mode', 'snapshot_identity', 'download_ids', 'titles', 'proposed_outcome']]
-    for (const { entry } of selectedRows) {
-      const receipts = entry.receipts.filter((receipt) => receipt.legacyReview)
-      for (const file of entry.reviewFiles ?? []) {
-        lines.push([entry.path, file.path, String(file.sizeBytes), file.modifiedAt, file.mode, file.snapshotIdentity,
-          receipts.map((receipt) => String(receipt.downloadId)).join(';'),
-          receipts.map((receipt) => receipt.title).join(';'),
-          'Manual preview required; select exact files and target before importing'])
-      }
-      if (!entry.reviewFiles?.length) {
-        lines.push([entry.path, '', String(entry.bytes), '', '', entry.fingerprint,
-          receipts.map((receipt) => String(receipt.downloadId)).join(';'),
-          receipts.map((receipt) => receipt.title).join(';'),
-          'Refresh inventory, then inspect exact files before choosing an action'])
-      }
+    for (const key of ['activity', 'queue', 'imports', 'queue-summary']) {
+      void qc.invalidateQueries({ queryKey: [key] })
     }
-    const csv = lines.map((line) => line.map(quote).join(',')).join('\r\n')
-    const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }))
-    const anchor = document.createElement('a')
-    anchor.href = url
-    anchor.download = 'curator-legacy-review-proposal.csv'
-    anchor.click()
-    URL.revokeObjectURL(url)
   }
-  return <section className="panel legacy-review-report" aria-label="Legacy backlog review report">
-    <h3>Existing backlog review</h3>
-    <p className="muted">Read-only report of pre-delivery downloads. Each proposal uses the current complete file inventory and associated download records. Resolve opens the existing explicit file-selection preview; it does not import until you choose files and a destination.</p>
-    <div className="row-actions">
-      <button disabled={scan.isPending || !!scanTask?.running} onClick={() => scan.mutate()}>{scanTask?.running ? 'Refreshing inventory…' : 'Refresh inventory'}</button>
-      {scanFinished && <span role="status" className={scanTask?.lastError ? 'error-text' : 'muted'}>{scanTask?.lastError ? `Scan failed: ${scanTask.lastError}` : 'Inventory refreshed.'}</span>}
-      {scan.error && <span role="alert" className="error-text">{scan.error.message}</span>}
-    </div>
-    {inventory.isLoading && <p role="status">Loading the latest completed-storage inventory…</p>}
-    {inventory.error && <p role="alert" className="error-text">{inventory.error.message}</p>}
-    {inventory.data?.roots.some((root) => root.error) && <p role="alert" className="warning-text">One or more storage scans are incomplete. The report uses the last complete inventory for those roots; scan them before approving any future action.</p>}
-    <p><strong>{rows.length}</strong> legacy payloads · <strong>{rows.reduce((sum, row) => sum + row.entry.files, 0)}</strong> files · <strong>{fmtBytes(rows.reduce((sum, row) => sum + row.entry.bytes, 0))}</strong></p>
-    <div className="row-actions">
-      <button disabled={!rows.length} onClick={() => setSelected(Object.fromEntries(rows.map(({ entry }) => [entry.path, true])))}>Select all for proposal</button>
-      <button disabled={!selectedRows.length} onClick={() => setSelected({})}>Clear proposal selection</button>
-      <button disabled={!selectedRows.length} onClick={exportReport}>Export selected proposal</button>
-      <span className="muted">{selectedRows.length} selected · {fmtBytes(selectedBytes)}</span>
-    </div>
-    {rows.length === 0 ? <p className="muted">No legacy review entries are visible in the latest completed-storage scan.</p> : <div className="legacy-review-list">
-      {rows.map(({ root, entry }) => <LegacyReviewEntry key={entry.path} root={root} entry={entry} selected={!!selected[entry.path]} onSelect={(checked) => setSelected((previous) => ({ ...previous, [entry.path]: checked }))} onResolve={onResolve} />)}
-    </div>}
-  </section>
-}
-
-function LegacyReviewEntry({ root, entry, selected, onSelect, onResolve }: {
-  root: CompletedRoot
-  entry: CompletedEntry
-  selected: boolean
-  onSelect: (checked: boolean) => void
-  onResolve: (path: string, fingerprint: string) => void
-}) {
-  const receipts = entry.receipts.filter((receipt) => receipt.legacyReview)
-  const primaryReceipt = receipts.find((receipt) => (receipt.mediaItemId ?? 0) > 0)
-  const target = useQuery({
-    queryKey: ['library', primaryReceipt?.mediaItemId],
-    queryFn: () => getLibraryItem(primaryReceipt!.mediaItemId!),
-    enabled: !!primaryReceipt,
+  const chooseAll = useMutation({
+    mutationFn: () => createActivitySelection(scope, search),
+    onSuccess: snapshot => setSelection({ items: {}, snapshot, excludeIds: [] }),
   })
-  const matchingCopyFiles = target.data?.files.filter((file) => (file.copyId ?? 0) === (primaryReceipt?.copyId ?? 0)) ?? []
-  const proposed = entry.reviewFiles?.length
-    ? 'Inspect the listed files in the explicit importer, then choose the exact title and copy.'
-    : 'Refresh the inventory before deciding.'
-  return <article className="legacy-review-entry">
-    <label><input type="checkbox" checked={selected} onChange={(event) => onSelect(event.target.checked)} /> Include in proposal</label>
-    <strong className="mono">{entry.path}</strong>
-    <p>{entry.files} files · {fmtBytes(entry.bytes)} · {entry.reason}</p>
-    <p className="muted">Proposal: {proposed}</p>
-    <button disabled={!entry.reviewFiles?.length} onClick={() => onResolve(entry.path, entry.fingerprint)}>Inspect files and choose destination</button>
-    <details><summary>Current file identities and evidence</summary>
-      <p className="muted">Payload snapshot {entry.fingerprint}. Root scan: {root.lastCompleteAt ? new Date(root.lastCompleteAt).toLocaleString() : 'unknown'}. Snapshot identities describe current metadata only; they do not prove storage identity or authorize cleanup.</p>
-      <p>Associated history: {receipts.map((receipt) => `#${receipt.downloadId} ${receipt.title}`).join('; ') || 'orphaned legacy path'}.</p>
-      {primaryReceipt && <div className="legacy-target-evidence">
-        <strong>Recorded destination: {target.data?.title ?? `library item #${primaryReceipt.mediaItemId}`} · {primaryReceipt.copyId ? `copy #${primaryReceipt.copyId}` : 'primary copy'}</strong>
-        {target.isLoading ? <p className="muted">Checking the recorded destination…</p> : target.error ? <p className="error-text">The recorded library target could not be read: {target.error.message}</p> : matchingCopyFiles.length
-          ? <><p className="muted">Same-copy library files are listed below. Current content health is unverified by this report; filenames, sizes, and old receipts do not prove equivalent or safe-to-remove content.</p><ul>{matchingCopyFiles.map((file) => <li key={file.id}><span className="mono">{file.path}</span> · {fmtBytes(file.size)} · quality evidence {file.verified ? 'verified' : 'unverified'}</li>)}</ul></>
-          : <p className="muted">No current files are recorded for this exact copy. The report cannot propose a duplicate or cleanup outcome.</p>}
-      </div>}
-      {entry.reviewFiles?.length ? <ul>{entry.reviewFiles.map((file) => <li key={file.path}><span className="mono">{file.path}</span> · {fmtBytes(file.sizeBytes)} · {new Date(file.modifiedAt).toLocaleString()} · {file.mode} <details><summary>Snapshot identity</summary><code>{file.snapshotIdentity}</code></details></li>)}</ul> : <p className="muted">A fresh complete inventory scan is needed to enumerate current files.</p>}
-    </details>
-  </article>
-}
+  const submit = useMutation({
+    mutationFn: ({ request }: ActionDraft) => postActivityAction(request),
+    onSuccess: (operation, draft) => {
+      void qc.cancelQueries({ queryKey: operationQueryKey(operation.id) })
+      qc.setQueryData(operationQueryKey(operation.id), operation)
+      updateActivityOperationIds(operation.id, true)
+      if (draft.retryOf) updateActivityOperationIds(draft.retryOf, false)
+      setDialog({ kind: 'operation', id: operation.id })
+      setSelection(emptySelection())
+      invalidate()
+    },
+    onSettled: () => { submitting.current = false },
+    onError: (error, { request }) => {
+      // An HTTP rejection is final for this submission. A lost response can
+      // still represent an accepted command, so keep its ID and resend it verbatim.
+      if (error instanceof ApiError && error.status >= 400 && error.status < 500 && error.status !== 408) {
+        updateActivityOperationIds(request.requestId, false)
+      }
+    },
+  })
+  const release = useMutation({
+    mutationFn: resolveQueueReservation,
+    onSuccess: invalidate,
+  })
 
-function RowGroup(props: {
-  d: QueueItem
-  open: boolean
-  busy: boolean
-  onToggle: () => void
-  onImport: () => void
-  onCancelImport: () => void
-  onBlocklist: () => void
-  onRemove: () => void
-  onManual: () => void
-}) {
-  const { d, open, busy } = props
- const [whyOpen,setWhyOpen]=useState(false)
-  const [reviewOpen,setReviewOpen]=useState(false)
-  const [acknowledged,setAcknowledged]=useState(false)
-  const qc=useQueryClient()
-  const resolve=useMutation({mutationFn:()=>resolveQueueReservation(d.id),onSuccess:()=>{setReviewOpen(false);void qc.invalidateQueries({queryKey:['queue']});void qc.invalidateQueries({queryKey:['queue-summary']})}})
-  const [importReviewOpen,setImportReviewOpen]=useState(false)
-  const cancellationPending=d.importControl?.outcome==='pending'
-  const publicationReview=!!d.importControl?.retainedPublications||!!d.importControl?.pendingPublications
-  const retryBlocked=cancellationPending||publicationReview
-  const queuedImport = d.importState === 'queued'
-  const startingImport = d.importState === 'running' && !d.stage
-  const canImport = (d.state === 'awaiting_import' || d.state === 'downloaded') && !d.importState && !retryBlocked
-  const canRetry = d.state === 'failed' && d.submissionPhase !== 'uncertain' && !retryBlocked
-  const interruptedImport = d.state === 'importing' && !d.stage && !d.importState && !retryBlocked
-  const activeImport = d.stage === 'importing'
-  const importerOwned = queuedImport || startingImport || activeImport
-  const held = !!d.control && (d.control.lifecycle === 'held' || d.control.version !== 1)
-  const canBlocklist = d.state !== 'imported' && !importerOwned && !held
+  function open(event: SyntheticEvent<HTMLElement>, next: Dialog) {
+    focusActionTrigger(event)
+    opener.current = event.currentTarget
+    setDialog(next)
+  }
 
-  return (
-    <>
-      <tr>
-        <td>
-          <button
-            className="row-toggle"
-            aria-label={open ? 'Collapse handoff' : 'Show handoff'}
-            aria-expanded={open}
-            onClick={props.onToggle}
-          >
-            {open ? '▾' : '▸'}
-          </button>
-        </td>
-        <td className="mono">
-          <span className="queue-title" title={d.title}>{d.title}</span>
-          {/* One line, elided: the release column is what is left after the
-              fixed columns, and a four-line match sentence under every title
-              turned each row into a paragraph. The full reason is the title. */}
-          {d.match?.reason && <div className="muted queue-match" title={d.match.reason}>Match: {d.match.reason}</div>}
-          {d.error && <div className="error-text queue-row-detail" title={d.error}>{d.error}</div>}
-          {d.importBlockedSince && <div className={`queue-row-detail ${Date.now() - new Date(d.importBlockedSince).getTime() >= 30 * 60 * 1000 ? 'warning-text' : 'muted'}`} title={`Import blocked ${fmtRelative(d.importBlockedSince)} · ${d.importRetryAttempts ?? 0} retries · ${d.importRetryAt && new Date(d.importRetryAt).getTime() > Date.now() ? `next retry ${fmtRelative(d.importRetryAt)}` : 'retry due'}`}>
-            Import blocked {fmtRelative(d.importBlockedSince)} · {d.importRetryAttempts ?? 0} retries · {d.importRetryAt && new Date(d.importRetryAt).getTime() > Date.now() ? `next retry ${fmtRelative(d.importRetryAt)}` : 'retry due'}
-          </div>}
-          {d.parkedReason && <div className="muted queue-row-detail" title={`Reserved: ${d.parkedReason}`}>Reserved: {d.parkedReason}</div>}
-          {reviewOpen && <ActionDialog title="Review episode reservation" onClose={()=>setReviewOpen(false)}>
-            <p>The original submission may still exist or complete later. Releasing custody permits a deliberate Search to acquire another copy. The original row and a persistent possible-duplicate warning remain.</p>
-            <p>{d.parkedReason || 'Submission acceptance is uncertain.'}</p>
-            <label><input type="checkbox" checked={acknowledged} onChange={(e)=>setAcknowledged(e.target.checked)}/>I acknowledge the possible duplicate and have reviewed the client.</label>
-            {resolve.error && <p role="alert">{resolve.error.message}</p>}
-            <button disabled={!acknowledged || resolve.isPending} onClick={()=>resolve.mutate()}>Release reservation</button>
-          </ActionDialog>}
-          {whyOpen && <ActionDialog title="Why chosen" onClose={()=>setWhyOpen(false)}>
-            {d.selection ? <>
-              <p>{d.selection.reason}</p>
-              <p>Target: {d.selection.target}. {d.selection.partial ? 'Partial discovery; pack comparison remains deferred.' : 'Completed bounded discovery.'}</p>
-              <p>Plan {d.planId}: {d.planState}. Submission: {d.submissionPhase}.</p>
-              <p>{d.selection.plan.Cost.UnknownSizes>0 ? `${d.selection.plan.Cost.UnknownSizes} transfers have unknown size; known subtotal ${fmtBytes(d.selection.plan.Cost.KnownBytes)}.` : `Full advertised transfer cost: ${fmtBytes(d.selection.plan.Cost.KnownBytes)}.`}</p>
-              {d.selection.plan.Cost.ZeroSeedTorrents>0 && <p className="warning-text">Selected torrents include reported zero-seeder supply; higher attainable outcome takes priority over health.</p>}
-              <ul>{d.selection.plan.Releases.map(key=><li key={key}>{d.selection!.titles[key]} — permitted episode IDs: {d.selection!.importAllowlists[key]?.join(', ') || 'none'}</li>)}</ul>
-              {d.selection.plan.Unserved.length>0 && <p>Unserved episode IDs: {d.selection.plan.Unserved.join(', ')}. No admissible supply in this pool.</p>}
-            </> : <p>Selection reason was not recorded for this legacy or explicit manual grab.</p>}
-            {d.match?.reason && <p>Identity match: {d.match.reason}</p>}
-          </ActionDialog>}
+  function close() {
+    if (submitting.current) return
+    if (!opener.current?.isConnected || opener.current.matches(':disabled')) opener.current = heading.current
+    setDialog(null)
+  }
 
-        </td>
-        <td className="muted">{d.quality}</td>
-        <td>
-          {/*
-            While a job is in flight the section heading already says which
-            stage it is at, so repeating it here is noise — and worse than
-            noise: a row sitting under "Repairing" showed a "downloading" pill,
-            because `state` is the coarse lifecycle and cannot tell the two
-            apart. That is the same wrong claim the backend was making, left
-            on the screen.
+  function send(draft: ActionDraft) {
+    if (submitting.current) return
+    submitting.current = true
+    // Write the lookup ID before the request so a completed submission can
+    // be recovered if this tab closes before receiving its response.
+    updateActivityOperationIds(draft.request.requestId, true)
+    submit.mutate(draft)
+  }
 
-            So a moving row answers the question the section does not: WHICH
-            APPLICATION is doing this. Curator's own name appears exactly once,
-            on the one stage Curator performs itself.
-          */}
-          {cancellationPending ? <span className="pill pill-warning">cancelling</span> : publicationReview ? <span className="pill pill-warning">review required</span> : queuedImport ? (
-            <span className="pill pill-neutral">queued</span>
-          ) : startingImport ? (
-            <span className="muted stage-owner">Curator</span>
-          ) : interruptedImport ? (
-            <span className="pill pill-warning">interrupted</span>
-          ) : d.stage ? (
-            <span className="muted stage-owner">{d.stagePeer || 'Curator'}</span>
-          ) : (
-            <span className={`pill ${STATE_PILL[d.state] ?? 'pill-neutral'}`}>
-              {label(STATE_LABEL, d.state)}
-            </span>
-          )}
-        </td>
-        <td>
-          <StageProgress d={d} />
-        </td>
-        <td className="muted nowrap" title={d.addedAt}>
-          {fmtRelative(d.addedAt)}
-        </td>
-        <td>
-          <div className="row-actions">
-            <button onClick={(event)=>{focusActionTrigger(event);setWhyOpen(true)}}>Why chosen</button>
-            {(d.importControl?.outcome==='pending'||d.importControl?.outcome==='cancelled'||publicationReview||!!d.importControl?.heldStages)&&<button onClick={(event)=>{focusActionTrigger(event);setImportReviewOpen(true)}}>Review retained import</button>}
-            {importReviewOpen&&<ActionDialog title="Review retained import" onClose={()=>setImportReviewOpen(false)}><ImportReviewPanel id={d.id}/></ActionDialog>}
+  function launch(event: SyntheticEvent<HTMLElement>, action: ActivityActionKind, targets: ActivityTargets, total: number, label = ACTION_TITLES[action], retryOf?: string) {
+    if (submitting.current) return
+    submit.reset()
+    const confirm = action === 'delete' && !retryOf
+    const draft = { request: { ...targets, action, requestId: newActivityRequestId() }, total, label, confirm, retryOf }
+    if (retryOf) setDialog({ kind: 'submit', draft })
+    else open(event, { kind: 'submit', draft })
+    if (!confirm) send(draft)
+  }
 
-            {(d.parkedReason || d.submissionPhase==='uncertain') && <button onClick={(event)=>{focusActionTrigger(event);setAcknowledged(false);resolve.reset();setReviewOpen(true)}}>Review reservation</button>}
-            {held && d.control?.retry_policy === 'resume_same_job' && <button onClick={(event)=>{focusActionTrigger(event);props.onImport()}} disabled={busy}>Resume same job</button>}
-            {canImport && !held && (
-              <button onClick={(event)=>{focusActionTrigger(event);props.onImport()}} disabled={busy}>
-                Import now
-              </button>
-            )}
-            {canRetry && !held && (
-              <>
-                <button onClick={(event)=>{focusActionTrigger(event);props.onImport()}} disabled={busy}>
-                  Retry
-                </button>
-                <button onClick={props.onManual} disabled={busy}>
-                  Manual import
-                </button>
-              </>
-            )}
-            {interruptedImport && (
-              <button onClick={(event)=>{focusActionTrigger(event);props.onImport()}} disabled={busy}>
-                Restart import
-              </button>
-            )}
-            {(importerOwned || interruptedImport) && !cancellationPending && (
-              <button className="btn-danger" onClick={(event)=>{focusActionTrigger(event);props.onCancelImport()}} disabled={busy}>
-                Cancel import
-              </button>
-            )}
-            {d.error?.includes('no library folder assigned') && (
-              <Link
-                to="/library/$id"
-                params={{ id: String(d.mediaItemId) }}
-                search={{ assignFolder: true }}
-              >
-                Assign folder
-              </Link>
-            )}
-            {canBlocklist && (
-              <button className="btn-danger" onClick={props.onBlocklist} disabled={busy}>
-                Blocklist
-              </button>
-            )}
-            {!importerOwned && !interruptedImport && (
-              <button onClick={props.onRemove} disabled={busy}>
-                Remove
-              </button>
-            )}
-          </div>
-        </td>
-      </tr>
-      {open && (
-        <tr className="handoff-row">
-          <td></td>
-          <td colSpan={6}>
-            <HandoffDetail d={d} />
-          </td>
-        </tr>
-      )}
-    </>
-  )
-}
+  function changeView(next: ActivityView) {
+    setView(next)
+    setOffset(0)
+    setSelection(emptySelection())
+    chooseAll.reset()
+  }
 
-function HandoffDetail({ d }: { d: QueueItem }) {
-  const steps = d.handoff ?? []
-  return (
-    <div className="handoff">
-      <DeliveryLifecycleForDownload downloadId={d.id} />
-      {d.error && <p className="error-text"><strong>Latest error:</strong> {d.error}</p>}
-      {(d.savePath || d.importPath) && (
-        <div className="handoff-paths">
-          {d.savePath && (
-            <div>
-              <span className="muted">Client reported</span>{' '}
-              <span className="path-chip">{d.savePath}</span>
-            </div>
-          )}
-          {d.importPath && d.importPath !== d.savePath && (
-            <div>
-              <span className="muted">Curator looked in</span>{' '}
-              <span className="path-chip">{d.importPath}</span>
-            </div>
-          )}
-        </div>
-      )}
-      {steps.length === 0 ? (
-        <p className="muted">No handoff steps recorded yet.</p>
-      ) : (
-        <ol className="handoff-trace">
-          {steps.map((h, i) => (
-            <li key={i} className="handoff-step" data-step={h.step}>
-              <span className="handoff-dot" />
-              <span className="handoff-when mono">{clock(h.at)}</span>
-              <span className="handoff-what">
-                <b>{label(STEP_LABEL, h.step)}</b>
-                {h.detail ? ` — ${h.detail}` : ''}
-              </span>
-            </li>
-          ))}
-        </ol>
-      )}
+  const items = data?.items ?? []
+  const selected = Object.values(selection.items)
+  const snapKeys = new Set(selection.snapshot?.targets.map(activityIdentityKey))
+  const selectedCount = (selection.snapshot ? selection.snapshot.total - selection.excludeIds.length : 0) + selected.length
+  const canRetrySelected = (selection.snapshot ? selection.snapshot.retryable > 0 : false) || selected.some(item => item.retryable)
+  const retryableCount = selection.excludeIds.length === 0 ? (selection.snapshot?.retryable ?? 0) + selected.filter(item => item.retryable).length : null
+  const selectionTargets: ActivityTargets = selection.snapshot
+    ? { selection: { id: selection.snapshot.id, excludeIds: selection.excludeIds } }
+    : { targets: selected.map(item => item.identity) }
+  const busy = submit.isPending || query.isError || !data
+  const selectionLocked = busy || chooseAll.isPending
+
+  function toggle(item: ActivityItem, checked: boolean) {
+    const identity = item.identity
+    if (!identity) return
+    const key = activityIdentityKey(identity)
+    setSelection(previous => {
+      if (snapKeys.has(key)) {
+        return {
+          ...previous,
+          excludeIds: checked ? previous.excludeIds.filter(id => id !== identity.id) : [...previous.excludeIds, identity.id],
+        }
+      }
+      const selectedItems = { ...previous.items }
+      if (checked) selectedItems[key] = { identity, retryable: readyToRetry(item) }
+      else delete selectedItems[key]
+      return { ...previous, items: selectedItems }
+    })
+  }
+
+  return <div className="activity-feed">
+    <header className="page-head activity-page-head">
+      <div><h1 ref={heading} tabIndex={-1}>Activity</h1><p className="muted">Downloads and imports.</p></div>
+      <button onClick={event => open(event, { kind: 'manual' })}>Import files…</button>
+    </header>
+    {manualQueued > 0 && <ActionNotice revision={manualQueued}>Import queued. Follow its progress in Activity.</ActionNotice>}
+    <nav className="activity-tabs" aria-label="Activity views">
+      {VIEWS.map(([key, text]) => <button key={key} aria-pressed={view === key} disabled={chooseAll.isPending} onClick={() => changeView(key)}>{text} <span>{data?.counts[key] ?? '…'}</span></button>)}
+    </nav>
+    <div className="activity-toolbar">
+      <input type="search" aria-label="Find a title or release" placeholder="Find a title or release" value={search} disabled={chooseAll.isPending}
+        onChange={event => { setSearch(event.target.value); setOffset(0); setSelection(emptySelection()); chooseAll.reset() }} />
+      <label>Show <select aria-label="Activity scope" value={scope} disabled={chooseAll.isPending}
+        onChange={event => { setScope(event.target.value as ActivityScope); setOffset(0); setSelection(emptySelection()); chooseAll.reset() }}>
+        <option value="all">All work</option><option value="imports">Imports only</option>
+      </select></label>
     </div>
-  )
+    {operations.map((operation, index) => {
+      const id = operationIds[index]
+      if (dialog?.kind === 'submit' && dialog.draft.request.requestId === id) return null
+      return <div className="activity-operation panel" key={id}>
+        <p className="muted">{operation.data ? operationStatus(operation.data) : operation.isError ? operation.error.message : 'Checking activity action…'}</p>
+        <div className="row-actions">
+          <button onClick={event => open(event, { kind: 'operation', id })}>Action results</button>
+          {(operation.data?.state === 'completed' || (operation.error instanceof ApiError && operation.error.status === 404)) && <button onClick={() => updateActivityOperationIds(id, false)}>Dismiss</button>}
+        </div>
+      </div>
+    })}
+    {query.isLoading && <p role="status">Loading activity…</p>}
+    {query.isError && <div className="banner warning" role="alert">
+      {query.error.message} {data ? `Showing activity from ${new Date(query.dataUpdatedAt).toLocaleTimeString()}.` : 'Activity and counts are unavailable.'}{' '}
+      <button onClick={() => void query.refetch()}>Refresh activity</button>
+    </div>}
+    {data && view === 'progress' && data.counts.attention > 0 && <div className="import-attention-banner">
+      <strong>{data.counts.attention} {data.counts.attention === 1 ? 'job needs' : 'jobs need'} attention</strong>
+      <button onClick={() => changeView('attention')}>View jobs</button>
+    </div>}
+    {view === 'attention' && !!(data?.total || selectedCount || selection.snapshot) && <div className="activity-selection">
+      <div className="row-actions">
+        <button disabled={selectionLocked || !data?.total || !!selection.snapshot} onClick={() => chooseAll.mutate()}>
+          {chooseAll.isPending ? 'Selecting…' : 'Select all matching jobs'}
+        </button>
+        {(selectedCount > 0 || selection.snapshot) && <button onClick={() => setSelection(emptySelection())} disabled={chooseAll.isPending}>Clear selection</button>}
+        {selectedCount > 0 && <>
+          <span role="status">{selectedCount} selected{retryableCount !== null ? ` · ${retryableCount} can retry` : ''}</span>
+          <button className="btn-accent" disabled={selectionLocked || !canRetrySelected} onClick={event => launch(event, 'retry', selectionTargets, selectedCount)}>Retry selected</button>
+          <button disabled={selectionLocked} onClick={event => launch(event, 'archive', selectionTargets, selectedCount)}>Move selected to History (keep files)</button>
+          <button className="btn-danger" disabled={selectionLocked} onClick={event => launch(event, 'delete', selectionTargets, selectedCount)}>Delete selected</button>
+        </>}
+      </div>
+      {chooseAll.error && <p role="alert" className="error-text">{chooseAll.error.message}</p>}
+    </div>}
+    {data && items.length === 0 && !query.isError && <section className="activity-empty">
+      <h2>{search ? 'No activity matches this search' : EMPTY_TITLES[view]}</h2>
+      {search && <button onClick={() => { setSearch(''); setOffset(0); setSelection(emptySelection()); chooseAll.reset() }}>Clear search</button>}
+    </section>}
+    {items.map(item => {
+      const d = item.download
+      const identity = item.identity
+      const key = identity ? activityIdentityKey(identity) : String(d.id)
+      const inSnapshot = snapKeys.has(key)
+      const isSelected = inSnapshot ? !selection.excludeIds.includes(d.id) : key in selection.items
+      const actions = item.actions ?? []
+      const unavailable = actions.find(action => !action.enabled && action.reason)?.reason
+      const pendingDelete = item.operation?.action === 'delete' ? item.operation : undefined
+      const status = activityStatus(item, view)
+      const assignFolder = d.mediaItemId > 0 && /assign.{0,30}(library )?folder|no library folder assigned/i.test([item.prerequisite, d.error].filter(Boolean).join(' '))
+      return <article className={`activity-attempt${view === 'attention' ? ' activity-attention-row' : ''}`} key={key} data-activity-id={d.id}>
+        {view === 'attention' && identity && <input type="checkbox" aria-label={`Select ${item.title}${d.title === item.title ? '' : ` · ${d.title}`}`} checked={isSelected}
+          disabled={selectionLocked || (!!selection.snapshot && !inSnapshot)} onChange={event => toggle(item, event.target.checked)} />}
+        <div className="activity-row-content">
+          <div className="activity-attempt-heading">
+            <div>
+              {d.mediaItemId > 0 ? <Link className="activity-title" to="/library/$id" params={{ id: String(d.mediaItemId) }}>{item.title}</Link> : <strong>{item.title}</strong>}
+              {d.title !== item.title && <p className="muted small activity-release" title={d.title}>{d.title}</p>}
+            </div>
+            {view !== 'attention' && <span className="pill pill-neutral">{status}</span>}
+          </div>
+          {view === 'progress' && <StageProgress d={d} />}
+          {d.publications?.filter(pub => pub.held).map(pub => <p key={pub.id}>Import held · {pub.heldReason || pub.error || 'Waiting for storage'}</p>)}
+          {(item.reason || view === 'attention') && <p className="muted activity-row-message">{item.reason || (d.id > 0 ? 'This job needs attention.' : 'History is available for this import.')}</p>}
+          {item.prerequisite && item.prerequisite !== item.reason && <p className="muted activity-row-message">{item.prerequisite}</p>}
+          {!item.prerequisite && unavailable && unavailable !== item.reason && <p className="muted activity-row-message">{unavailable}</p>}
+          {pendingDelete?.message && pendingDelete.message !== item.reason && <p className="muted activity-row-message">{pendingDelete.message}</p>}
+          {view === 'history' && <p className="muted small"><time dateTime={item.updatedAt}>{new Date(item.updatedAt).toLocaleString()}</time></p>}
+        </div>
+        <div className="row-actions activity-row-controls">
+          {assignFolder && view === 'attention' && <Link to="/library/$id" params={{ id: String(d.mediaItemId) }} search={{ assignFolder: true }}>Assign folder</Link>}
+          {view === 'attention' && d.reservationActionable && <button disabled={busy} onClick={event => { release.reset(); open(event, { kind: 'reservation', item }) }}>Review reservation</button>}
+          {view !== 'history' && identity && actions.filter(action => !(pendingDelete && action.kind === 'delete')).map(action => <button
+            key={action.kind} className={action.kind === 'delete' ? 'btn-danger' : ''} disabled={busy || !action.enabled}
+            onClick={event => {
+              if (action.kind === 'choose_files') open(event, { kind: 'choose-files', item })
+              else launch(event, action.kind, { targets: [identity] }, 1, action.label)
+            }}>{action.label}</button>)}
+          {view !== 'history' && pendingDelete && <button onClick={event => {
+            updateActivityOperationIds(pendingDelete.id, true)
+            open(event, { kind: 'operation', id: pendingDelete.id })
+          }}>Deletion status</button>}
+          {view === 'history' && pendingDelete?.state === 'blocked' && identity && <button disabled={busy} onClick={event => launch(event, 'delete', { targets: [identity] }, 1)}>Retry cleanup</button>}
+          {view === 'history' && !pendingDelete && identity && actions.some(a => a.kind === 'archive') && actions.some(a => a.kind === 'retry' && a.enabled) && <button disabled={busy} onClick={event => launch(event, 'retry', { targets: [identity] }, 1)}>Retry import</button>}
+          {d.id !== 0 && <button onClick={event => open(event, { kind: 'log', item })}>Job log</button>}
+        </div>
+      </article>
+    })}
+    {data && <footer className="import-footer">
+      <div className="row-actions">
+        <button disabled={offset === 0} onClick={() => setOffset(Math.max(0, offset - PAGE_SIZE))}>Previous</button>
+        <span>{data.total ? `${offset + 1}–${Math.min(offset + PAGE_SIZE, data.total)} of ${data.total}` : '0 jobs'}</span>
+        <button disabled={!data.hasMore} onClick={() => setOffset(offset + PAGE_SIZE)}>Next</button>
+      </div>
+      {view === 'history' && data.retentionDays > 0 && <p className="muted small">History is retained for {data.retentionDays} days.</p>}
+    </footer>}
+    {dialog?.kind === 'submit' && <ActionDialog
+      title={dialog.draft.confirm ? `Delete ${dialog.draft.total} ${dialog.draft.total === 1 ? 'job' : 'jobs'} and files?` : dialog.draft.label}
+      returnFocus={opener} onClose={close}>
+      {dialog.draft.confirm && <p>Curator will stop the selected {dialog.draft.total === 1 ? 'job' : 'jobs'} and permanently remove job-owned downloads and temporary files. Media already installed in your library and externally supplied originals stay.</p>}
+      {submit.isPending && <p role="status">Submitting action…</p>}
+      {submit.error && <p className="error-text" role="alert">{submit.error.message}</p>}
+      <div className="row-actions">
+        <button disabled={submit.isPending} onClick={close}>Cancel</button>
+        <button disabled={submit.isPending} className={dialog.draft.request.action === 'delete' ? 'btn-danger' : 'btn-accent'}
+          onClick={() => send(dialog.draft)}>{dialog.draft.confirm ? 'Delete jobs and files' : 'Resubmit action'}</button>
+      </div>
+    </ActionDialog>}
+    {dialog?.kind === 'operation' && <ActionDialog title={currentDialogOperation?.data ? ACTION_TITLES[currentDialogOperation.data.action] : 'Activity action'} returnFocus={opener} onClose={close}>
+      {currentDialogOperation?.isError && <p role="alert" className="error-text">
+        {currentDialogOperation.error.message} <button onClick={() => void currentDialogOperation.refetch()}>Check again</button>
+      </p>}
+      {currentDialogOperation?.data
+        ? <OperationResults operation={currentDialogOperation.data} onRetry={(event, operation, targets) =>
+          launch(event, operation.action, { targets: targets.map(({ id, generationKey, epoch }) => ({ id, generationKey, epoch })) }, targets.length, operation.action === 'delete' ? 'Retry deletion' : ACTION_TITLES[operation.action], operation.id)} />
+        : !currentDialogOperation?.isError && <p role="status">Checking action progress…</p>}
+    </ActionDialog>}
+    {dialog?.kind === 'log' && <ActionDialog title={`Job log · ${dialog.item.title}`} returnFocus={opener} onClose={close}><JobLog id={dialog.item.download.id} /></ActionDialog>}
+    {dialog?.kind === 'manual' && <ActionDialog title="Choose files to import" returnFocus={opener} onClose={close}>
+      <ManualImportPanel onDone={() => { close(); changeView('progress'); invalidate(); setManualQueued(count => count + 1) }} />
+    </ActionDialog>}
+    {dialog?.kind === 'choose-files' && <ActivityFilePicker item={dialog.item} returnFocus={opener} onClose={() => { close(); invalidate() }} />}
+    {dialog?.kind === 'reservation' && <ActionDialog title="Review episode reservation" returnFocus={opener} onClose={close}>
+      <p>The original submission may still complete. Releasing the reservation lets you search for another copy of the episode and may result in a duplicate.</p>
+      {dialog.item.download.parkedReason && <p>{dialog.item.download.parkedReason}</p>}
+      {release.isSuccess ? <p role="status">Episode reservation released.</p> : <button disabled={release.isPending} onClick={() => release.mutate(dialog.item.download.id)}>Release reservation</button>}
+      {release.error && <p role="alert" className="error-text">{release.error.message}</p>}
+    </ActionDialog>}
+  </div>
 }
 
-function ManualImportPanel({
-  prefill,
-  onDone,
-}: {
-  prefill: Partial<ManualImportRequest>
-  onDone: () => void
+function activityStatus(item: ActivityItem, view: ActivityView) {
+  const d = item.download
+  if (view === 'history' && d.importControl?.outcome === 'cancelled') return 'Cancelled'
+  if (d.importControl?.outcome === 'pending') return 'Cancelling import'
+  if (d.stage && view === 'progress') return STAGE_LABEL[d.stage] ?? d.stage.replace(/_/g, ' ')
+  if (d.importState === 'queued') return 'Waiting to import'
+  if (d.importState === 'running') return 'Starting importer'
+  if (d.state === 'importing') return 'Waiting for automatic import retry'
+  if (d.state === 'downloaded') return 'Download complete'
+  return d.state.replace(/_/g, ' ')
+}
+
+function operationStatus(operation: ActivityOperation) {
+  const action = { delete: 'Deletion', retry: 'Retry', approve: 'Import approval', archive: 'Clear from attention', recheck: 'Runner receipt check' }[operation.action]
+  if (operation.state === 'running') return `${action} in progress · ${operation.completed} of ${operation.total} jobs processed`
+  return `${action} finished · ${operation.succeeded} succeeded · ${operation.blocked} blocked`
+}
+
+function OperationResults({ operation, onRetry }: {
+  operation: ActivityOperation
+  onRetry: (event: SyntheticEvent<HTMLButtonElement>, operation: ActivityOperation, targets: ActivityOperationTarget[]) => void
 }) {
-  // The API learns the completed-download folder from path mappings or recent
-  // rows. Queue-row manual imports still win with their exact recorded path.
-  const [path, setPath] = useState(prefill.path ?? '')
-  const [itemId, setItemId] = useState<number>(prefill.mediaItemId ?? 0)
-  const [copyId, setCopyId] = useState<number>(prefill.copyId ?? 0)
+  const blocked = operation.targets.filter(target => target.state === 'blocked')
+  const waiting = operation.targets.filter(target => (target.state === 'running' || target.state === 'pending') && target.message)
+  const unresolved = [...blocked, ...waiting]
+  return <>
+    <p role="status">{operationStatus(operation)}</p>
+    {operation.state === 'running' && operation.total > 0 && <progress aria-label="Jobs processed" max={operation.total} value={operation.completed} />}
+    {unresolved.length > 0 && <ul className="activity-operation-targets">
+      {unresolved.map(target => <li key={activityIdentityKey(target)}>
+        <strong>{target.title || `Job ${target.id}`}</strong>
+        {target.message && <p>{target.message}</p>}
+      </li>)}
+    </ul>}
+    {blocked.length > 0 && operation.state === 'completed' && <button onClick={event => onRetry(event, operation, blocked)}>
+      {operation.action === 'delete' ? 'Retry deletion' : 'Retry blocked jobs'}
+    </button>}
+  </>
+}
+
+function JobLog({ id }: { id: number }) {
+  const log = useQuery({ queryKey: ['activity-job-log', id], queryFn: () => getActivityJobLog(id), retry: false })
+  return <>
+    {log.isLoading && <p role="status">Loading job log…</p>}
+    {log.isError && <p role="alert" className="error-text">{log.error.message} <button onClick={() => void log.refetch()}>Try again</button></p>}
+    {log.data?.summary && <p>{log.data.summary}</p>}
+    {log.data && (log.data.events.length ? <ol className="activity-job-log">
+      {log.data.events.map((entry, index) => <li key={`${entry.at}/${index}`}>
+        <time dateTime={entry.at}>{new Date(entry.at).toLocaleString()}</time>
+        <strong>{entry.step}</strong>
+        {entry.message && <span>{entry.message}</span>}
+      </li>)}
+    </ol> : <p className="muted">No detailed events remain for this job.</p>)}
+  </>
+}
+
+function ActivityFilePicker({ item, returnFocus, onClose }: {
+  item: ActivityItem
+  returnFocus: RefObject<HTMLElement | null>
+  onClose: () => void
+}) {
+  const id = item.download.mediaItemId
+  const library = useQuery({ queryKey: ['library', id], queryFn: () => getLibraryItem(id), enabled: id > 0, retry: false })
+  if (library.data) return <ImportFileDialog item={library.data} scope={activityFileScope(item)} returnFocus={returnFocus} onClose={onClose} />
+  return <ActionDialog title="Choose files to import" returnFocus={returnFocus} onClose={onClose}>
+    {library.isLoading && <p role="status">Loading the library title…</p>}
+    {library.error && <p className="error-text" role="alert">{library.error.message} <button onClick={() => void library.refetch()}>Try again</button></p>}
+    {id <= 0 && <p>No library title is assigned to this job.</p>}
+  </ActionDialog>
+}
+
+function ManualImportPanel({ onDone }: { onDone: () => void }) {
+  const [path, setPath] = useState<string | null>(null)
+  const [itemId, setItemId] = useState(0)
+  const [copyId, setCopyId] = useState(0)
   const [scanned, setScanned] = useState<ScannedFile[] | null>(null)
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [scanErr, setScanErr] = useState<string>('')
@@ -920,9 +522,8 @@ function ManualImportPanel({
   const defaultPath = useQuery({
     queryKey: ['manual-import-default-path'],
     queryFn: getManualImportDefaultPath,
-    enabled: !prefill.path,
   })
-  const shownPath = path || defaultPath.data?.path || ''
+  const shownPath = path ?? defaultPath.data?.path ?? ''
   const itemDetail = useQuery({
     queryKey: ['library', itemId],
     queryFn: () => getLibraryItem(itemId),
@@ -952,10 +553,6 @@ function ManualImportPanel({
         paths: [...selected],
         mediaItemId: itemId,
         copyId: copyId || undefined,
-        downloadId: prefill.downloadId,
-        reviewLegacy: prefill.reviewLegacy,
-        reviewLegacyFingerprint: prefill.reviewLegacy ? prefill.reviewLegacyFingerprint : undefined,
-        reviewLegacyFiles: prefill.reviewLegacy ? (scanned ?? []).filter(file => selected.has(file.path)).map(({ path, snapshotIdentity }) => ({ path, snapshotIdentity: snapshotIdentity ?? '' })) : undefined,
       }),
     onSuccess: () => {
       setImportErr('')
@@ -973,12 +570,6 @@ function ManualImportPanel({
 
   return (
     <section className="panel manual-import">
-      <h2>Manual import</h2>
-      <p className="muted" style={{ fontSize: 13 }}>
-        Point Curator at a folder or file, choose where it belongs, and import it — for a download
-        Curator couldn't place automatically, or files you moved into place yourself.
-      </p>
-      {prefill.reviewLegacy && <p className="warning-text">Legacy review approval is tied to this inventory snapshot, destination, and exact selected files. If the files or payload change, refresh the backlog and review again.</p>}
 
       <div className="form-row">
         <label htmlFor="manual-import-path">Path</label>
@@ -1122,30 +713,4 @@ function ManualImportPanel({
       {importErr && <p className="error-text">{importErr}</p>}
     </section>
   )
-}
-
-function ImportReviewPanel({id}:{id:number}) {
-  const qc=useQueryClient()
-  const [ack,setAck]=useState(false)
-  const review=useQuery({queryKey:['import-review',id],queryFn:()=>getImportReview(id),refetchInterval:4000})
-  const action=useMutation({mutationFn:({action,ids}:{action:string;ids:string[]})=>resolveImportReview(id,review.data!.attempt,action,ids,ack),onSuccess:()=>{setAck(false);void qc.invalidateQueries({queryKey:['import-review',id]});void qc.invalidateQueries({queryKey:['queue']})}})
-  const data=review.data
-  if(review.isLoading)return <p role="status">Loading durable import custody…</p>
-  if(review.error)return <p role="alert">{review.error.message}</p>
-  if(!data)return null
-  const pending=data.publications.filter(p=>p.outcome==='pending')
-  const retained=data.publications.filter(p=>p.resolution==='retained_for_review'||p.resolution==='operator_adopted')
-  const stages=data.stages??[]
-  const disabled=!ack||action.isPending||data.writerActive
-  return <>
-    <p>Attempt {data.attempt.epoch}: {data.attempt.outcome||'active'}. {data.writerActive?'An importer still owns this work. Wait for its actual exit.':'No local importer ticket is active.'}</p>
-    <p>These records describe retained custody. They do not prove whether a target was published. Review the source, stage and Library before disposition.</p>
-    <ul>{data.publications.filter(p=>p.outcome==='pending'||p.resolution).map(p=><li key={p.id}><strong>{p.outcome} {p.resolution}</strong><p className="path-chip">{p.source} → {p.target}</p></li>)}{stages.map(p=><li key={p.id}>Retained stage <span className="path-chip">{p.stage}</span><p>{p.source} → {p.target}</p></li>)}</ul>
-    <label><input type="checkbox" checked={ack} onChange={e=>setAck(e.target.checked)}/>I have fenced every external writer and reviewed these exact records. For disposition, I have independently handled all listed bytes; for adoption, I have verified the current Library ownership. Curator will retain files and perform no deletion.</label>
-    {action.error&&<p role="alert">{action.error.message}</p>}
-    {action.isSuccess&&<p role="status">Review recorded. Retained filesystem bytes were left in place.</p>}
-    {pending.length>0&&<button disabled={disabled} onClick={()=>action.mutate({action:'retain_uncertain',ids:pending.map(p=>p.id)})}>Finalize cancellation and retain uncertain bytes</button>}
-    {retained.length>0&&<button disabled={disabled} onClick={()=>action.mutate({action:'operator_adopted',ids:retained.map(p=>p.id)})}>Record verified Library adoption</button>}
-    {(retained.length>0||stages.length>0)&&<button disabled={disabled} onClick={()=>action.mutate({action:'operator_disposed',ids:[...retained.map(p=>p.id),...stages.map(p=>p.id)]})}>Attest all listed bytes independently handled</button>}
-  </>
 }

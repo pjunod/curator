@@ -85,6 +85,21 @@ func (s *Server) metricsHandler() http.Handler {
 			fmt.Fprintf(w, "# HELP monarr_transfer_bytes_total Bytes those transfers are expected to move.\n# TYPE monarr_transfer_bytes_total gauge\n")
 			fmt.Fprintf(w, "monarr_transfer_bytes_total %d\n", capacity)
 		}
+		// The pipeline's seams (contract section 3.5). The histogram families
+		// are written even with no samples so a scrape can alert on absence.
+		s.deps.Pipeline.WriteMetrics(ctx, w)
+		overdue := 0
+		if n, err := s.deps.Pipeline.OverdueCount(ctx); err == nil {
+			overdue = n
+		}
+		fmt.Fprintf(w, "# HELP monarr_pipeline_overdue_rows Downloads that have outlived their state's allowance; 0 on a healthy system.\n# TYPE monarr_pipeline_overdue_rows gauge\n")
+		fmt.Fprintf(w, "monarr_pipeline_overdue_rows %d\n", overdue)
+		var mismatches int64
+		if s.deps.Acquisition != nil {
+			mismatches = s.deps.Acquisition.FactMismatches()
+		}
+		fmt.Fprintf(w, "# HELP monarr_runner_fact_mismatch_total Runner statuses seen with a transfer token other than the download row's.\n# TYPE monarr_runner_fact_mismatch_total counter\n")
+		fmt.Fprintf(w, "monarr_runner_fact_mismatch_total %d\n", mismatches)
 		fmt.Fprintf(w, "# HELP monarr_uptime_seconds Seconds since process start.\n# TYPE monarr_uptime_seconds counter\n")
 		fmt.Fprintf(w, "monarr_uptime_seconds %.0f\n", time.Since(s.deps.StartedAt).Seconds())
 	})

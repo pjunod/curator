@@ -13,7 +13,7 @@ import (
 	"github.com/pjunod/monarr/internal/ports"
 )
 
-// ListHDRTiers implements GET /hdr-tiers: the ADR 0026 vocabulary in the
+// ListHDRTiers implements GET /hdr-tiers: the ADR 0031 vocabulary in the
 // default preference order.
 func (s *Server) ListHDRTiers(w http.ResponseWriter, _ *http.Request) {
 	out := make([]apigen.HDRTierOption, 0, len(hdr.Tiers))
@@ -212,7 +212,7 @@ func hdrTiesFromInput(in *[][]apigen.HDRTier, order []hdr.Tier) ([][]hdr.Tier, e
 
 // ListHDRDevices implements GET /hdr/devices: every plurx connection's
 // signed-in playback devices, what each decodes, and the HDR order, ties and
-// refusals a profile would take from it (ADR 0026 §5).
+// refusals a profile would take from it (ADR 0031 §5).
 func (s *Server) ListHDRDevices(w http.ResponseWriter, r *http.Request) {
 	notifiers, err := s.deps.Store.ListNotifiers(r.Context())
 	if err != nil {

@@ -42,8 +42,7 @@ export function normalizeServerUrl(input: string): string {
 }
 
 export function sanitizeConnection(value: Connection): Connection {
-  return {
-    baseUrl: normalizeServerUrl(value.baseUrl),
-    apiKey: value.apiKey.trim(),
-  }
+  const token=value.sessionToken?.trim()
+  if(token&&!/^cts_[a-f0-9]{64}$/.test(token))throw new Error('Invalid Curator account session. Sign in again.')
+  return {baseUrl:normalizeServerUrl(value.baseUrl),apiKey:token?'':value.apiKey.trim(),...(token?{sessionToken:token}:{})}
 }

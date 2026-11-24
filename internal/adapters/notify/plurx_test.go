@@ -152,7 +152,15 @@ func TestPlurxSaysWhetherAFailureIsWorthRetrying(t *testing.T) {
 		{"a 401 is a credential that will not come back", http.StatusUnauthorized, "", true},
 		{"a 422 is a path that will not move", http.StatusUnprocessableEntity,
 			`{"error":"path is not under any library root","roots":[]}`, true},
-		{"a 404 is a plurx too old to have the route", http.StatusNotFound, "", true},
+		// Contract v2 section 4.1: permanent only on 401/403, 400 and 422
+		// path_outside_roots. Everything else is retried on the schedule.
+		{"a 404 is retried, never dropped", http.StatusNotFound, "", false},
+		{"a 429 is plurx asking for room, not refusing the scan", http.StatusTooManyRequests, "", false},
+		{"a 503 path_unreadable is a share that will come back", http.StatusServiceUnavailable,
+			`{"code":"path_unreadable","error":"library root could not be read: ENOTCONN","retry_after_s":60}`, false},
+		{"a 400 is a body that will not change shape", http.StatusBadRequest, `{"code":"path_required"}`, true},
+		{"a typed 422 path_outside_roots is permanent", http.StatusUnprocessableEntity,
+			`{"code":"path_outside_roots","error":"path is not under any library root","roots":["/media"]}`, true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

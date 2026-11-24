@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -92,10 +93,22 @@ func (f scanQueueFunc) EnqueueUnique(ctx context.Context, job domain.Job) (bool,
 // completed state that could make a broken scan look successful.
 func TestScanStatusStorageFailureIsVisible(t *testing.T) {
 	e := newAPIEnv(t)
+	token := liveSessions.create()
+	t.Cleanup(func() { liveSessions.drop(token) })
 	if err := e.db.Close(); err != nil {
 		t.Fatal(err)
 	}
-	rr := do(t, e.h, http.MethodGet, "/api/v1/library/scan", "")
+	// Durable account authority fails closed when its database is unreadable.
+	// An obsolete process-local cookie cannot bypass that boundary. The
+	// status handler itself must still report the original storage failure.
+	if rr := do(t, e.h, http.MethodGet, "/api/v1/library/scan", ""); rr.Code != http.StatusUnauthorized {
+		t.Fatalf("unavailable auth configuration opened gate: %d", rr.Code)
+	}
+	if rr := doWithHeader(t, e.h, http.MethodGet, "/api/v1/library/scan", "", "Cookie", sessionCookie+"="+token); rr.Code != http.StatusUnauthorized {
+		t.Fatalf("obsolete cookie bypassed unreadable durable authority: %d", rr.Code)
+	}
+	rr := httptest.NewRecorder()
+	e.srv.GetScanStatus(rr, httptest.NewRequest(http.MethodGet, "/api/v1/library/scan", nil))
 	if rr.Code != http.StatusInternalServerError {
 		t.Fatalf("unavailable status: %d %s", rr.Code, rr.Body.String())
 	}

@@ -241,7 +241,7 @@ type Profile struct {
 	// a release that offers the language is an upgrade over it at any
 	// acceptable quality.
 	Languages []string
-	// HDROrder is the preferred HDR presentation, best first (ADR 0026 §4).
+	// HDROrder is the preferred HDR presentation, best first (ADR 0031 §4).
 	// Empty means no opinion, which is every profile that existed before it.
 	// It breaks ties after resolution and source: a 2160p SDR release still
 	// outranks a 1080p Dolby Vision one under a 2160p target.
@@ -250,12 +250,12 @@ type Profile struct {
 	// profile 5 for a library played on devices without Dolby Vision.
 	HDRReject []hdr.Tier
 	// HDRTies groups tiers that rank as one: tiers the playback device
-	// renders identically (ADR 0026 §5), so an upgrade between them is not
+	// renders identically (ADR 0031 §5), so an upgrade between them is not
 	// one and a file is not replaced by its equal. Each group ranks at its
 	// best member's place in HDROrder.
 	HDRTies [][]hdr.Tier
 	// Preflight says how a release's HDR is measured before it is grabbed
-	// (ADR 0026 §6). It applies whenever the profile has an HDR order or
+	// (ADR 0031 §6). It applies whenever the profile has an HDR order or
 	// refusal list — the only time a measurement can change a decision.
 	Preflight Preflight
 }
@@ -481,7 +481,7 @@ func (p Profile) Acceptable(release Quality) bool {
 // wrong language ranks below every file in the right one. When the language
 // is fine (or unknowable), it is the quality rule of ADR 0014 unchanged.
 //
-// The HDR axis (ADR 0026 §4) comes last and never trades quality away: a
+// The HDR axis (ADR 0031 §4) comes last and never trades quality away: a
 // release at no lower quality rank whose HDR ranks above a measured file below
 // the top of the order is an upgrade. releaseHDR and currentHDR may be zero,
 // which means unknown and leaves the ADR 0014 rule untouched.

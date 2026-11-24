@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test'
 
-// ADR 0026: claimed and measured HDR badges in interactive search, and the
+// ADR 0031: claimed and measured HDR badges in interactive search, and the
 // pre-flight evidence panel. Route fixtures own the API, as in
 // release-layout.spec.ts, so the checks do not depend on indexers or Runner.
 test.use({ serviceWorkers: 'block' })

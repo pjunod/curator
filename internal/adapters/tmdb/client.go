@@ -105,8 +105,9 @@ func (c *Client) read(ctx context.Context, path string, params url.Values, out a
 	}
 
 	cacheKey := fmt.Sprintf("%x:%s", sha256.Sum256([]byte(key)), full)
+	cacheAllowed := !recommendation || ctx.Value(libraryMetadataCacheKey{}) == true
 	c.mu.Lock()
-	if e, ok := c.cache[cacheKey]; !recommendation && ok && time.Now().Before(e.expires) {
+	if e, ok := c.cache[cacheKey]; cacheAllowed && ok && time.Now().Before(e.expires) {
 		c.mu.Unlock()
 		return json.Unmarshal(e.body, out)
 	}
@@ -165,7 +166,7 @@ func (c *Client) read(ctx context.Context, path string, params url.Values, out a
 	}
 
 	c.mu.Lock()
-	if !recommendation {
+	if cacheAllowed {
 		c.cache[cacheKey] = cacheEntry{body: body, expires: time.Now().Add(c.ttl)}
 	}
 	c.mu.Unlock()

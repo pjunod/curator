@@ -1,9 +1,11 @@
+import { LibraryVolumeReview } from '../LibraryVolumeReview'
+import { ActionDialog, focusActionTrigger } from '../ActionDialog'
 import { CompletedFolderSettings } from '../CompletedFolders'
 import { DiscoverySettings } from '../DiscoverySettings'
-import { useState } from 'react'
+import { useEffect, useRef, useState, type MouseEvent } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Link } from '@tanstack/react-router'
-import type { RootKind } from '../api'
+import { Link, useLocation } from '@tanstack/react-router'
+import type { RootFolder, RootKind } from '../api'
 import {
   addRootFolder,
   deleteRootFolder,
@@ -28,11 +30,13 @@ import { PathInput } from '../PathInput'
 import { ReviewWindow } from '../ReviewWindow'
 import { MissingFolders } from '../MissingFolders'
 import { DiskScanControl } from '../DiskScan'
-import { RecoveryEnableSettings } from './Recovery'
-import { ResolvePanel } from './Activity'
 
 export function SettingsPage() {
-  const [settingsTab, setSettingsTab] = useState<'general' | 'recovery' | 'dev'>('general')
+  const [volume,setVolume]=useState<number|null>(null)
+  const volumeOpener=useRef<HTMLElement|null>(null)
+  const [settingsTab, setSettingsTab] = useState<'general' | 'connections'>('general')
+  const location = useLocation()
+  useEffect(() => { setSettingsTab(['indexers', 'downloadclients', 'notifications'].includes(location.hash.replace(/^#/, '')) ? 'connections' : 'general') }, [location.hash])
   const qc = useQueryClient()
   const settings = useQuery({ queryKey: ['settings'], queryFn: getSettings })
   const roots = useQuery({ queryKey: ['rootfolders'], queryFn: getRootFolders })
@@ -91,14 +95,6 @@ export function SettingsPage() {
       void qc.invalidateQueries({ queryKey: ['rootfolders'] })
     },
   })
-  const retypeRoot = useMutation({
-    mutationFn: ({ id, kind }: { id: number; kind: RootKind }) => updateRootFolderKind(id, kind),
-    onSuccess: () => void qc.invalidateQueries({ queryKey: ['rootfolders'] }),
-  })
-  const delRoot = useMutation({
-    mutationFn: deleteRootFolder,
-    onSuccess: () => void qc.invalidateQueries({ queryKey: ['rootfolders'] }),
-  })
   const restore = useMutation({
     mutationFn: (path: string) => unignoreDir(path),
     onSuccess: () => {
@@ -126,20 +122,14 @@ export function SettingsPage() {
       void qc.invalidateQueries({ queryKey: ['library'] })
     },
   })
-  const autoAdopt = useMutation({
-    mutationFn: ({ id, on }: { id: number; on: boolean }) => setRootAutoAdopt(id, on),
-    onSuccess: () => void qc.invalidateQueries({ queryKey: ['rootfolders'] }),
-  })
-
   return (
     <>
+      {volume!==null&&<ActionDialog title="Review library volume" returnFocus={volumeOpener} onClose={()=>setVolume(null)}><LibraryVolumeReview id={volume}/></ActionDialog>}
       <header className="page-head">
         <h1>Settings</h1>
       </header>
 
-      <nav aria-label="Settings sections">{(['general', 'recovery', 'dev'] as const).map(tab => <button key={tab} aria-pressed={settingsTab === tab} onClick={() => setSettingsTab(tab)}>{tab === 'dev' ? 'Dev' : tab === 'recovery' ? 'Resolve' : 'General'}</button>)}</nav>
-      {settingsTab === 'dev' && <RecoveryEnableSettings />}
-      {settingsTab === 'recovery' && <ResolvePanel initialMode="delivery" />}
+      <nav className="system-tabs" aria-label="Settings sections">{(['general', 'connections'] as const).map(tab => <button key={tab} aria-pressed={settingsTab === tab} onClick={() => setSettingsTab(tab)}>{tab === 'general' ? 'General' : 'Connections'}</button>)}</nav>
       <div hidden={settingsTab !== 'general'}>
       <DiscoverySettings />
       <section className="panel" id="metadata">
@@ -236,6 +226,7 @@ export function SettingsPage() {
           against the library, and anything it finds that no item claims is listed below as a
           candidate to match.
         </p>
+        <p className="muted small">Registering a root trusts its current volume. Review its volume binding after an intentional replacement; an unavailable mount is not an empty library.</p>
         <table>
           <thead>
             <tr>
@@ -248,62 +239,12 @@ export function SettingsPage() {
             </tr>
           </thead>
           <tbody>
-            {roots.data?.map((rf) => (
-              <tr key={rf.id}>
-                <td className="mono">{rf.path}</td>
-                <td>
-                  <select
-                    value={rf.kind}
-                    disabled={retypeRoot.isPending}
-                    onChange={(e) =>
-                      retypeRoot.mutate({ id: rf.id, kind: e.target.value as RootKind })
-                    }
-                  >
-                    <option value="movie">Movies</option>
-                    <option value="series">TV series</option>
-                    <option value="book">Books</option>
-                    <option value="mixed">Mixed — ask</option>
-                  </select>
-                </td>
-                <td>
-                  {rf.kind === 'mixed' ? (
-                    <span className="muted" title="A mixed root always asks — set a kind first">
-                      always asks
-                    </span>
-                  ) : rf.autoAdopt ? (
-                    <>
-                      <span className="pill pill-ok">auto</span>{' '}
-                      <button
-                        className="link-btn"
-                        disabled={autoAdopt.isPending}
-                        title="Go back to proposing matches for review"
-                        onClick={() => autoAdopt.mutate({ id: rf.id, on: false })}
-                      >
-                        undo
-                      </button>
-                    </>
-                  ) : (
-                    <button
-                      disabled={autoAdopt.isPending}
-                      title="Let later scans adopt confident matches into this root without asking"
-                      onClick={() => autoAdopt.mutate({ id: rf.id, on: true })}
-                    >
-                      Confirm
-                    </button>
-                  )}
-                </td>
-                <td className="muted">{fmtBytes(rf.freeBytes)}</td>
-                <td>
-                  {rf.accessible ? (
-                    <span className="pill pill-ok">ok</span>
-                  ) : (
-                    <span className="pill pill-error">unreachable</span>
-                  )}
-                </td>
-                <td>
-                  <button onClick={() => delRoot.mutate(rf.id)}>Remove</button>
-                </td>
-              </tr>
+            {roots.data?.map((root) => (
+              <RootFolderRow key={root.id} root={root} onReviewVolume={(event) => {
+                focusActionTrigger(event)
+                volumeOpener.current = event.currentTarget
+                setVolume(root.id)
+              }} />
             ))}
             {roots.data?.length === 0 && (
               <tr>
@@ -319,9 +260,6 @@ export function SettingsPage() {
             A folder set to <em>Mixed</em> has to ask what every unmatched folder is. Setting it
             to a single kind is what lets a scan match on its own.
           </p>
-        )}
-        {retypeRoot.isError && (
-          <div className="banner warning">{String((retypeRoot.error as Error).message)}</div>
         )}
         <div className="form-row">
           <PathInput value={newRoot} onChange={setNewRoot} />
@@ -345,7 +283,7 @@ export function SettingsPage() {
         </div>
         {addRoot.isError && <div className="banner warning">{String((addRoot.error as Error).message)}</div>}
 
-        <h3 style={{ marginTop: 18 }}>Disk scan</h3>
+        <h3 id="scan" style={{ marginTop: 18 }}>Disk scan</h3>
         <div className="form-row">
           <DiskScanControl label="Scan now" />
           <button onClick={() => adopt.mutate()} disabled={adopt.isPending}>
@@ -461,13 +399,66 @@ export function SettingsPage() {
 
       <QualityProfileSettings />
 
-      <AcquisitionSettings />
       <CustomFormatSettings />
       <ImportListSettings />
-      <NotifierSettings />
 
       {reviewOpen && <ReviewWindow onClose={() => setReviewOpen(false)} />}
       </div>
+      <div hidden={settingsTab !== 'connections'}><AcquisitionSettings /><NotifierSettings /></div>
     </>
+  )
+}
+
+function RootFolderRow({ root, onReviewVolume }: {
+  root: RootFolder
+  onReviewVolume: (event: MouseEvent<HTMLButtonElement>) => void
+}) {
+  const qc = useQueryClient()
+  const update = useMutation({
+    mutationFn: (write: () => Promise<unknown>) => write(),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['rootfolders'] }),
+  })
+
+  return (
+    <tr>
+      <td className="mono">{root.path}</td>
+      <td>
+        <select value={root.kind} aria-label={`What ${root.path} holds`} disabled={update.isPending}
+          onChange={(event) => {
+            const kind = event.target.value as RootKind
+            update.mutate(() => updateRootFolderKind(root.id, kind))
+          }}>
+          <option value="movie">Movies</option>
+          <option value="series">TV series</option>
+          <option value="book">Books</option>
+          <option value="mixed">Mixed — ask</option>
+        </select>
+      </td>
+      <td>
+        {root.kind === 'mixed' ? (
+          <span className="muted" title="A mixed root always asks — set a kind first">always asks</span>
+        ) : root.autoAdopt ? (
+          <>
+            <span className="pill pill-ok">auto</span>{' '}
+            <button className="link-btn" disabled={update.isPending} title="Go back to proposing matches for review"
+              onClick={() => update.mutate(() => setRootAutoAdopt(root.id, false))}>
+              undo
+            </button>
+          </>
+        ) : (
+          <button disabled={update.isPending} title="Let later scans adopt confident matches into this root without asking"
+            onClick={() => update.mutate(() => setRootAutoAdopt(root.id, true))}>
+            Confirm
+          </button>
+        )}
+      </td>
+      <td className="muted">{fmtBytes(root.freeBytes)}</td>
+      <td>{root.accessible ? <span className="pill pill-ok">ok</span> : <span className="pill pill-error">unreachable</span>}</td>
+      <td>
+        <button disabled={update.isPending} onClick={onReviewVolume}>Review volume</button>
+        <button disabled={update.isPending} onClick={() => update.mutate(() => deleteRootFolder(root.id))}>Remove</button>
+        {update.error && <div className="error-text" role="alert">{update.error.message}</div>}
+      </td>
+    </tr>
   )
 }

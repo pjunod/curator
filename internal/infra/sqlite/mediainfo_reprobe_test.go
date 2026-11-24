@@ -7,7 +7,7 @@ import (
 )
 
 // A measurement taken by an older prober is re-taken once the prober learns
-// to read more (ADR 0026: Dolby Vision and HDR10+ reached files probed before
+// to read more (ADR 0031: Dolby Vision and HDR10+ reached files probed before
 // it). Only measured records qualify; the user's manual quality is left alone.
 func TestNeedsProbeAfterProberRevision(t *testing.T) {
 	const size = 1 << 30

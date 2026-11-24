@@ -30,7 +30,7 @@ func TestManualImportHTTPBindsLegacyConsentToCurrentFileSnapshot(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if _, err := e.db.W.ExecContext(ctx, `INSERT INTO legacy_cleanup_review(generation_key,path) VALUES('',?)`, payload); err != nil {
+	if _, err := e.db.W.ExecContext(ctx, `INSERT INTO storage_change_review_paths(review_token,path) VALUES('',?)`, payload); err != nil {
 		t.Fatal(err)
 	}
 	if err := e.acq.ScanCompleted(ctx); err != nil {
@@ -105,7 +105,7 @@ func TestCompletedHTTPSelectedLegacyDeletionUsesReviewedSnapshot(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if _, err := e.db.W.ExecContext(ctx, `INSERT INTO legacy_cleanup_review(generation_key,path) VALUES('',?)`, payload); err != nil {
+	if _, err := e.db.W.ExecContext(ctx, `INSERT INTO storage_change_review_paths(review_token,path) VALUES('',?)`, payload); err != nil {
 		t.Fatal(err)
 	}
 	if err := e.acq.ScanCompleted(ctx); err != nil {
@@ -144,7 +144,7 @@ func TestCompletedHTTPRejectsStaleSelectedLegacyFingerprint(t *testing.T) {
 	if err := os.WriteFile(path, []byte("reviewed bytes"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := e.db.W.ExecContext(ctx, `INSERT INTO legacy_cleanup_review(generation_key,path) VALUES('',?)`, payload); err != nil {
+	if _, err := e.db.W.ExecContext(ctx, `INSERT INTO storage_change_review_paths(review_token,path) VALUES('',?)`, payload); err != nil {
 		t.Fatal(err)
 	}
 	if err := e.acq.ScanCompleted(ctx); err != nil {

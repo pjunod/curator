@@ -1,0 +1,256 @@
+package api
+
+import (
+	"bufio"
+	"context"
+	"encoding/json"
+	"fmt"
+	"github.com/pjunod/monarr/internal/domain"
+	"github.com/pjunod/monarr/internal/infra/bus"
+	"github.com/pjunod/monarr/internal/infra/sqlite"
+	"github.com/pjunod/monarr/internal/ports"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"strconv"
+	"strings"
+	"testing"
+	"time"
+)
+
+const householdTestPassword = "local-password-for-tests"
+
+func householdHTTP(t *testing.T, h http.Handler, method, path, token string, body any, cookies ...*http.Cookie) *httptest.ResponseRecorder {
+	t.Helper()
+	raw := ""
+	if body != nil {
+		data, err := json.Marshal(body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		raw = string(data)
+	}
+	req := httptest.NewRequest(method, "https://curator.example"+path, strings.NewReader(raw))
+	req.Header.Set("Content-Type", "application/json")
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	for _, c := range cookies {
+		req.AddCookie(c)
+	}
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	return rr
+}
+func householdHTTPAccount(t *testing.T) (http.Handler, *sqlite.DB, string) {
+	t.Helper()
+	h, db := newLibraryServer(t, householdPreviewProvider{stubProvider{configured: true}})
+	rr := householdHTTP(t, h, "PUT", "/api/v1/settings", "", map[string]any{"authUsername": "owner", "authPassword": householdTestPassword, "authRequired": true})
+	if rr.Code != 204 {
+		t.Fatal(rr.Code, rr.Body.String())
+	}
+	return h, db, householdHTTPLogin(t, h, "owner", householdTestPassword)
+}
+func householdHTTPLogin(t *testing.T, h http.Handler, name, password string) string {
+	t.Helper()
+	rr := householdHTTP(t, h, "POST", "/api/v1/auth/sessions", "", map[string]string{"username": name, "password": password, "device": "regression"})
+	if rr.Code != 200 {
+		t.Fatal(rr.Code, rr.Body.String())
+	}
+	var result struct {
+		Token string `json:"token"`
+	}
+	if json.Unmarshal(rr.Body.Bytes(), &result) != nil || result.Token == "" {
+		t.Fatal("session missing")
+	}
+	return result.Token
+}
+func TestHouseholdMemberRoutesAndLocalRecovery(t *testing.T) {
+	h, db, owner := householdHTTPAccount(t)
+	rr := householdHTTP(t, h, "POST", "/api/v1/household/invitations", owner, map[string]string{"password": householdTestPassword})
+	if rr.Code != 201 {
+		t.Fatal(rr.Code, rr.Body.String())
+	}
+	var invite struct {
+		Token string `json:"token"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &invite); err != nil {
+		t.Fatal(err)
+	}
+	rr = householdHTTP(t, h, "POST", "/api/v1/auth/invitations/accept", "", map[string]string{"token": invite.Token, "username": "member", "displayName": "Household member", "password": householdTestPassword})
+	if rr.Code != 201 {
+		t.Fatal(rr.Code, rr.Body.String())
+	}
+	member := householdHTTPLogin(t, h, "member", householdTestPassword)
+	for _, route := range []struct{ method, path string }{{"GET", "/api/v1/settings"}, {"GET", "/api/v1/library"}, {"GET", "/api/v1/rootfolders"}, {"GET", "/api/v1/downloads"}, {"GET", "/api/v1/events"}, {"GET", "/metrics"}, {"GET", "/api/v1/system/status"}, {"GET", "/api/v1/metadata/preview"}, {"POST", "/api/v1/auth/pair"}, {"GET", "/api/v1/household/accounts"}, {"GET", "/api/v1/auth/cinema/connection"}} {
+		rr := householdHTTP(t, h, route.method, route.path, member, nil)
+		if rr.Code != 403 {
+			t.Errorf("member %s %s = %d; wanted owner denial", route.method, route.path, rr.Code)
+		}
+	}
+	rr = householdHTTP(t, h, "GET", "/api/v1/household/catalogue?kind=movie&q=Fight", member, nil)
+	if rr.Code != 200 || strings.Contains(rr.Body.String(), "qualityProfile") || strings.Contains(rr.Body.String(), "rootFolder") {
+		t.Fatal("unsafe catalogue", rr.Code, rr.Body.String())
+	}
+	rr = householdHTTP(t, h, "POST", "/api/v1/household/requests", member, map[string]any{"kind": "movie", "tmdbId": 550, "seasons": []int{}})
+	if rr.Code != 201 {
+		t.Fatal(rr.Code, rr.Body.String())
+	}
+	var request domain.HouseholdRequest
+	if err := json.Unmarshal(rr.Body.Bytes(), &request); err != nil {
+		t.Fatal(err)
+	}
+	rr = householdHTTP(t, h, "PUT", fmt.Sprintf("/api/v1/household/requests/%d/note", request.ID), owner, map[string]string{"note": "private owner note"})
+	if rr.Code != 204 {
+		t.Fatal(rr.Code, rr.Body.String())
+	}
+	rr = householdHTTP(t, h, "GET", fmt.Sprintf("/api/v1/household/requests/%d", request.ID), member, nil)
+	if rr.Code != 200 || strings.Contains(rr.Body.String(), "private owner note") || strings.Contains(rr.Body.String(), "policyJson") {
+		t.Fatal("private owner data in member request", rr.Body.String())
+	}
+	// Mixed old settings must fail before changing even unrelated saved values.
+	before, _ := db.GetMeta(context.Background(), "app_name")
+	rr = householdHTTP(t, h, "PUT", "/api/v1/settings", owner, map[string]any{"authRequired": false, "appName": "must not commit"})
+	if rr.Code != 403 {
+		t.Fatal("legacy settings guard did not refuse the mixed write", rr.Code)
+	}
+	after, _ := db.GetMeta(context.Background(), "app_name")
+	if after != before {
+		t.Fatal("rejected mixed settings partially wrote app name")
+	}
+	rr = householdHTTP(t, h, "GET", "/api/v1/auth/info", "", nil)
+	if rr.Code != 200 || !strings.Contains(rr.Body.String(), `"cinema":false`) {
+		t.Fatal("standalone install requires Cinema", rr.Body.String())
+	}
+	a, err := db.AccountByUsername(context.Background(), "member")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rr = householdHTTP(t, h, "PATCH", fmt.Sprintf("/api/v1/household/accounts/%d", a.ID), owner, map[string]any{"revision": a.Revision, "role": "member", "status": "suspended", "password": householdTestPassword})
+	if rr.Code != 204 {
+		t.Fatal(rr.Code, rr.Body.String())
+	}
+	rr = householdHTTP(t, h, "GET", "/api/v1/household/requests", member, nil)
+	if rr.Code != 401 {
+		t.Fatal("suspended device still authorized", rr.Code)
+	}
+	rr = householdHTTP(t, h, "GET", "/api/v1/system/status", owner, nil)
+	if rr.Code != 200 {
+		t.Fatal("member suspension revoked unrelated owner", rr.Code)
+	}
+}
+func TestHouseholdRejectsCrossOriginAndExplicitBadCredentials(t *testing.T) {
+	h, _, owner := householdHTTPAccount(t)
+	req := httptest.NewRequest("PUT", "https://curator.example/api/v1/auth/account", strings.NewReader(`{}`))
+	req.Header.Set("Authorization", "Bearer "+owner)
+	req.Header.Set("Origin", "http://curator.example")
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != 403 {
+		t.Fatal("cross-scheme mutation accepted", rr.Code)
+	}
+	open, _ := newLibraryServer(t, stubProvider{configured: true})
+	rr = householdHTTP(t, open, "GET", "/api/v1/system/status", "cts_"+strings.Repeat("0", 64), nil)
+	if rr.Code != 401 {
+		t.Fatal("invalid session fell back to anonymous owner", rr.Code)
+	}
+}
+
+type householdPrivateEvent struct{ Secret string }
+
+func (householdPrivateEvent) EventType() string { return "private-owner-event" }
+func TestHouseholdRevokedOwnerStreamStopsBeforePayload(t *testing.T) {
+	_, db, owner := householdHTTPAccount(t)
+	b := bus.New(nil)
+	defer b.Close()
+	s := New(Deps{Store: db, Settings: db, Bus: b})
+	server := httptest.NewServer(s.Handler())
+	defer server.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, "GET", server.URL+"/api/v1/events", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Authorization", "Bearer "+owner)
+	res, err := server.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = res.Body.Close() }()
+	if res.StatusCode != 200 {
+		t.Fatal(res.StatusCode)
+	}
+	reader := bufio.NewReader(res.Body)
+	if _, err = reader.ReadString('\n'); err != nil {
+		t.Fatal(err)
+	}
+	if err = db.DropAccountSession(ctx, digestSession(owner)); err != nil {
+		t.Fatal(err)
+	}
+	b.Publish(householdPrivateEvent{Secret: "private-owner-path"})
+	data, err := io.ReadAll(reader)
+	if err != nil {
+		t.Fatal("revoked event stream did not terminate", err)
+	}
+	if strings.Contains(string(data), "private-owner-path") {
+		t.Fatal("revoked stream received owner data")
+	}
+}
+
+type householdSeriesProvider struct{ stubProvider }
+
+func (householdSeriesProvider) GetSeries(ctx context.Context, id int64) (domain.MediaItem, error) {
+	return domain.MediaItem{Kind: domain.KindSeries, Title: "Frozen show", IDs: domain.ExternalIDs{TMDB: id}, Seasons: []domain.Season{{Number: 0, Episodes: []domain.Episode{{SeasonNumber: 0, EpisodeNumber: 1, AirDate: "2020-01-01"}}}, {Number: 1, Episodes: []domain.Episode{{SeasonNumber: 1, EpisodeNumber: 1, AirDate: "2020-01-01"}, {SeasonNumber: 1, EpisodeNumber: 2, AirDate: "2099-01-01"}, {SeasonNumber: 1, EpisodeNumber: 3, AirDate: ""}}}}}, nil
+}
+func TestHouseholdSeriesSubmissionFreezesOnlyUniqueKnownAiredRegularEpisodes(t *testing.T) {
+	h, _ := newLibraryServer(t, householdSeriesProvider{stubProvider{configured: true}})
+	rr := householdHTTP(t, h, "PUT", "/api/v1/settings", "", map[string]any{"authUsername": "owner", "authPassword": householdTestPassword, "authRequired": true})
+	if rr.Code != 204 {
+		t.Fatal(rr.Code, rr.Body.String())
+	}
+	owner := householdHTTPLogin(t, h, "owner", householdTestPassword)
+	rr = householdHTTP(t, h, "POST", "/api/v1/household/requests", owner, map[string]any{"kind": "series", "tmdbId": 100, "seasons": []int{1}})
+	if rr.Code != 201 {
+		t.Fatal(rr.Code, rr.Body.String())
+	}
+	var request domain.HouseholdRequest
+	if err := json.Unmarshal(rr.Body.Bytes(), &request); err != nil {
+		t.Fatal(err)
+	}
+	if len(request.Scope.Episodes) != 1 || request.Scope.Episodes[0] != (domain.RequestEpisode{Season: 1, Episode: 1}) {
+		t.Fatal("scope included duplicate, future, unknown-date or special episodes", request.Scope)
+	}
+	rr = householdHTTP(t, h, "POST", "/api/v1/household/requests", owner, map[string]any{"kind": "series", "tmdbId": 100, "seasons": []int{0}})
+	if rr.Code != 409 {
+		t.Fatal("special-season request accepted", rr.Code)
+	}
+}
+
+// Household hydration uses the same read-only preview port as production TMDB.
+// Legacy library-handler fixtures implement only the older MetadataProvider.
+type householdPreviewProvider struct{ stubProvider }
+
+func (p householdPreviewProvider) PreviewExternal(ctx context.Context, kind domain.MediaKind, ref domain.ExternalRef) (domain.MediaItem, error) {
+	return householdPreviewRecord(ctx, p, kind, ref)
+}
+func (p householdSeriesProvider) PreviewExternal(ctx context.Context, kind domain.MediaKind, ref domain.ExternalRef) (domain.MediaItem, error) {
+	return householdPreviewRecord(ctx, p, kind, ref)
+}
+func householdPreviewRecord(ctx context.Context, p ports.MetadataProvider, kind domain.MediaKind, ref domain.ExternalRef) (domain.MediaItem, error) {
+	id, err := strconv.ParseInt(ref.Value, 10, 64)
+	if err != nil {
+		return domain.MediaItem{}, err
+	}
+	var item domain.MediaItem
+	if kind == domain.KindSeries {
+		item, err = p.GetSeries(ctx, id)
+	} else {
+		item, err = p.GetMovie(ctx, id)
+		if item.ReleaseDate == "" {
+			item.ReleaseDate = "1999-01-01"
+		}
+	}
+	item.Source = "tmdb"
+	return item, err
+}

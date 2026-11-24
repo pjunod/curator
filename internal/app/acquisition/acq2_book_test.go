@@ -12,6 +12,7 @@ import (
 	"github.com/pjunod/monarr/internal/domain/quality"
 	"github.com/pjunod/monarr/internal/infra/bus"
 	"github.com/pjunod/monarr/internal/infra/sqlite"
+	"github.com/pjunod/monarr/internal/infra/sqlite/sqlitetest"
 	"github.com/pjunod/monarr/internal/ports"
 )
 
@@ -25,7 +26,7 @@ import (
 // enabled indexer and client.
 func bookSetup(t *testing.T, releases []ports.Release, client *fakeClient) (*Service, *sqlite.DB, int64) {
 	t.Helper()
-	db, err := sqlite.Open(t.TempDir())
+	db, err := sqlite.Open(sqlitetest.Dir(t))
 	if err != nil {
 		t.Fatal(err)
 	}

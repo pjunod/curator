@@ -12,6 +12,7 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -47,10 +48,12 @@ import (
 	"github.com/pjunod/monarr/internal/app/acquisition"
 	"github.com/pjunod/monarr/internal/app/discover"
 	"github.com/pjunod/monarr/internal/app/health"
+	"github.com/pjunod/monarr/internal/app/household"
 	"github.com/pjunod/monarr/internal/app/importlist"
 	"github.com/pjunod/monarr/internal/app/library"
 	"github.com/pjunod/monarr/internal/app/maintenance"
 	appnotify "github.com/pjunod/monarr/internal/app/notify"
+	"github.com/pjunod/monarr/internal/app/pipeline"
 	"github.com/pjunod/monarr/internal/app/recommendation"
 	"github.com/pjunod/monarr/internal/app/transfers"
 	"github.com/pjunod/monarr/internal/buildinfo"
@@ -69,6 +72,13 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	if len(os.Args) > 1 && os.Args[1] == "accounts" {
+		if err := runAccounts(ctx, os.Args[2:], os.Stdin, os.Stdout); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
 	if len(os.Args) > 1 && os.Args[1] == "maintenance" {
 		if err := runMaintenance(ctx, os.Args[2:], os.Stdin, os.Stdout); err != nil {
 			fmt.Fprintln(os.Stderr, err)
@@ -110,6 +120,18 @@ func main() {
 }
 
 func run(ctx context.Context, cfg config.Config, log *slog.Logger) error {
+	return serve(ctx, cfg, log, nil)
+}
+
+// serve is run on a listener the caller already bound (nil: bind cfg.Addr()
+// when serving starts). A test hands it a listener bound to port 0, so it
+// never picks a free port, releases it, and races another process for it.
+func serve(ctx context.Context, cfg config.Config, log *slog.Logger, listener net.Listener) error {
+	if listener != nil {
+		if addr, ok := listener.Addr().(*net.TCPAddr); ok {
+			cfg.Port = addr.Port
+		}
+	}
 	ctx, cancelRun := context.WithCancel(ctx)
 	defer log.Info("goodbye") // registered first: registered cleanup precedes it.
 	defer cancelRun()
@@ -210,10 +232,21 @@ func run(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 	clientFactory := downloadClientForConfig
 	acq := acquisition.New(db, b, log, indexerFactory, clientFactory)
 	acq.SetAdmission(admission)
+	// Pipeline seam timings and the overdue check (pipeline contract v2, M0).
+	pipe := pipeline.New(db)
+	acq.SetTimings(pipe)
 	// The data plane gets its own registry and its own workers. Cancel ctx to
 	// stop them; WaitImporters drains, in the same shape the jobs queue uses.
 	inflight := transfers.New()
 	acq.SetRegistry(inflight)
+	// Pipeline v2 cutover, once: every completed directory no publication
+	// claims is frozen as the historical cohort before anything can import
+	// or clean (contract section 3.4). A later start does nothing.
+	if n, err := acq.MarkHistoricalCohort(ctx); err != nil {
+		log.Warn("pipeline v2: historical cohort could not be marked; retried at next start", "err", err)
+	} else if n > 0 {
+		log.Info("pipeline v2: historical cohort marked", "directories", n)
+	}
 	acq.StartImporters(ctx)
 	defer func() { cancelRun(); acq.WaitImporters() }()
 
@@ -348,6 +381,7 @@ func run(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 	// and a different one from a client that stopped answering; each now has
 	// its own line, and neither can mask the other.
 	reg.Register("completed-folders", acq.CompletedHealth)
+	reg.Register("pipeline:overdue", pipe.OverdueCheck)
 	reg.Register("imports", func(ctx context.Context) health.Result {
 		age, running := acq.StalledImports()
 		switch {
@@ -440,7 +474,7 @@ func run(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 		Name:       acquisition.JobCompletedScan,
 		Interval:   acquisition.CompletedScanInterval,
 		RunOnStart: true,
-		Fn:         acq.ScanCompleted,
+		Fn:         acq.ScanStorageObservations,
 	}); err != nil {
 		return err
 	}
@@ -532,6 +566,9 @@ func run(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 	if err := library.RegisterJobHandlers(lib, queue.Register); err != nil {
 		return err
 	}
+	if err := acquisition.RegisterActivityActionJobs(acq, queue.Register); err != nil {
+		return err
+	}
 	if err := acquisition.RegisterWantedSearchJobs(acq, queue.Register); err != nil {
 		return err
 	}
@@ -591,8 +628,14 @@ func run(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 		}
 	})
 
+	acq.SetHouseholdVerifier(lib.VerifyPrimaryPresence)
+	house := household.New(db, lib, acq)
+	house.SetAdmission(admission)
+	loops.Go(func() { house.Run(ctx) })
+
 	// HTTP.
 	srv := api.New(api.Deps{
+		TrustedProxies:      cfg.TrustedProxies,
 		Maintenance:         admission,
 		Context:             ctx,
 		Log:                 log,
@@ -604,7 +647,10 @@ func run(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 		DB:                  db,
 		Library:             lib,
 		Acquisition:         acq,
+		Household:           house,
+		Pipeline:            pipe,
 		Discover:            browse,
+		LibraryDiscovery:    discover.NewLibrary(db, meta),
 		Recommendations:     recommendations,
 		RecommendationModel: encoder,
 		Store:               db,
@@ -619,6 +665,7 @@ func run(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 		DataDir:             cfg.DataDir,
 		StartedAt:           startedAt,
 	})
+	loops.Go(func() { srv.RunCinemaRevocations(ctx) })
 	httpServer := &http.Server{
 		Addr:              cfg.Addr(),
 		Handler:           srv.Handler(),
@@ -645,8 +692,16 @@ func run(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 
 	errCh := make(chan error, 1)
 	go func() {
-		log.Info("http listening", "addr", cfg.Addr())
-		if err := httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		ln := listener
+		if ln == nil {
+			var err error
+			if ln, err = net.Listen("tcp", cfg.Addr()); err != nil {
+				errCh <- err
+				return
+			}
+		}
+		log.Info("http listening", "addr", ln.Addr().String())
+		if err := httpServer.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errCh <- err
 		}
 	}()

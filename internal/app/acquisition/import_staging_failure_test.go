@@ -3,13 +3,16 @@ package acquisition
 import (
 	"context"
 	"errors"
-	"github.com/pjunod/monarr/internal/infra/sqlite"
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/pjunod/monarr/internal/infra/sqlite"
 )
 
-func TestJournaledStageFailuresKeepOwnedBytesForReview(t *testing.T) {
+// A failed stage write never publishes; what it leaves is scratch that the
+// next attempt of the placement discards (TestRetryDiscardsAnInterruptedStage).
+func TestJournaledStageFailuresPublishNothing(t *testing.T) {
 	for _, failure := range []string{"missing-source", "occupied-stage", "unpersisted-stage", "cancelled", "changed-size"} {
 		t.Run(failure, func(t *testing.T) {
 			svc, db, itemID := setup(t, nil, &fakeClient{})

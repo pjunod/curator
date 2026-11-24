@@ -3,6 +3,7 @@ import { FlatList, StyleSheet, Text, useWindowDimensions, View } from 'react-nat
 import type { MonarrClient } from '../api'
 import { LibraryCard } from '../components/Media'
 import { AppScreen, Chip, Field, Header, LoadingState, MessageState, Wordmark } from '../components/UI'
+import { PRESENCE_OPTIONS, matchesPresence } from '../offload'
 import { libraryGrid } from '../preferences'
 import { usePreferences } from '../preferences-context'
 import { useTheme } from '../theme'
@@ -21,7 +22,7 @@ export function LibraryScreen({
   onOpen: (id: number) => void
 }) {
   const theme = useTheme()
-  const { itemSize } = usePreferences()
+  const { itemSize, libraryPresence, setLibraryPresence } = usePreferences()
   const { width } = useWindowDimensions()
   const [kind, setKind] = useState<KindFilter>('all')
   const [query, setQuery] = useState('')
@@ -41,11 +42,12 @@ export function LibraryScreen({
       const edition = item.bookEditions?.find((candidate) => candidate.bookType === kind)
       return edition ? { ...item, monitored: edition.monitored, fileCount: edition.fileCount } : item
     })
-    if (!needle) return byType
-    return byType.filter((item) =>
+    const present = byType.filter((item) => matchesPresence(item, libraryPresence))
+    if (!needle) return present
+    return present.filter((item) =>
       `${item.title} ${item.author} ${item.year}`.toLocaleLowerCase().includes(needle),
     )
-  }, [kind, query, resource.data])
+  }, [kind, libraryPresence, query, resource.data])
   const { columns, slotWidth, cardWidth } = libraryGrid(width, itemSize)
 
   return (
@@ -67,6 +69,11 @@ export function LibraryScreen({
             <View style={styles.chips}>
               {(['all', 'movie', 'series', 'ebook', 'audiobook'] as const).map((value) => (
                 <Chip key={value} label={value === 'all' ? 'All' : value === 'series' ? 'TV' : `${value[0]?.toUpperCase()}${value.slice(1)}s`} selected={kind === value} onPress={() => setKind(value)} />
+              ))}
+            </View>
+            <View style={styles.chips} accessibilityLabel="Presence">
+              {PRESENCE_OPTIONS.map((option) => (
+                <Chip key={option.id} label={option.label} selected={libraryPresence === option.id} onPress={() => setLibraryPresence(option.id)} />
               ))}
             </View>
           </View>

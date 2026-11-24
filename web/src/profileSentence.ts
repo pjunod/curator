@@ -18,7 +18,7 @@ export interface SentenceParts {
   upgradesAllowed: boolean
   /** Required audio language codes; empty for no requirement. */
   audioLanguages: string[]
-  /** HDR tier labels, best first (ADR 0026); empty or absent for no opinion. */
+  /** HDR tier labels, best first (ADR 0031); empty or absent for no opinion. */
   hdrOrder?: string[]
   /** HDR tier labels the profile refuses. */
   hdrReject?: string[]

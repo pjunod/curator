@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-// The playback-devices contract (plurx docs/API.md, ADR 0026 §5): the key is
+// The playback-devices contract (plurx docs/API.md, ADR 0031 §5): the key is
 // sent as a bearer, the HDR summary maps onto hdr.DeviceCaps, and the two
 // refusals an operator can fix say what to fix.
 func TestPlurxPlaybackDevices(t *testing.T) {

@@ -1,29 +1,50 @@
+import type { ActivityJobLog, ActivityOperation, ActivityPage, ActivityRequest, ActivitySelection, ActivityView } from './activityActions'
+import type {AccountIdentity,LocalAccount,HouseholdTitle,HouseholdRequest,HouseholdReview} from './types'
 import type {
+  Availability,
+  LibrarySeedPage,
+  LibraryShelf,
   AddMediaCopyRequest,
   AutoSearchResult,
   AddMediaRequest,
+  BrowseResult,
   CalendarEntry,
   Connection,
   DiscoverList,
   GrabRequest,
   HealthReport,
   HistoryEvent,
+  ImportPlanFile,
+  ImportPlanRequest,
+  ManualImportRequest,
   MediaItemDetail,
   MediaItemSummary,
   MediaKind,
   MetadataPreview,
+  PlaceRequest,
   QualityProfile,
   QueueItem,
   QueueSummary,
+  OffloadOperation,
+  OffloadPreview,
+  OffloadRequest,
+  ReacquireResult,
+  RematchOperation,
+  RematchPreview,
+  RematchRequest,
   ReleaseCandidate,
   ReleaseSearchResponse,
   ReleaseSearchScope,
   RootFolder,
+  ScannedFile,
   SearchResult,
   SystemStatus,
   UpdateMediaCopyRequest,
   UpdateMediaItemRequest,
   WantedItem,
+  WantedSearchRun,
+  WantedSearchScope,
+  ItemStatus,
 } from './types'
 
 export const RELEASE_SEARCH_TIMEOUT_MS = 120_000
@@ -52,6 +73,8 @@ export class ApiError extends Error {
 }
 
 export class MonarrClient {
+  private readonly wantedSubmissions = new Map<string, { requestId: string; pending?: Promise<WantedSearchRun> }>()
+
   constructor(readonly connection: Connection) {}
 
   private async request<T>(path: string, init: RequestInit = {}, timeoutMs = 30_000): Promise<T> {
@@ -62,12 +85,33 @@ export class MonarrClient {
   // Most endpoints answer in the body alone. Release search also reports
   // whether the list is complete in response headers, so that path needs the
   // headers back as well as the parsed body.
+  getSignInInfo=()=>this.request<{required:boolean;household:boolean;cinema:boolean}>('/auth/info')
+  startCinemaNative=(challenge:string)=>this.request<{url:string;state:string}>('/auth/cinema/native',{method:'POST',body:JSON.stringify({challenge})})
+  finishCinemaNative=(state:string,verifier:string,completion:string)=>this.request<{token:string;account:LocalAccount;expiresAt:string}|undefined>('/auth/cinema/native/result',{method:'POST',body:JSON.stringify({state,verifier,completion})})
+  getCurrentAccount=()=>this.request<AccountIdentity>('/auth/me')
+  createAccountSession=(username:string,password:string,device:string)=>this.request<{token:string;account:LocalAccount;expiresAt:string}>('/auth/sessions',{method:'POST',body:JSON.stringify({username,password,device})})
+  logoutAccount=()=>this.request<void>('/auth/logout',{method:'POST'})
+  reviewHouseholdRequest=(id:number,rootId=0,profileId=0)=>this.request<HouseholdReview>(`/household/requests/${id}/review?rootId=${rootId}&profileId=${profileId}`)
+  approveHouseholdRequest=(id:number,rootId:number,profileId:number,fingerprint:string,privateNote:string,reacquire:boolean)=>this.request<void>(`/household/requests/${id}/approve`,{method:'POST',body:JSON.stringify({rootId,profileId,fingerprint,privateNote,reacquire})})
+  getHouseholdSeeds=(q='',offset=0)=>this.request<{items:HouseholdTitle[];hasMore:boolean}>(`/household/discovery/seeds?q=${encodeURIComponent(q)}&offset=${offset}`)
+  getHouseholdShelf=(kind:'movie'|'series',tmdbId:number,shelf:'related'|'collection')=>this.request<{title:string;items:HouseholdTitle[]}>(`/household/discovery/shelf?kind=${kind}&tmdbId=${tmdbId}&shelf=${shelf}`)
+  getHouseholdRequests=(before=0)=>this.request<HouseholdRequest[]>(`/household/requests?before=${before}`)
+  getHouseholdRequest=(id:number)=>this.request<HouseholdRequest>(`/household/requests/${id}`)
+  searchHouseholdCatalogue=(kind:'movie'|'series',q:string)=>this.request<HouseholdTitle[]>(`/household/catalogue?kind=${kind}&q=${encodeURIComponent(q)}`)
+  getHouseholdTitle=(kind:'movie'|'series',id:number)=>this.request<HouseholdTitle>(`/household/titles/${id}?kind=${kind}`)
+  submitHouseholdRequest=(kind:'movie'|'series',tmdbId:number,seasons:number[])=>this.request<HouseholdRequest>('/household/requests',{method:'POST',body:JSON.stringify({kind,tmdbId,seasons})})
+  changeHouseholdSubscription=(id:number,withdraw:boolean)=>this.request<HouseholdRequest>(`/household/requests/${id}/${withdraw?'withdraw':'join'}`,{method:'POST'})
+  updateOwnAccount=(revision:number,password:string,displayName:string,newPassword:string)=>this.request<void>('/auth/account',{method:'PUT',body:JSON.stringify({revision,password,displayName,newPassword})})
+  saveHouseholdRequestNote=(id:number,note:string)=>this.request<void>(`/household/requests/${id}/note`,{method:'PUT',body:JSON.stringify({note})})
+  declineHouseholdRequest=(id:number,revision:number,publicNote:string,privateNote:string)=>this.request<void>(`/household/requests/${id}/decline`,{method:'POST',body:JSON.stringify({revision,publicNote,privateNote})})
+
   private async requestWithHeaders<T>(path: string, init: RequestInit = {}, timeoutMs = 30_000): Promise<{ body: T; headers: Headers }> {
     const controller = new AbortController()
     const timeout = setTimeout(() => controller.abort(), timeoutMs)
     const headers = new Headers(init.headers)
     headers.set('Accept', 'application/json')
-    if (this.connection.apiKey) headers.set('X-Api-Key', this.connection.apiKey)
+    if(this.connection.sessionToken)headers.set('Authorization',`Bearer ${this.connection.sessionToken}`)
+    else if (this.connection.apiKey) headers.set('X-Api-Key', this.connection.apiKey)
     if (init.body !== undefined) headers.set('Content-Type', 'application/json')
 
     let response: Response
@@ -98,7 +142,7 @@ export class MonarrClient {
         if (text.trim()) message = text.trim()
       }
       if (response.status === 401) {
-        message = 'Authentication failed. Check the API key in Access → API access.'
+        message = path==='/auth/sessions'?'The Curator username or password was not accepted.':this.connection.sessionToken?'Your Curator account session ended. Sign in again.':'Authentication failed. Check the API key in Access → API access.'
       }
       throw new ApiError(message, response.status, code)
     }
@@ -134,9 +178,20 @@ export class MonarrClient {
   searchMetadata = (kind: MediaKind, query: string): Promise<SearchResult[]> =>
     this.get(`/metadata/search?kind=${kind}&query=${encodeURIComponent(query)}`)
   getMetadataPreview = (query: string): Promise<MetadataPreview> => this.get(`/metadata/preview?${query}`)
+  getAvailability = (items: SearchResult[]): Promise<Availability[]> => this.send('POST', '/metadata/availability', items.map(item=>({kind:item.kind,tmdbId:item.tmdbId,...(item.tvdbId?{tvdbId:item.tvdbId}:{}),...(item.imdbId?{imdbId:item.imdbId}:{}),...(item.olid?{olid:item.olid}:{})})))
+  getLibraryDiscoverySeeds = (q='',offset=0): Promise<LibrarySeedPage> => this.get(`/discover/library/seeds?q=${encodeURIComponent(q)}&offset=${offset}`)
+  getLibraryDiscoveryItems = (seed: SearchResult,shelf:'related'|'collection'): Promise<LibraryShelf> => this.get(`/discover/library/${seed.availability!.libraryItemId}/items?kind=${seed.kind}&tmdbId=${seed.tmdbId}&shelf=${shelf}`)
   getDiscoverLists = (): Promise<DiscoverList[]> => this.get('/discover/lists')
   getDiscoverItems = (list: string, page = 1): Promise<SearchResult[]> =>
     this.get(`/discover/items?list=${encodeURIComponent(list)}&page=${page}`)
+  getActivity = (view: ActivityView, limit: number, offset: number): Promise<ActivityPage> =>
+    this.get(`/activity?view=${view}&limit=${limit}&offset=${offset}`)
+  createActivitySelection = (): Promise<ActivitySelection> =>
+    this.send('POST', '/activity/selections', { view: 'attention', scope: 'all', q: '' })
+  submitActivityAction = (request: ActivityRequest): Promise<ActivityOperation> => this.send('POST', '/activity/actions', request)
+  getActivityOperation = (id: string): Promise<ActivityOperation> => this.get(`/activity/operations/${encodeURIComponent(id)}`)
+  getActivityJobLog = (id: number): Promise<ActivityJobLog> => this.get(`/activity/jobs/${id}/log`)
+
   getRootFolders = (): Promise<RootFolder[]> => this.get('/rootfolders')
   getProfiles = (): Promise<QualityProfile[]> => this.get('/profiles')
   addLibraryItem = (input: AddMediaRequest): Promise<MediaItemDetail> =>
@@ -164,9 +219,77 @@ export class MonarrClient {
   getQueue = (filter: 'active' | 'imported' | 'failed', limit = 30): Promise<QueueItem[]> =>
     this.get(`/queue?filter=${filter}&limit=${limit}&offset=0`)
   getQueueSummary = (): Promise<QueueSummary> => this.get('/queue/summary')
+  getItemStatus = (id: number, season?: number): Promise<ItemStatus> =>
+    this.get(`/library/${id}/status${season === undefined ? '' : `?season=${season}`}`)
+  confirmItemInCinema = (id: number, episodeId?: number): Promise<{ queued: number }> =>
+    this.send('POST', `/library/${id}/status/confirm${episodeId ? `?episode=${episodeId}` : ''}`)
+  getWantedSearches = (): Promise<{ items: WantedSearchRun[] }> => this.get('/wanted/searches')
+  createWantedSearch = (scope: WantedSearchScope): Promise<WantedSearchRun> => {
+    const key = JSON.stringify([
+      scope.scope,
+      'reason' in scope ? scope.reason : null,
+      'mediaItemId' in scope ? scope.mediaItemId : null,
+      'wantableId' in scope ? scope.wantableId : null,
+    ])
+    const saved = this.wantedSubmissions.get(key)
+    if (saved?.pending) return saved.pending
+    const requestId = saved?.requestId ?? `wanted-${Date.now()}-${Math.random().toString(36).slice(2)}`
+    const pending = this.send<WantedSearchRun>('POST', '/wanted/searches', { ...scope, requestId })
+      .then((run) => {
+        if (!run?.runId) throw new Error('The server did not confirm the search. Try again to recover its status.')
+        this.wantedSubmissions.delete(key)
+        return run
+      })
+      .catch((error: unknown) => {
+        if (error instanceof ApiError && error.status >= 400 && error.status < 500 && error.status !== 408 && error.status !== 499) {
+          this.wantedSubmissions.delete(key)
+        } else {
+          this.wantedSubmissions.set(key, { requestId })
+        }
+        throw error
+      })
+    this.wantedSubmissions.set(key, { requestId, pending })
+    return pending
+  }
+  cancelWantedSearch = (runId: string): Promise<WantedSearchRun> =>
+    this.send('POST', `/wanted/searches/${encodeURIComponent(runId)}/cancel`)
+  searchWantable = (wantableId: string): Promise<WantedSearchRun> =>
+    this.createWantedSearch({ scope: 'target', wantableId })
+  cancelDownload = (id: number): Promise<void> => this.send('DELETE', `/queue/${id}?fromClient=true&blocklist=true`)
+  retryImport = (id: number): Promise<void> => this.send('POST', `/queue/${id}/import`)
+  retryDelivery = (notifierId: number, deliveryId: number): Promise<void> =>
+    this.send('POST', `/notifiers/${notifierId}/deliveries/${deliveryId}/retry`)
   resolveQueueReservation = (id: number): Promise<void> => this.send('POST', `/queue/${id}/resolve-reservation`, {acknowledgeDuplicateRisk:true})
   clearFailedQueue = (): Promise<{ cleared: number }> => this.send('DELETE', '/queue/failed')
   getHistory = (limit = 40): Promise<HistoryEvent[]> => this.get(`/history?limit=${limit}&offset=0`)
+  // Re-match… and Move to… (ADR 0027).
+  previewRematch = (itemId: number, req: RematchRequest): Promise<RematchPreview> => this.send('POST', `/library/${itemId}/rematch/preview`, req)
+  startRematch = (itemId: number, req: RematchRequest): Promise<RematchOperation> => this.send('POST', `/library/${itemId}/rematch`, req)
+  getLibraryRematch = async (itemId: number): Promise<RematchOperation | null> => (await this.get<RematchOperation | undefined>(`/library/${itemId}/rematch`)) ?? null
+  getRematch = (operationId: string): Promise<RematchOperation> => this.get(`/rematch/${encodeURIComponent(operationId)}`)
+  dismissRematch = (operationId: string): Promise<void> => this.send('POST', `/rematch/${encodeURIComponent(operationId)}/dismiss`)
+  cancelRematch = (operationId: string): Promise<void> => this.send('POST', `/rematch/${encodeURIComponent(operationId)}/cancel`)
+  // Offload… and Re-acquire (ADR 0028).
+  previewOffload = (itemId: number, req: OffloadRequest): Promise<OffloadPreview> => this.send('POST', `/library/${itemId}/offload/preview`, req)
+  startOffload = (itemId: number, req: OffloadRequest): Promise<OffloadOperation> => this.send('POST', `/library/${itemId}/offload`, req)
+  getLibraryOffload = async (itemId: number): Promise<OffloadOperation | null> => (await this.get<OffloadOperation | undefined>(`/library/${itemId}/offload`)) ?? null
+  listLibraryOffloads = (itemId: number): Promise<OffloadOperation[]> => this.get(`/library/${itemId}/offload/operations`)
+  getOffload = (operationId: string): Promise<OffloadOperation> => this.get(`/offload/${encodeURIComponent(operationId)}`)
+  cancelOffload = (operationId: string): Promise<void> => this.send('POST', `/offload/${encodeURIComponent(operationId)}/cancel`)
+  dismissOffload = (operationId: string): Promise<void> => this.send('POST', `/offload/${encodeURIComponent(operationId)}/dismiss`)
+  reacquire = (itemId: number, req: OffloadRequest): Promise<ReacquireResult> => this.send('POST', `/library/${itemId}/reacquire`, req)
+  // Import file… on the item page: browse, list one folder, plan, start, stop.
+  browseFilesystem = (path: string): Promise<BrowseResult> => this.get(`/filesystem?path=${encodeURIComponent(path)}`)
+  scanImportFolder = (path: string): Promise<ScannedFile[]> =>
+    this.get(`/import/scan?path=${encodeURIComponent(path)}&depth=1`)
+  getManualImportDefaultPath = (): Promise<{ path: string }> => this.get('/import/default-path')
+  planImport = (req: ImportPlanRequest): Promise<ImportPlanFile[]> => this.send('POST', '/import/plan', req)
+  manualImport = (req: ManualImportRequest): Promise<{ downloadId: number }> => this.send('POST', '/import/manual', req)
+  placePublicationFiles = (id: number, publicationId: number, req: PlaceRequest): Promise<void> =>
+    this.send('POST', `/queue/${id}/publications/${publicationId}/files/place`, req)
+  getQueueItem = (id: number): Promise<QueueItem> => this.get(`/queue/${id}`)
+  cancelQueueImport = (id: number, identity: { generationKey: string; epoch: string }): Promise<void> =>
+    this.send('POST', `/queue/${id}/cancel-import`, { generationKey: identity.generationKey, epoch: identity.epoch })
   getCalendar = (start: string, end: string): Promise<CalendarEntry[]> =>
     this.get(`/calendar?start=${start}&end=${end}`)
 }

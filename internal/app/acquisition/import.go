@@ -2,7 +2,9 @@ package acquisition
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -26,6 +28,7 @@ import (
 	"github.com/pjunod/monarr/internal/domain/quality"
 	"github.com/pjunod/monarr/internal/infra/probe"
 	"github.com/pjunod/monarr/internal/infra/sqlite"
+	"github.com/pjunod/monarr/internal/ports"
 )
 
 // FileOutcome is what happened to one file in an import, including — above
@@ -68,6 +71,9 @@ type ImportResult struct {
 	// than finishing: the remaining files were never attempted, and the
 	// download must not be treated as done.
 	Blocked error
+	// Sidecars lists the subtitles a standalone manual import placed beside
+	// its videos (they leave with them when Remove original is set).
+	Sidecars []sqlite.HandoffRemoval
 }
 
 // ErrImportBlocked marks an import that stopped on something about the
@@ -95,17 +101,27 @@ const HistoryImportBlocked = "import_blocked"
 func importedEvent(item domain.MediaItem, dl sqlite.Download, r ImportResult) ImportCompleted {
 	paths := make([]string, 0, r.Imported)
 	var dirs []string
+	var expected map[string][]ports.ExpectedFile
 	seen := map[string]bool{}
 	for _, f := range r.Files {
 		if !f.Imported || f.Path == "" {
 			continue
 		}
 		paths = append(paths, f.Path)
+		dir := filepath.Dir(f.Path)
+		// What the file is once placed, so Cinema's report can be held to
+		// it: a same-path replacement with the same size differs only here.
+		if fi, err := os.Stat(f.Path); err == nil {
+			if expected == nil {
+				expected = map[string][]ports.ExpectedFile{}
+			}
+			expected[dir] = append(expected[dir], ports.ExpectedFile{Path: f.Path, Bytes: fi.Size(), MtimeNs: fi.ModTime().UnixNano()})
+		}
 		// Unique, in first-seen order. A season pack is one directory and a
 		// dozen files: one request that names the directory beats a dozen
 		// that name the same directory twelve times over, and stable order
 		// keeps the trace readable across runs.
-		if dir := filepath.Dir(f.Path); !seen[dir] {
+		if !seen[dir] {
 			seen[dir] = true
 			dirs = append(dirs, dir)
 		}
@@ -123,6 +139,7 @@ func importedEvent(item domain.MediaItem, dl sqlite.Download, r ImportResult) Im
 		ImdbID:        item.IDs.IMDB,
 		DownloadID:    dl.ID,
 		Transfer:      dl.Transfer,
+		Expected:      expected,
 	}
 	if item.Kind == domain.KindBook {
 		event.BookTitle = curatorBookText(item.Title)
@@ -279,7 +296,7 @@ func (s *Service) importDownloadFiles(ctx context.Context, dl sqlite.Download, s
 		if err != nil {
 			return ImportResult{}, err
 		}
-		if fresh.Superseded || strings.HasPrefix(fresh.ParkedReason, "operator cancellation") {
+		if fresh.Superseded || operatorCancelled(&fresh) {
 			return ImportResult{}, fmt.Errorf("original custody was cancelled or superseded; automatic publication prohibited")
 		}
 		// The lock taken above is this title's; a row that now names another
@@ -370,6 +387,26 @@ func (s *Service) importDownloadFiles(ctx context.Context, dl sqlite.Download, s
 		}
 	}
 
+	origin, originErr := s.db.HouseholdDownloadOrigin(ctx, dl.ID, dl.GenerationKey)
+	if originErr != nil {
+		return ImportResult{}, originErr
+	}
+	if origin != nil {
+		if origin.ItemID != item.ID || origin.Kind != item.Kind || origin.TMDBID != item.IDs.TMDB || origin.Path != scope.Dest || scope.CopyID != 0 || origin.RootID != item.RootFolderID {
+			return ImportResult{}, importPolicyRefusalf("household import identity or destination changed")
+		}
+		if s.householdCheck == nil {
+			return ImportResult{}, sqlite.ErrHouseholdVerification
+		}
+		if err = s.householdCheck(ctx, item.ID); err != nil {
+			return ImportResult{}, err
+		}
+		scope.Household = origin
+		if item.Kind == domain.KindSeries {
+			scope.Planned = true
+			scope.AllowedEpisodeIDs = append([]int64(nil), origin.EpisodeIDs...)
+		}
+	}
 	isMedia := filename.IsVideo
 	if item.Kind == domain.KindBook {
 		isMedia = filename.IsBook
@@ -499,19 +536,31 @@ func (s *Service) importDownloadFiles(ctx context.Context, dl sqlite.Download, s
 
 	if audioPlan != nil {
 		scope.PublishedDigests = map[string]string{}
+		// A multipart audiobook is one edition: all of it or none of it.
+		// Every part a manifest constrains is verified against it before
+		// any part is placed (one read each, on top of the copy's own
+		// stream check), so a corrupt part places nothing: the publication
+		// ends import_failed and the book is grabbed again, instead of the
+		// surviving parts landing as an incomplete book that no longer
+		// looks wanted.
+		if result, err := s.verifyBookParts(ctx, videos, bookQualities); err != nil {
+			return result, err
+		}
 	}
 	// The borrow below asks how many media files the whole payload holds,
 	// not how many were selected: choosing one of two anonymous files in a
 	// manual import says nothing about which episode it is.
-	payloadMedia := len(videos)
+	// A release sample is not a candidate for the episode: it never counts.
+	payloadMedia := countNonSample(videos)
 	if item.Kind == domain.KindSeries && selected != nil {
 		payloadMedia = 0
 		if all, err := collectFiles(savePath, isMedia); err == nil {
-			payloadMedia = len(all)
+			payloadMedia = countNonSample(all)
 		}
 	}
 	grabbedSeason, grabbedEpisodes := grabbedEpisodeTargets(dl.WantableIDs, item.ID)
 	result := ImportResult{Files: make([]FileOutcome, 0, len(videos))}
+	var mismatch error // the first file that did not match its manifest
 	for fileIndex, src := range videos {
 		if err := ctx.Err(); err != nil {
 			return result, err
@@ -523,7 +572,13 @@ func (s *Service) importDownloadFiles(ctx context.Context, dl sqlite.Download, s
 				p.Episodes = target.Episodes
 			}
 		}
-		if item.Kind == domain.KindSeries {
+		chosen := false
+		if target, ok := manualEpisodeTargets(ctx)[filepath.Clean(src)]; ok && item.Kind == domain.KindSeries && len(target.Episodes) > 0 {
+			// A person said which episode this file is: that is the answer,
+			// whatever the name or the grabbed release says.
+			p.Season, p.Episodes, chosen = target.Season, append([]int(nil), target.Episodes...), true
+		}
+		if item.Kind == domain.KindSeries && !chosen {
 			if fromRelease, ok := releaseEpisodeIdentity(p, src, dl.ReleaseTitle, payloadMedia, grabbedSeason, grabbedEpisodes); ok {
 				p = fromRelease
 				s.log.Info("import: file name carries no episode; using the grabbed release",
@@ -543,7 +598,6 @@ func (s *Service) importDownloadFiles(ctx context.Context, dl sqlite.Download, s
 
 		outcome := FileOutcome{Name: filepath.Base(src), SourcePath: src, Quality: q.Display(),
 			ReplacementOperationID: scope.ReplacementOperationID, SourceGeneration: scope.SourceGeneration,
-			SourceFileGeneration:    acceptedSourceGeneration(ctx, src),
 			SourcePayloadGeneration: acceptedPublicationGeneration(ctx)}
 
 		if prior, reused, reuseErr := s.reuseCommittedImport(ctx, dl, item, scope, src); reuseErr != nil {
@@ -607,6 +661,25 @@ func (s *Service) importDownloadFiles(ctx context.Context, dl sqlite.Download, s
 			if errors.Is(err, context.Canceled) || errors.Is(err, ErrImportControl) {
 				return result, err
 			}
+			if errors.Is(err, errPayloadMismatch) && audioPlan == nil {
+				// This file is not the bytes Runner's manifest names: its own
+				// outcome, recorded in the attempt like any other refusal,
+				// and the rest of the payload is still tried. Stopping here
+				// made the result depend on manifest order: a mismatch listed
+				// first left every good file after it unplaced (and the
+				// attempt's plan unsettled, so it refused every retry). The
+				// publication still ends below, keeping what was placed.
+				outcome.Reason = err.Error()
+				if e := s.recordSkippedImportFile(ctx, src); e != nil {
+					return result, e
+				}
+				if mismatch == nil {
+					mismatch = err
+				}
+				s.log.Warn("import: file does not match its manifest; the rest of the payload is still imported", "file", outcome.Name, "reason", err)
+				result.Files = append(result.Files, outcome)
+				continue
+			}
 			if !retryableIO(err) && !isImportPolicyRefusal(err) {
 				return result, err
 			}
@@ -666,13 +739,20 @@ func (s *Service) importDownloadFiles(ctx context.Context, dl sqlite.Download, s
 	// "no files imported", or a payload whose very first file hit a full
 	// disk reads as an unparseable release and is never retried.
 	if result.Blocked != nil {
-		_ = s.db.AddHistory(ctx, HistoryImportBlocked, item.ID, dl.ReleaseTitle,
-			map[string]any{"placed": result.Imported, "of": len(videos),
-				"reason": result.Blocked.Error()})
+		if !publicationImport(ctx) { // a publication's hold is recorded once, as import_held
+			_ = s.db.AddHistory(ctx, HistoryImportBlocked, item.ID, dl.ReleaseTitle,
+				map[string]any{"placed": result.Imported, "of": len(videos),
+					"reason": result.Blocked.Error()})
+		}
 		s.log.Info("imported (partial)", "item", item.Title, "files", result.Imported,
 			"remaining", len(videos)-result.Imported)
 		return result, fmt.Errorf("%w: %d of %d files placed from %s before it stopped: %v",
 			ErrImportBlocked, result.Imported, len(videos), savePath, result.Blocked)
+	}
+	if mismatch != nil {
+		// Every file was tried; the publication cannot be imported whole.
+		// The caller ends it, recording what this attempt placed.
+		return result, mismatch
 	}
 	if result.Imported == 0 {
 		// Say WHY, per file. This is the message a user actually reads when
@@ -681,9 +761,32 @@ func (s *Service) importDownloadFiles(ctx context.Context, dl sqlite.Download, s
 		return result, fmt.Errorf("%w from %s — %s", ErrNoFilesImported, savePath, result.reasons(5))
 	}
 
-	_ = s.db.AddHistory(ctx, "imported", item.ID, dl.ReleaseTitle,
-		map[string]any{"files": result.Imported, "upgrade": result.Upgraded})
-	s.publish(importedEvent(item, dl, result))
+	if dl.Protocol == "manual" && item.Kind != domain.KindBook && !publicationImport(ctx) {
+		// Subtitles travel with a manual import as they do with a runner
+		// delivery: placed beside their video, named after it.
+		result.Sidecars = s.placeManualSubtitles(ctx, result)
+	}
+	if publicationImport(ctx) {
+		// A publication import writes its history and its notification in
+		// its own completing transaction (pipeline v2, contract section 3.4).
+		return result, nil
+	}
+	// The history row and every notification of it in one write: a crash
+	// between them must not leave an import nobody is told about.
+	event := importedEvent(item, dl, result)
+	outbox, starts, err := s.importOutbox(ctx, event, legacyGeneration())
+	if err == nil {
+		err = s.db.RecordImported(ctx, sqlite.HistoryWrite{Type: "imported", MediaItemID: item.ID, ReleaseTitle: dl.ReleaseTitle,
+			Data: map[string]any{"files": result.Imported, "upgrade": result.Upgraded}}, outbox, starts)
+	}
+	if err != nil {
+		// The files are in the library, so the import stands (failing it now
+		// would only make a retry find them already present); what is lost
+		// is the record and the notifications. Said loudly, not swallowed.
+		s.log.Error("import placed files but could not record them or queue their notifications",
+			"item", item.Title, "download", dl.ID, "err", err)
+	}
+	s.publish(event)
 	s.log.Info("imported", "item", item.Title, "files", result.Imported,
 		"skipped", len(result.Skipped()))
 	return result, nil
@@ -741,7 +844,7 @@ func measureVideo(src string) mediainfo.Info {
 }
 
 // importHDR is the HDR of a file about to be imported: what its bytes measure
-// when the probe read them, else what the release name claims (ADR 0026). The
+// when the probe read them, else what the release name claims (ADR 0031). The
 // import decides an upgrade on it exactly as the grab did, but with the
 // measurement in hand where the grab had only the name.
 func importHDR(info mediainfo.Info, releaseTitle string) hdr.Evidence {
@@ -815,8 +918,19 @@ func (s *Service) checkDelivered(ctx context.Context, dl sqlite.Download, itemID
 // grabbed release title because its own name carried none.
 const HistoryEpisodeFromRelease = "episode_from_release"
 
+// countNonSample counts the media files that are not release samples.
+func countNonSample(paths []string) int {
+	n := 0
+	for _, p := range paths {
+		if !isReleaseSample(p) {
+			n++
+		}
+	}
+	return n
+}
+
 // releaseEpisodeIdentity lends a payload file the episode identity of the
-// release monarr grabbed, when the file's own name carries none.
+// grab monarr made, when the file's own name carries none.
 //
 // Field report 2026-11-01: obfuscated Usenet posts ship the episode as
 // "321d9664e6a50c195e7e830b3f78b487.mkv", with par2 sets named the same way,
@@ -826,14 +940,18 @@ const HistoryEpisodeFromRelease = "episode_from_release"
 // grabbed the identical release again — thirteen times for one episode,
 // until the indexer's daily quota ran out.
 //
-// The grabbed release title is not a guess: it is what was matched against
-// the download's wantable when the grab was decided. It is borrowed only when
-// that cannot misplace anything: the file's own name yields no episodes, the
-// whole payload holds exactly one media file, the release names specific
-// episodes rather than a season, and those episodes cover every episode the
-// download was grabbed for. A season pack of obfuscated files, a payload with
-// several anonymous files, or a download with no recorded episode target
-// still fails visibly — there is no evidence for which file is which.
+// The grab record is not a guess: it is the wantable the download was
+// grabbed for. It is used only when that cannot misplace anything: the
+// file's own name yields no episodes and the whole payload holds exactly one
+// media file that is not a sample. A grab for a single episode then names it
+// outright, whatever the release title says (field data 2026-11-11: an
+// obfuscated single-episode grab whose title did not parse failed "cannot
+// determine episodes" and waited for a person). A grab for several episodes
+// still needs the release title to name specific episodes covering every one
+// of them, because one file for several episodes is the release's claim. A
+// season pack of obfuscated files, a payload with several anonymous files, or
+// a download with no recorded episode target is not mapped — there is no
+// evidence for which file is which.
 func releaseEpisodeIdentity(p parser.Parsed, src, releaseTitle string, payloadMedia, grabbedSeason int, grabbedEpisodes []int) (parser.Parsed, bool) {
 	if len(p.Episodes) > 0 {
 		return p, false
@@ -841,20 +959,38 @@ func releaseEpisodeIdentity(p parser.Parsed, src, releaseTitle string, payloadMe
 	if fx, ok := filename.Extract(filepath.Base(src)); ok && len(fx.Episodes) > 0 {
 		return p, false
 	}
-	if payloadMedia != 1 || strings.TrimSpace(releaseTitle) == "" || len(grabbedEpisodes) == 0 {
+	if payloadMedia != 1 || len(grabbedEpisodes) == 0 || grabbedSeason < 0 {
 		return p, false
 	}
-	release := parser.Parse(releaseTitle)
-	if release.SeasonPack || release.Season < 0 || len(release.Episodes) == 0 || release.Season != grabbedSeason {
-		return p, false
-	}
-	for _, want := range grabbedEpisodes {
-		if !slices.Contains(release.Episodes, want) {
-			return p, false
+	// What the release title says, when it names specific episodes.
+	var named []int
+	namedSeason := -1
+	if strings.TrimSpace(releaseTitle) != "" {
+		if release := parser.Parse(releaseTitle); !release.SeasonPack && release.Season >= 0 && len(release.Episodes) > 0 {
+			named, namedSeason = release.Episodes, release.Season
 		}
 	}
-	p.Season = release.Season
-	p.Episodes = append([]int(nil), release.Episodes...)
+	if named != nil {
+		// The title names episodes: they must cover the whole grab, in its
+		// season; a title that contradicts the grab record maps nothing.
+		if namedSeason != grabbedSeason {
+			return p, false
+		}
+		for _, want := range grabbedEpisodes {
+			if !slices.Contains(named, want) {
+				return p, false
+			}
+		}
+		p.Season = namedSeason
+		p.Episodes = append([]int(nil), named...)
+		return p, true
+	}
+	if len(grabbedEpisodes) != 1 {
+		return p, false
+	}
+	// A single-episode grab with one media file: the grab record names it.
+	p.Season = grabbedSeason
+	p.Episodes = []int{grabbedEpisodes[0]}
 	return p, true
 }
 
@@ -929,6 +1065,7 @@ func isReleaseSample(path string) bool {
 // primary), its destination folder, its quality profile, and what produced
 // the payload.
 type importScope struct {
+	Household         *domain.HouseholdOrigin
 	DownloadID        int64
 	AllowedEpisodeIDs []int64
 	PublishedDigests  map[string]string
@@ -977,6 +1114,9 @@ func importLanguages(releaseTitle, src string) []string {
 
 func (s *Service) importMovieFile(ctx context.Context, item domain.MediaItem, scope importScope, profile quality.Profile, src string, q quality.Quality, srcHDR hdr.Evidence, releaseTitle string, manual bool) (placement, error) {
 	scope.Manual = manual
+	if err := s.checkPrecedence(ctx, item, scope.CopyID, src, 0, nil, nil); err != nil {
+		return placement{}, err
+	}
 	state, err := s.db.DiskStateForItem(ctx, item.ID, scope.CopyID)
 	if err != nil {
 		return placement{}, err
@@ -1066,6 +1206,9 @@ func (s *Service) planBookImport(ctx context.Context, item domain.MediaItem, sco
 
 func (s *Service) importBookFile(ctx context.Context, item domain.MediaItem, scope importScope, profile quality.Profile, src string, q quality.Quality, manual bool, part, total int, plan *bookImportPlan) (placement, error) {
 	scope.Manual = manual
+	if err := s.checkPrecedence(ctx, item, scope.CopyID, src, 0, nil, nil); err != nil {
+		return placement{}, err
+	}
 	if plan != nil {
 		scope.DeferCleanup = true
 		base := naming.BookFileName(item.Author, item.Title)
@@ -1130,14 +1273,24 @@ func (s *Service) importBookFile(ctx context.Context, item domain.MediaItem, sco
 
 func (s *Service) importEpisodeFile(ctx context.Context, item domain.MediaItem, scope importScope, profile quality.Profile, epStates map[int64]episodeState, src string, p parser.Parsed, q quality.Quality, srcHDR hdr.Evidence, releaseTitle string, manual bool) (placement, error) {
 	scope.Manual = manual
-	season, eps := p.Season, p.Episodes
-	if len(eps) == 0 {
-		if fx, ok := filename.Extract(filepath.Base(src)); ok {
-			season, eps = fx.Season, fx.Episodes
-		}
-	}
+	season, eps := nameEpisodes(p, filepath.Base(src))
 	if len(eps) == 0 || season < 0 {
 		return placement{}, importPolicyRefusalf("cannot determine episodes from %q", filepath.Base(src))
+	}
+
+	// Precedence first (pipeline v2, contract section 3.4): a file that is
+	// not the current attempt's for its episodes is superseded or unresolved
+	// whatever its quality would say.
+	if _, ok := ctx.Value(precedenceKey{}).(*precedence); ok {
+		var known []int64
+		for _, epNum := range eps {
+			if id, err := s.db.GetEpisodeID(ctx, item.ID, season, epNum); err == nil {
+				known = append(known, id)
+			}
+		}
+		if err := s.checkPrecedence(ctx, item, scope.CopyID, src, season, eps, known); err != nil {
+			return placement{}, err
+		}
 	}
 
 	// Resolve episode ids + titles; per-file upgrade check against the
@@ -1213,6 +1366,7 @@ func (s *Service) importEpisodeFile(ctx context.Context, item domain.MediaItem, 
 	if len(epIDs) == 0 {
 		return placement{}, importPolicyRefusalf("no known episodes for S%02d %v", season, eps)
 	}
+
 	upgrade := !manual && worst != nil
 	if !missing && worst != nil {
 		langs := importLanguages(releaseTitle, src)
@@ -1317,6 +1471,8 @@ func (s *Service) removeExistingFiles(ctx context.Context, item domain.MediaItem
 		if err := syncPath(filepath.Dir(f.Path)); err != nil {
 			continue
 		}
+		// The subtitles Curator placed for the replaced file go with it.
+		s.removePlacedSubtitles(ctx, f.Path, 0)
 		var deleteErr error
 		if recovery, ok := ctx.Value(recoveryPlacementKey{}).(*recoveryPlacementContext); ok {
 			deleteErr = s.db.DeleteRecoverySuperseded(ctx, f.ID, recovery.ImportID)
@@ -1393,7 +1549,8 @@ func placeContext(ctx context.Context, src, dest string, onBytes func(done, tota
 	// reported the new release at the old file's size and the user re-grabbed
 	// the same movie over and over watching nothing change.
 	if existing, err := os.Stat(dest); err == nil {
-		if srcInfo, serr := os.Stat(src); serr == nil && os.SameFile(existing, srcInfo) && !requiresIndependentPlacementCopy(ctx) {
+		if srcInfo, serr := os.Stat(src); serr == nil && os.SameFile(existing, srcInfo) {
+			recordStageLinked(ctx)
 			return applyMode(dest, fileMode()) // genuinely the same file
 		}
 		// Fall through and replace it. The write below goes to a temp file and
@@ -1435,12 +1592,12 @@ func placeTemp(ctx context.Context, dir, src string, onBytes func(done, total in
 	// between is smaller than the one a fixed name leaves open forever.
 	if reserved, err := os.CreateTemp(dir, ".monarr-link-*"); err == nil {
 		_, recoveryCopy := ctx.Value(recoveryPlacementKey{}).(*recoveryPlacementContext)
-		independentCopy := requiresIndependentPlacementCopy(ctx)
 		link := reserved.Name()
 		_ = reserved.Close()
 		_ = os.Remove(link)
-		if !recoveryCopy && !independentCopy {
+		if !recoveryCopy {
 			if err := os.Link(src, link); err == nil {
+				recordStageLinked(ctx)
 				return link, nil
 			}
 		}
@@ -1467,7 +1624,10 @@ func placeTemp(ctx context.Context, dir, src string, onBytes func(done, total in
 		total = fi.Size()
 	}
 	reader := &contextReader{ctx: ctx, r: &countingReader{r: in, total: total, on: onBytes}}
-	if _, err := io.Copy(out, reader); err != nil {
+	// The copy is hashed as it is written: that digest is the proof of the
+	// bytes (no read-back pass).
+	digest := sha256.New()
+	if _, err := io.Copy(io.MultiWriter(out, digest), reader); err != nil {
 		_ = out.Close()
 		_ = os.Remove(tmp)
 		return "", err
@@ -1481,6 +1641,7 @@ func placeTemp(ctx context.Context, dir, src string, onBytes func(done, total in
 		_ = os.Remove(tmp)
 		return "", err
 	}
+	recordStageDigest(ctx, hex.EncodeToString(digest.Sum(nil)))
 	return tmp, nil
 }
 
@@ -1551,4 +1712,59 @@ func (c *countingReader) Read(p []byte) (int, error) {
 		}
 	}
 	return n, err
+}
+
+// verifyBookParts checks every part of a multipart audiobook that an
+// accepted manifest constrains against its digest and size before any part
+// is placed. A mismatch records every part as skipped (the attempt's plan
+// settles) and returns errPayloadMismatch, so nothing is placed and the
+// publication ends with its want grabbed again.
+func (s *Service) verifyBookParts(ctx context.Context, parts []string, qualities []quality.Quality) (ImportResult, error) {
+	expected, _ := ctx.Value(expectedSourceDigestsKey{}).(map[string]string)
+	sizes, _ := ctx.Value(expectedSourceSizesKey{}).(map[string]int64)
+	if len(expected) == 0 {
+		return ImportResult{}, nil
+	}
+	var bad error
+	for _, src := range parts {
+		want := expected[filepath.Clean(src)]
+		if want == "" {
+			continue
+		}
+		if err := rejectSymlinks(src, false); err != nil {
+			return ImportResult{}, err
+		}
+		if n, known := sizes[filepath.Clean(src)]; known {
+			if info, err := os.Lstat(src); err != nil {
+				return ImportResult{}, err
+			} else if info.Size() != n {
+				bad = fmt.Errorf("%w: %s is %d bytes, the manifest says %d", errPayloadMismatch, src, info.Size(), n)
+				break
+			}
+		}
+		sum, _, err := fileDigest(ctx, src)
+		if err != nil {
+			return ImportResult{}, err
+		}
+		if sum != want {
+			bad = fmt.Errorf("%w: source file no longer matches its accepted delivery manifest: %s", errPayloadMismatch, src)
+			break
+		}
+	}
+	if bad == nil {
+		return ImportResult{}, nil
+	}
+	result := ImportResult{Files: make([]FileOutcome, 0, len(parts))}
+	for i, src := range parts {
+		o := FileOutcome{Name: filepath.Base(src), SourcePath: src, Reason: "the audiobook is placed whole or not at all: " + bad.Error()}
+		if i < len(qualities) {
+			o.Quality = qualities[i].Display()
+		}
+		if e := s.recordSkippedImportFile(ctx, src); e != nil {
+			return result, e
+		}
+		result.Files = append(result.Files, o)
+	}
+	s.log.Warn("import: an audiobook part does not match its manifest; nothing of it is placed", "reason", bad)
+	return result, bad
 }

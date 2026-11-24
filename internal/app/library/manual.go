@@ -60,6 +60,7 @@ func (s *Service) AddManual(ctx context.Context, req ManualRequest) (domain.Medi
 	if err != nil {
 		return domain.MediaItem{}, err
 	}
+	clean = filepath.Join(root.Path, filepath.Base(clean))
 	if info, statErr := os.Stat(clean); statErr != nil || !info.IsDir() {
 		return domain.MediaItem{}, fmt.Errorf("%w: %s is not a directory on disk", ErrNotFound, clean)
 	}

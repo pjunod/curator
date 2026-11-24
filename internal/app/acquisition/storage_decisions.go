@@ -24,17 +24,6 @@ func (s *Service) lockStorageDecision(ctx context.Context) (context.Context, fun
 	return s.storageDecisionContext(ctx)
 }
 
-func (s *Service) tryLockStorageDecision(ctx context.Context) (context.Context, func(), bool) {
-	if lease, ok := ctx.Value(storageDecisionKey{}).(*storageDecisionLease); ok && lease != nil && lease.owner == s && lease.active.Load() {
-		return ctx, func() {}, true
-	}
-	if !s.storageDecisionMu.TryLock() {
-		return ctx, func() {}, false
-	}
-	locked, release := s.storageDecisionContext(ctx)
-	return locked, release, true
-}
-
 func (s *Service) storageDecisionContext(ctx context.Context) (context.Context, func()) {
 	lease := &storageDecisionLease{owner: s}
 	lease.active.Store(true)

@@ -17,6 +17,7 @@ import (
 	"github.com/pjunod/monarr/internal/domain/downloadpriority"
 	"github.com/pjunod/monarr/internal/domain/mediainfo"
 	"github.com/pjunod/monarr/internal/domain/quality"
+	"github.com/pjunod/monarr/internal/infra/sqlite"
 	"github.com/pjunod/monarr/internal/ports"
 )
 
@@ -39,7 +40,7 @@ func (s *Server) libraryErr(w http.ResponseWriter, err error) {
 		writeCodedError(w, http.StatusConflict, "already_exists", err.Error())
 	case errors.Is(err, library.ErrFolderConflict):
 		writeCodedError(w, http.StatusConflict, "folder_conflict", err.Error())
-	case errors.As(err, new(*library.IdentityConflictError)):
+	case errors.Is(err, sqlite.ErrIdentityConflict), errors.As(err, new(*library.IdentityConflictError)):
 		writeCodedError(w, http.StatusConflict, "identity_conflict", err.Error())
 	case errors.Is(err, library.ErrInvalidExternalID):
 		writeCodedError(w, http.StatusBadRequest, "invalid_external_id", err.Error())
@@ -53,6 +54,8 @@ func (s *Server) libraryErr(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusBadRequest, err.Error())
 	case errors.Is(err, library.ErrRootKindMismatch):
 		writeError(w, http.StatusBadRequest, err.Error())
+	case errors.Is(err, library.ErrOffloaded):
+		writeCodedError(w, http.StatusConflict, "offloaded", err.Error())
 	case errors.Is(err, library.ErrInvalidInput):
 		writeError(w, http.StatusBadRequest, err.Error())
 	case errors.Is(err, ports.ErrProviderNotConfigured):
@@ -156,21 +159,23 @@ func bookEditionsDTO(m domain.MediaItem) *[]apigen.BookEditionSummary {
 
 func summaryDTO(m domain.MediaItem) apigen.MediaItemSummary {
 	out := apigen.MediaItemSummary{
-		Id:               m.ID,
-		Kind:             apigen.MediaKind(m.Kind),
-		Title:            m.Title,
-		Year:             m.Year,
-		Author:           m.Author,
-		PosterPath:       m.PosterPath,
-		Monitored:        m.Monitored,
-		Path:             m.Path,
-		Rating:           float32(m.Rating),
-		RatingVotes:      m.RatingVotes,
-		Ratings:          ratingsDTO(m.Ratings),
-		EpisodeCount:     m.EpisodeCount,
-		EpisodeFileCount: m.EpisodeFileCount,
-		FileCount:        m.FileCount,
-		AddedAt:          m.AddedAt,
+		Id:                m.ID,
+		Kind:              apigen.MediaKind(m.Kind),
+		Title:             m.Title,
+		Year:              m.Year,
+		Author:            m.Author,
+		PosterPath:        m.PosterPath,
+		Monitored:         m.Monitored,
+		Offloaded:         offloadedFlag(m.Offloaded() || m.OffloadedEpisodes > 0 || m.OffloadedSeasons > 0),
+		OffloadedEpisodes: offloadedCount(m.OffloadedEpisodes),
+		Path:              m.Path,
+		Rating:            float32(m.Rating),
+		RatingVotes:       m.RatingVotes,
+		Ratings:           ratingsDTO(m.Ratings),
+		EpisodeCount:      m.EpisodeCount,
+		EpisodeFileCount:  m.EpisodeFileCount,
+		FileCount:         m.FileCount,
+		AddedAt:           m.AddedAt,
 	}
 	out.Source = optStr(m.Source)
 	out.BookType = bookTypeDTO(m)
@@ -237,6 +242,7 @@ func detailDTO(m domain.MediaItem) apigen.MediaItemDetail {
 		Ratings:                  ratingsDTO(m.Ratings),
 		Monitor:                  monitor,
 		Monitored:                m.Monitored,
+		Offloaded:                offloadedFlag(m.Offloaded()),
 		QualityProfileId:         m.QualityProfileID,
 		DownloadPriority:         m.DownloadPriority,
 		DownloadPriorityOverride: m.DownloadPriorityOverride,
@@ -271,6 +277,7 @@ func detailDTO(m domain.MediaItem) apigen.MediaItemDetail {
 		si := apigen.SeasonInfo{
 			Number:    season.Number,
 			Monitored: season.Monitored,
+			Offloaded: offloadedFlag(season.Offloaded()),
 			Episodes:  []apigen.EpisodeInfo{},
 		}
 		for _, e := range season.Episodes {
@@ -281,6 +288,7 @@ func detailDTO(m domain.MediaItem) apigen.MediaItemDetail {
 				Title:         e.Title,
 				AirDate:       e.AirDate,
 				Monitored:     e.Monitored,
+				Offloaded:     offloadedFlag(e.Offloaded()),
 				HasFile:       e.HasFile,
 			})
 		}
@@ -414,8 +422,15 @@ func (s *Server) ListLibrary(w http.ResponseWriter, r *http.Request, params apig
 		return
 	}
 	out := make([]apigen.MediaItemSummary, 0, len(items))
-	for _, m := range items {
-		out = append(out, summaryDTO(m))
+	targets := make([]domain.AvailabilityTarget, len(items))
+	for i, m := range items {
+		targets[i] = domain.AvailabilityTarget{LibraryItemID: m.ID, Kind: m.Kind, IDs: m.IDs}
+	}
+	facts := s.availabilityFacts(r.Context(), targets)
+	for i, m := range items {
+		dto := summaryDTO(m)
+		dto.Availability = ptrAvailability(availabilityDTO(facts[i]))
+		out = append(out, dto)
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -494,7 +509,10 @@ func (s *Server) GetLibraryItem(w http.ResponseWriter, r *http.Request, id int64
 		s.libraryErr(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, detailDTO(item))
+	dto := detailDTO(item)
+	facts := s.availabilityFacts(r.Context(), []domain.AvailabilityTarget{{LibraryItemID: item.ID, Kind: item.Kind, IDs: item.IDs}})
+	dto.Availability = ptrAvailability(availabilityDTO(facts[0]))
+	writeJSON(w, http.StatusOK, dto)
 }
 
 // AddLibraryAlias implements POST /library/{id}/aliases.
@@ -721,7 +739,21 @@ func (s *Server) SetEpisodeMonitored(w http.ResponseWriter, r *http.Request, id 
 // RefreshLibraryItem implements POST /library/{id}/refresh: re-hydrate the
 // item's metadata from its provider and return the updated detail.
 func (s *Server) RefreshLibraryItem(w http.ResponseWriter, r *http.Request, id int64) {
-	item, err := s.deps.Library.RefreshItem(r.Context(), id)
+	var item domain.MediaItem
+	var err error
+	if r.Body != nil && r.ContentLength != 0 {
+		var match struct {
+			Previous    int64 `json:"previousTmdbId"`
+			Replacement int64 `json:"tmdbId"`
+		}
+		if err = json.NewDecoder(http.MaxBytesReader(w, r.Body, 2048)).Decode(&match); err != nil {
+			writeError(w, 400, "invalid metadata match")
+			return
+		}
+		item, err = s.deps.Library.CorrectMovieMatch(r.Context(), id, match.Previous, match.Replacement)
+	} else {
+		item, err = s.deps.Library.RefreshItem(r.Context(), id)
+	}
 	if err != nil {
 		s.libraryErr(w, err)
 		return
@@ -921,6 +953,7 @@ func (s *Server) SearchMetadata(w http.ResponseWriter, r *http.Request, params a
 		}
 		out = append(out, sr)
 	}
+	s.enrichAvailability(r.Context(), out)
 	writeJSON(w, http.StatusOK, out)
 }
 
@@ -1061,6 +1094,17 @@ func (s *Server) UpdateSettings(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON body")
 		return
+	}
+	if s.deps.Store != nil && (body.AuthUsername != nil || body.AuthPassword != nil || body.AuthRequired != nil && !*body.AuthRequired) {
+		established, err := s.deps.Store.HouseholdEstablished(r.Context())
+		if err != nil {
+			writeError(w, 503, "account settings unavailable")
+			return
+		}
+		if established {
+			writeError(w, 403, "manage household credentials from Accounts after local password confirmation")
+			return
+		}
 	}
 	if body.TmdbApiKey != nil {
 		if err := s.deps.Settings.SetMeta(r.Context(), TMDBKeySetting, strings.TrimSpace(*body.TmdbApiKey)); err != nil {
@@ -1488,4 +1532,20 @@ func (s *Server) ReprobeLibraryItem(w http.ResponseWriter, r *http.Request, id i
 		return
 	}
 	writeJSON(w, http.StatusAccepted, map[string]int{"files": n})
+}
+
+// offloadedFlag keeps the field off the wire for the (common) not-offloaded
+// row, so an old client and a new server read the same bytes.
+func offloadedFlag(v bool) *bool {
+	if !v {
+		return nil
+	}
+	return &v
+}
+
+func offloadedCount(n int) *int {
+	if n <= 0 {
+		return nil
+	}
+	return &n
 }

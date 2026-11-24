@@ -45,14 +45,14 @@ const (
 
 	historyJSON = `{"entries":[
       {"can_requeue":false,"category":"tv","completed_at_unix":1785099832,"dupe_key":"",
-       "dupe_score":0,"final_dir":"/downloads/complete/Show.S01E00","first_seen_at_unix":null,
+       "dupe_score":0,"first_seen_at_unix":null,
        "health":1000,"hidden":false,"job":10,"last_seen_at_unix":null,"name":"Show.S01E00",
        "params":[["monarr-transfer","t-40-aaaaaa"]],"picked_up_by":null,"removed_at_unix":null,
-       "seen_count":0,"seq":7,"size":1000,"status":"SUCCESS"},
-      {"job":11,"name":"Bad.Release","status":"FAILURE/HEALTH","final_dir":null,"seq":8},
-      {"job":12,"name":"Unpacked.Badly","status":"UNPACK_FAILURE",
-       "final_dir":"/downloads/complete/Unpacked.Badly","seq":9},
-      {"job":13,"name":"Removed.By.Hand","status":"DELETED","final_dir":null,"seq":10}
+       "seen_count":0,"seq":7,"size":1000,"outcome":"completed",
+       "publication":{"path":"/downloads/complete/Show.S01E00","generation":"g10","manifest_digest":"d10","files":1}},
+      {"job":11,"name":"Bad.Release","seq":8,"outcome":"failed","reason":"health","stage":"health","blames_release":true,"message":"FAILURE/HEALTH"},
+      {"job":12,"name":"Unpacked.Badly","seq":9,"outcome":"failed","reason":"unpack","stage":"unpack","blames_release":true,"message":"UNPACK_FAILURE"},
+      {"job":13,"name":"Removed.By.Hand","seq":10,"outcome":"cancelled"}
     ]}`
 
 	statusJSON = `{"version":"0.1.0+g1bddcf0","built":"2026-07-26 20:23 UTC","up_since_unix":1785099779,
@@ -254,97 +254,82 @@ func TestAuthorizationPrefersATokenAndFallsBackToBasic(t *testing.T) {
 	}
 }
 
-func TestStatusesMapsQueueAndHistory(t *testing.T) {
-	srv := fake(t, nil, nil)
+// Statuses is the live queue only (pipeline contract v2, section 2.5):
+// terminals come from the ordered history reader, never from re-reading the
+// last hundred history rows.
+func TestStatusesMapsQueueOnly(t *testing.T) {
+	rec := &recorder{}
+	srv := fake(t, rec, nil)
 	got, err := client(t, srv, "", "tok").Statuses(context.Background())
 	if err != nil {
 		t.Fatalf("Statuses: %v", err)
+	}
+	if rec.path != "/api/v1/jobs" {
+		t.Fatalf("last request %s, want only the queue", rec.path)
 	}
 	by := map[ports.Handle]ports.DownloadStatus{}
 	for _, s := range got {
 		by[s.Handle] = s
 	}
-	if len(by) != 9 {
-		t.Fatalf("got %d unique statuses, want 5 live + 4 historical", len(by))
+	if len(by) != 6 {
+		t.Fatalf("got %d statuses, want the 6 live jobs", len(by))
 	}
-
-	// A queued job, with progress from the byte counters.
-	if s := by["1"]; s.State != ports.StateQueued || s.Progress != 0.25 {
-		t.Errorf("job 1 = %+v, want queued at 0.25", s)
+	if s := by["1"]; s.State != ports.StateQueued || s.Progress != 0.25 || s.Transfer != "t-42-a3f9c1" {
+		t.Errorf("job 1 = %+v, want queued at 0.25 with its exact token", s)
 	}
-	if s := by["1"]; s.Transfer != "t-42-a3f9c1" {
-		t.Errorf("job 1 transfer = %q, want exact request token", s.Transfer)
-	}
-
-	// Post-processing is NOT completion. A job mid-unpack whose files are
-	// reported importable is how an import finds a half-unpacked folder,
-	// so both PP shapes must stay 'downloading' — and say which stage, so
-	// "stuck" reads as "verifying since four minutes ago".
+	// Post-processing is NOT completion.
 	if s := by["2"]; s.State != ports.StateDownloading || !strings.Contains(s.Message, "par verify") {
 		t.Errorf("job 2 (mid-PP) = %+v, want downloading naming the stage", s)
 	}
 	if s := by["3"]; s.State != ports.StateDownloading {
 		t.Errorf("job 3 (post_queued) = %+v, want downloading", s)
 	}
-	// Delayed PAR recovery used to produce this contradictory wire shape:
-	// top-level completed, ready false, and an open verification span. The
-	// open stage is the real activity and download completion is not import
-	// permission.
-	if s := by["4"]; s.State != ports.StateDownloading || s.Stage != "par_verify" ||
-		!strings.Contains(s.Message, "par verify") {
+	if s := by["4"]; s.State != ports.StateDownloading || s.Stage != "par_verify" {
 		t.Errorf("job 4 (delayed PAR recovery) = %+v, want active verification", s)
 	}
-	if s := by["5"]; s.State != ports.StateDownloading ||
-		!strings.Contains(s.Message, "download complete") {
+	if s := by["5"]; s.State != ports.StateDownloading || !strings.Contains(s.Message, "download complete") {
 		t.Errorf("job 5 (download phase complete) = %+v, want to wait for PP", s)
 	}
-
-	// History: success carries the final directory, which is the whole
-	// point — it is where the import will look.
-	if s := by["10"]; s.State != ports.StateCompleted || s.SavePath != "/downloads/complete/Show.S01E00" {
-		t.Errorf("job 10 = %+v, want completed with its final_dir", s)
-	}
-	if s := by["11"]; s.State != ports.StateFailed || s.Message != "FAILURE/HEALTH" {
-		t.Errorf("job 11 = %+v, want failed carrying nzbd's own reason", s)
-	}
-	if s := by["12"]; s.State != ports.StateFailed || s.Message != "UNPACK_FAILURE" {
-		t.Errorf("job 12 = %+v, want failed carrying nzbd's own reason", s)
-	}
-	// Deleted-by-hand is not a failure at all.
-	//
-	// It was reported as one (blameless, so at least not blocklisted) until
-	// the blameless flag turned out to guard only half the consequence: the
-	// failure path also re-searches, so deleting a job in nzbd made Monarr
-	// grab another copy of the same release seconds later. StateRemoved is
-	// the state that carries the operator's actual meaning — stop, and do
-	// not go and find me another one.
-	if s := by["13"]; s.State != ports.StateRemoved || !strings.Contains(s.Message, "removed in nzbd") {
-		t.Errorf("job 13 = %+v, want removed, saying a human removed it", s)
-	}
-	if s := by["13"]; s.State == ports.StateFailed {
-		t.Error("a deletion reported as a failure will be re-searched and replaced")
+	// A ready queue row is still not a completion: the terminal is history's.
+	if s := by["10"]; s.State == ports.StateCompleted {
+		t.Errorf("job 10 = %+v; the queue never declares completion", s)
 	}
 }
 
-func TestStatusesPreferAnUnrelatedLiveJobOverSameTitleHistory(t *testing.T) {
-	srv := fake(t, nil, func(w http.ResponseWriter, r *http.Request) bool {
-		switch r.URL.Path {
-		case "/api/v1/jobs":
-			_, _ = w.Write([]byte(`{"jobs":[{"id":20,"name":"Same.Release","status":"queued"}]}`))
-			return true
-		case "/api/v1/history":
-			_, _ = w.Write([]byte(`{"entries":[{"job":10,"name":"Same.Release","status":"SUCCESS","final_dir":"/old/Same.Release"}]}`))
-			return true
-		default:
-			return false
-		}
-	})
-	got, err := client(t, srv, "", "tok").Statuses(context.Background())
-	if err != nil {
-		t.Fatal(err)
+// The ordered history reader maps every row by Runner's typed terminal. A row
+// without one (the v1 status string alone) yields no fact.
+func TestHistorySinceMapsTypedTerminals(t *testing.T) {
+	rec := &recorder{}
+	srv := fake(t, rec, nil)
+	facts, next, lost, err := client(t, srv, "", "tok").HistorySince(context.Background(), ports.HistoryCursor{SinceSeq: 6}, 100)
+	if err != nil || lost {
+		t.Fatalf("HistorySince: lost=%v err=%v", lost, err)
 	}
-	if len(got) != 2 || got[0].Handle != "20" || got[1].Handle != "10" {
-		t.Fatalf("status order = %+v, want live job before same-title history", got)
+	if rec.query.Get("since_seq") != "6" || rec.query.Get("limit") != "100" {
+		t.Fatalf("query = %v, want since_seq=6&limit=100", rec.query)
+	}
+	if next.SinceSeq != 10 || next.Incarnation != "" {
+		t.Fatalf("next cursor = %+v, want last seq of the page and no incarnation", next)
+	}
+	by := map[ports.Handle]ports.RunnerTerminal{}
+	for _, f := range facts {
+		if f.Kind != ports.FactTerminal || f.Terminal == nil {
+			t.Fatalf("history produced a non-terminal fact %+v", f)
+		}
+		by[f.Handle] = *f.Terminal
+	}
+	if tm := by["10"]; tm.Outcome != ports.OutcomeCompleted || tm.Publication == nil || tm.Publication.Path != "/downloads/complete/Show.S01E00" {
+		t.Errorf("job 10 = %+v, want completed with its publication path", tm)
+	}
+	if tm := by["11"]; tm.Outcome != ports.OutcomeFailed || tm.Reason != ports.ReasonHealth || !tm.BlamesRelease {
+		t.Errorf("job 11 = %+v, want failed/health blaming the release", tm)
+	}
+	if tm := by["12"]; tm.Outcome != ports.OutcomeFailed || tm.Reason != ports.ReasonUnpack {
+		t.Errorf("job 12 = %+v, want failed/unpack", tm)
+	}
+	// Deleted-by-hand is cancelled: never re-grabbed, never blocklisted.
+	if tm := by["13"]; tm.Outcome != ports.OutcomeCancelled || tm.BlamesRelease {
+		t.Errorf("job 13 = %+v, want cancelled", tm)
 	}
 }
 
@@ -363,25 +348,20 @@ func TestNullFinalDirIsNotAnError(t *testing.T) {
 	}
 }
 
-// A malformed SUCCESS response without final_dir is not permission to import
-// from an empty path. A subsequent valid form completes normally.
-func TestSuccessWithoutFinalDirWaitsForThePath(t *testing.T) {
-	early := statusOfHistory(historyEntry{
-		Job: 14, Name: "Still.Post.Processing", Status: "SUCCESS",
+// A history row with no typed terminal (only the v1 status and final_dir) is
+// not a terminal; a completed row without its publication is not one either.
+func TestHistoryRowWithoutATypedTerminalMakesNoFact(t *testing.T) {
+	srv := fake(t, nil, func(w http.ResponseWriter, r *http.Request) bool {
+		if r.URL.Path != "/api/v1/history" {
+			return false
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"entries":[{"job":14,"seq":1,"status":"SUCCESS","final_dir":"/done"},{"job":15,"seq":2,"outcome":"completed"}]}`))
+		return true
 	})
-	if early.State != ports.StateDownloading {
-		t.Fatalf("early state = %q, want downloading until final_dir exists", early.State)
-	}
-	if early.SavePath != "" || !strings.Contains(early.Message, "waiting for final path") {
-		t.Errorf("early status = %+v, want an explicit wait with no path", early)
-	}
-
-	ready := statusOfHistory(historyEntry{
-		Job: 14, Name: "Still.Post.Processing", Status: "SUCCESS",
-		FinalDir: "/downloads/complete/Still.Post.Processing",
-	})
-	if ready.State != ports.StateCompleted || ready.SavePath == "" {
-		t.Errorf("ready status = %+v, want completed with final_dir", ready)
+	facts, next, _, err := client(t, srv, "", "t").HistorySince(context.Background(), ports.HistoryCursor{}, 100)
+	if err != nil || len(facts) != 0 || next.SinceSeq != 2 {
+		t.Fatalf("facts=%+v next=%+v err=%v, want none and the cursor past both rows", facts, next, err)
 	}
 }
 
@@ -417,6 +397,27 @@ func TestRemoveFallsBackFromQueueToHistory(t *testing.T) {
 		if !strings.HasSuffix(p, "/delete-files") {
 			t.Errorf("deleteData sent %q, want delete-files", p)
 		}
+	}
+}
+
+// CancelQueued never reaches the history route: a job that finished since the
+// poll answers 404 on the queue and that is the end of it.
+func TestCancelQueuedNeverTouchesHistory(t *testing.T) {
+	var paths []string
+	srv := fake(t, nil, func(w http.ResponseWriter, r *http.Request) bool {
+		if !strings.Contains(r.URL.Path, "/actions/") {
+			return false
+		}
+		paths = append(paths, r.URL.Path)
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"error":"no such job"}`))
+		return true
+	})
+	if err := client(t, srv, "", "t").CancelQueued(context.Background(), "7"); err != nil {
+		t.Fatalf("CancelQueued on a 404 = %v, want nil", err)
+	}
+	if fmt.Sprint(paths) != fmt.Sprint([]string{"/api/v1/jobs/7/actions/delete"}) {
+		t.Errorf("tried %v, want only the queue route", paths)
 	}
 }
 
@@ -478,6 +479,10 @@ func TestRequestTokenIdempotencyRequiresExplicitCapability(t *testing.T) {
 func TestRequestAdmissionLookupUsesExactTransferToken(t *testing.T) {
 	var gotPath string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/history" {
+			_, _ = w.Write([]byte(`{"entries":[]}`))
+			return
+		}
 		gotPath = r.URL.EscapedPath()
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"protocolVersion":1,"requestToken":"t-9-aabbcc","jobId":9,"generation":"gen-9","runnerInstanceId":"runner-1","outcome":"failed","terminalOutcome":"FAILURE/FETCH","sourceArtifactId":"artifact-1","sourceGeneration":"source-gen-1","failureStage":"fetch","failureCause":"descriptor unavailable","custodyState":"no_payload","keepSourceOnFailure":false,"sourceCleanupStatus":"not_required"}`))
@@ -566,5 +571,29 @@ func TestRemoveDoesNotBypassQueueRefusal(t *testing.T) {
 				t.Fatalf("refusal triggered %d requests; want one", calls)
 			}
 		})
+	}
+}
+
+// Field report 2026-11-02: every failed terminal reported progress 1, so a
+// post that failed health before a single article arrived looked like a full
+// download to the re-grab budget, which counts bytes.
+func TestFailedTerminalReportsTheFractionActuallyFetched(t *testing.T) {
+	failed := func(reason string, f ports.Fetched) ports.DownloadStatus {
+		return statusOfTerminal(1, "x", nil, nil, ports.RunnerTerminal{Outcome: ports.OutcomeFailed, Reason: reason, Fetched: f})
+	}
+	nothing := failed(ports.ReasonHealth, ports.Fetched{TotalArticles: 4683, SuccessArticles: 0})
+	if nothing.State != ports.StateFailed || nothing.Progress != 0 || !nothing.FetchedKnown {
+		t.Fatalf("health failure with no articles = %+v, want failed at 0", nothing)
+	}
+	if most := failed(ports.ReasonUnpack, ports.Fetched{TotalArticles: 1000, SuccessArticles: 950}); most.Progress != 0.95 {
+		t.Fatalf("unpack failure after fetching 95%% reported %v", most.Progress)
+	}
+	if unknown := failed(ports.ReasonHealth, ports.Fetched{}); unknown.Progress != 1 {
+		t.Fatalf("a failure without a record must not claim it cost nothing: %v", unknown.Progress)
+	}
+	done := statusOfTerminal(10, "x", nil, nil, ports.RunnerTerminal{Outcome: ports.OutcomeCompleted,
+		Publication: &ports.RunnerPublication{Path: "/done"}, Fetched: ports.Fetched{TotalArticles: 8432, SuccessArticles: 8020}})
+	if done.Progress != 1 || done.SavePath != "/done" {
+		t.Fatalf("a completed job is complete whatever PAR spared: %+v", done)
 	}
 }

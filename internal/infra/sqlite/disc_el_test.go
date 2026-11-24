@@ -6,7 +6,7 @@ import (
 	"github.com/pjunod/monarr/internal/domain"
 )
 
-// The disc master record (ADR 0026 §6): MEL holds only until an FEL is seen,
+// The disc master record (ADR 0031 §6): MEL holds only until an FEL is seen,
 // and an FEL is never overwritten — a MEL remux of an FEL disc is a different
 // master, not news about the disc.
 func TestDiscEnhancementLayerIsStickyForFEL(t *testing.T) {

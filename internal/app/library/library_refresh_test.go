@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/pjunod/monarr/internal/domain"
 	"github.com/pjunod/monarr/internal/infra/bus"
 	"github.com/pjunod/monarr/internal/infra/sqlite"
+	"github.com/pjunod/monarr/internal/infra/sqlite/sqlitetest"
 	"github.com/pjunod/monarr/internal/ports"
 )
 
@@ -47,7 +49,7 @@ func seriesV1() domain.MediaItem {
 }
 
 func TestRefreshItemUpdatesMetadataAndGrowsTree(t *testing.T) {
-	db, err := sqlite.Open(t.TempDir())
+	db, err := sqlite.Open(sqlitetest.Dir(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -189,7 +191,7 @@ func TestUpdateItemEditsPlacement(t *testing.T) {
 }
 
 func TestSeasonAndEpisodeMonitoring(t *testing.T) {
-	db, err := sqlite.Open(t.TempDir())
+	db, err := sqlite.Open(sqlitetest.Dir(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -277,7 +279,7 @@ func TestAddMonitorPresets(t *testing.T) {
 		{"latest", false, true},
 		{"none", false, false},
 	} {
-		db, err := sqlite.Open(t.TempDir())
+		db, err := sqlite.Open(sqlitetest.Dir(t))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -302,5 +304,54 @@ func TestAddMonitorPresets(t *testing.T) {
 		}
 		b.Close()
 		db.Close()
+	}
+}
+
+type missingMovieProvider struct{ fakeProvider }
+
+func (missingMovieProvider) GetMovie(ctx context.Context, id int64) (domain.MediaItem, error) {
+	if id == 901 {
+		return domain.MediaItem{}, &ports.RemoteError{Category: ports.RemoteNotFound, HTTPStatus: 404}
+	}
+	return fakeProvider{}.GetMovie(ctx, id)
+}
+func TestCorrectFilelessMovieAfterRefresh404(t *testing.T) {
+	svc, db, _ := newService(t)
+	ctx := context.Background()
+	item, err := svc.Add(ctx, AddRequest{Kind: domain.KindMovie, TMDBID: 901, Monitored: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc.meta = missingMovieProvider{}
+	if err = svc.RefreshAll(ctx); err != nil {
+		t.Fatal(err)
+	}
+	issues, err := db.OperatorIssues(ctx, time.Now())
+	if err != nil || len(issues) != 1 || issues[0].ID != item.ID || issues[0].Kind != "metadata" {
+		t.Fatalf("issues %+v %v", issues, err)
+	}
+	downloadID, err := db.InsertDownload(ctx, sqlite.Download{MediaItemID: item.ID, State: "failed", ReleaseTitle: "Old movie"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.W.ExecContext(ctx, "UPDATE downloads SET import_path='/completed/old-match' WHERE id=?", downloadID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = svc.CorrectMovieMatch(ctx, item.ID, 901, 902); !errors.Is(err, sqlite.ErrIdentityConflict) {
+		t.Fatalf("recoverable job lost original identity: %v", err)
+	}
+	if err = db.DeleteDownload(ctx, downloadID); err != nil {
+		t.Fatal(err)
+	}
+	fresh, err := svc.CorrectMovieMatch(ctx, item.ID, 901, 902)
+	if err != nil || fresh.ID != item.ID || fresh.IDs.TMDB != 902 || !fresh.Monitored {
+		t.Fatalf("corrected item %+v %v", fresh, err)
+	}
+	if _, err = svc.CorrectMovieMatch(ctx, item.ID, 901, 903); !errors.Is(err, sqlite.ErrIdentityConflict) {
+		t.Fatalf("stale correction: %v", err)
+	}
+	issues, err = db.OperatorIssues(ctx, time.Now())
+	if err != nil || len(issues) != 0 {
+		t.Fatalf("stale issues %+v %v", issues, err)
 	}
 }

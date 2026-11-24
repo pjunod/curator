@@ -64,6 +64,18 @@ func (s *Service) completeBoundImport(ctx context.Context, detail string) error 
 	return importControlError(s.db.CompleteImportAttempt(local, key, detail))
 }
 
+// settleBoundImport closes the bound attempt of an import that does not
+// decide the row's state (a salvage publication: the row stays failed).
+func (s *Service) settleBoundImport(ctx context.Context) error {
+	key, ok := importAttemptFrom(ctx)
+	if !ok {
+		return nil
+	}
+	local, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+	defer cancel()
+	return importControlError(s.db.SettleImportAttempt(local, key))
+}
+
 // beginInlineImport has the same ticket and epoch contract as asynchronous
 // execution. Its caller already holds the canonical download mutex.
 func (s *Service) beginInlineImport(ctx context.Context, dl sqlite.Download, key sqlite.ImportAttemptKey) (context.Context, func(), error) {

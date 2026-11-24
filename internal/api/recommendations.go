@@ -159,6 +159,14 @@ func (s *Server) RecommendSeries(w http.ResponseWriter, r *http.Request) {
 		}
 		out.Results = append(out.Results, row)
 	}
+	items := make([]apigen.SearchResult, len(out.Results))
+	for i := range out.Results {
+		items[i] = out.Results[i].Item
+	}
+	s.enrichAvailability(r.Context(), items)
+	for i := range out.Results {
+		out.Results[i].Item = items[i]
+	}
 	writeJSON(w, 200, out)
 }
 

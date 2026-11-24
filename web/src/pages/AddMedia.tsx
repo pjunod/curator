@@ -1,3 +1,4 @@
+import { AvailabilityBadge } from '../AvailabilityBadge'
 import { SERIES_MONITOR_MODES, type SeriesMonitorMode } from '../monitoring'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
@@ -380,7 +381,7 @@ export function AddMediaPage() {
               <p className="muted clamp">{r.overview}</p>
               <button className="result-preview-trigger" aria-label={`View details for ${r.title}`} onClick={() => void openPreview(r)}>View details</button>
             </div>
-            <div className="result-action">
+            <div className="result-action"><AvailabilityBadge value={r.availability} />
               {r.kind === 'series' && <button onClick={() => moreLike(r)}>More like this</button>}
               {(() => {
                 const just = addedByKey.get(resultKey(r, bookType))
@@ -398,12 +399,12 @@ export function AddMediaPage() {
                 if (selectedEditionPresent) {
                   return <span className="pill pill-ok">{bookType} in library</span>
                 }
-                if (r.inLibrary && r.kind !== 'book') return <span className="pill pill-ok">in library</span>
+                if (r.inLibrary && r.kind !== 'book') return <><AvailabilityBadge value={r.availability} checked />{r.availability?.libraryItemId&&<Link to="/library/$id" params={{id:String(r.availability.libraryItemId)}}>Open in library</Link>}</>
                 const busy = pendingKey === resultKey(r, bookType)
                 return (
                   <button
                     className="btn-accent"
-                    disabled={add.isPending || !selectedRootId}
+                    disabled={add.isPending || !selectedRootId || !!r.availability&&['unknown','ambiguous'].includes(r.availability.catalog)}
                     title={!selectedRootId ? 'Add a matching root folder in Settings first' : undefined}
                     onClick={() => add.mutate(r)}
                   >

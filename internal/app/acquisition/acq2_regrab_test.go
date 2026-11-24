@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pjunod/monarr/internal/domain"
 	"github.com/pjunod/monarr/internal/infra/sqlite"
 	"github.com/pjunod/monarr/internal/ports"
 )
@@ -165,7 +166,7 @@ func TestAutomaticImportRetryLeavesLegacyReviewCohortUntouched(t *testing.T) {
 		t.Fatal("expected blocked import")
 	}
 	restore()
-	if _, err := db.R.ExecContext(ctx, `INSERT INTO legacy_cleanup_review(generation_key,path) VALUES(?,?)`, dl.GenerationKey, payload); err != nil {
+	if _, err := db.R.ExecContext(ctx, `INSERT INTO storage_change_review_paths(review_token,path) VALUES(?,?)`, dl.GenerationKey, payload); err != nil {
 		t.Fatal(err)
 	}
 	before, err := db.GetDownload(ctx, dl.ID)
@@ -226,11 +227,12 @@ func TestPayloadDirInsideARootFolderIsNeverRemoved(t *testing.T) {
 	svc, db, itemID := setupUsenet(t, client)
 	ctx := context.Background()
 
-	roots, err := db.ListRootFolders(ctx)
-	if err != nil || len(roots) == 0 {
-		t.Skipf("no root folder in the fixture (%v)", err)
+	// The fixture has no root folder; without one this guard never ran.
+	root, err := db.AddRootFolder(ctx, t.TempDir(), domain.KindMixed)
+	if err != nil {
+		t.Fatal(err)
 	}
-	inside := filepath.Join(roots[0].Path, "Some.Release")
+	inside := filepath.Join(root.Path, "Some.Release")
 	if err := os.MkdirAll(inside, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -318,6 +320,97 @@ func TestRegrabIsCappedPerWindow(t *testing.T) {
 	capped, spent := svc.regrabCapped(ctx, w)
 	if !capped {
 		t.Errorf("not capped after %d failed grabs in the window", spent)
+	}
+}
+
+// Field report 2026-11-02 (Paul: "count bytes, not attempts"): eleven posts
+// failed health with zero articles fetched, and the attempt-counting cap
+// stopped the season after three rounds that cost nothing.
+func TestRegrabBudgetCountsBytesNotAttempts(t *testing.T) {
+	client := &fakeClient{}
+	svc, db, itemID := setupUsenet(t, client)
+	ctx := context.Background()
+	clients, err := db.ListDownloadClients(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w, err := svc.wantableFromID(ctx, "episode:1:1:1")
+	if err != nil {
+		t.Skipf("fixture has no such wantable: %v", err)
+	}
+	fail := func(title string, size int64, fetched float64) {
+		t.Helper()
+		id, err := db.InsertDownload(ctx, sqlite.Download{
+			MediaItemID: itemID, WantableIDs: []string{"episode:1:1:1"}, ReleaseTitle: title,
+			Protocol: "usenet", ClientID: clients[0].ID, State: "grabbed", Size: size,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		row, err := db.GetDownload(ctx, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		row.State, row.Progress = "failed", fetched
+		if err := db.UpdateDownloadHandoff(ctx, row); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for i := 0; i < 2*reGrabLimit; i++ {
+		fail("Dead.Post."+strings.Repeat("x", i+1), 3<<30, 0)
+	}
+	if capped, failed := svc.regrabCapped(ctx, w); capped {
+		t.Fatalf("%d failures that fetched nothing exhausted the budget", failed)
+	}
+	if _, err := db.W.ExecContext(ctx, `DELETE FROM downloads`); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < reGrabLimit-1; i++ {
+		fail("Costly.Post."+strings.Repeat("y", i+1), 3<<30, 1)
+	}
+	if capped, _ := svc.regrabCapped(ctx, w); capped {
+		t.Fatal("capped before three releases' worth of bytes were spent")
+	}
+	fail("Costly.Post.last", 3<<30, 1)
+	if capped, failed := svc.regrabCapped(ctx, w); !capped {
+		t.Fatalf("not capped after %d releases of bytes across %d failures", reGrabLimit, failed)
+	}
+}
+
+// Review finding: failures that cost no bytes still spend an indexer grab and
+// a Runner submission each, so they need a ceiling of their own.
+func TestZeroCostFailuresStillHitTheAttemptCeiling(t *testing.T) {
+	client := &fakeClient{}
+	svc, db, itemID := setupUsenet(t, client)
+	ctx := context.Background()
+	clients, err := db.ListDownloadClients(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w, err := svc.wantableFromID(ctx, "episode:1:1:1")
+	if err != nil {
+		t.Skipf("fixture has no such wantable: %v", err)
+	}
+	for i := 0; i < reGrabAttemptCeiling; i++ {
+		if capped, _ := svc.regrabCapped(ctx, w); capped {
+			t.Fatalf("capped after only %d zero-cost failures", i)
+		}
+		id, err := db.InsertDownload(ctx, sqlite.Download{MediaItemID: itemID, WantableIDs: []string{"episode:1:1:1"},
+			ReleaseTitle: "Dead." + strings.Repeat("z", i+1), Protocol: "usenet", ClientID: clients[0].ID, State: "grabbed", Size: 3 << 30})
+		if err != nil {
+			t.Fatal(err)
+		}
+		row, err := db.GetDownload(ctx, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		row.State, row.Progress = "failed", 0
+		if err := db.UpdateDownloadHandoff(ctx, row); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if capped, failed := svc.regrabCapped(ctx, w); !capped {
+		t.Fatalf("%d zero-cost failures did not reach the attempt ceiling", failed)
 	}
 }
 

@@ -98,7 +98,7 @@ func TestLegacyReviewImportRequiresExactSelectionAndPersistsApproval(t *testing.
 	if err := os.WriteFile(sibling, []byte("untouched sibling"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.W.ExecContext(ctx, `INSERT INTO legacy_cleanup_review(generation_key,path) VALUES('',?)`, payload); err != nil {
+	if _, err := db.W.ExecContext(ctx, `INSERT INTO storage_change_review_paths(review_token,path) VALUES('',?)`, payload); err != nil {
 		t.Fatal(err)
 	}
 	if err := svc.SetCompletedRoots(ctx, completedRoot); err != nil {
@@ -172,7 +172,7 @@ func TestLegacyReviewImportRequiresExactSelectionAndPersistsApproval(t *testing.
 	if err := db.UpdateDownloadHandoff(ctx, dl); err != nil {
 		t.Fatal(err)
 	}
-	if err := svc.runImport(ctx, dl); err == nil || !strings.Contains(err.Error(), "legacy payload review") {
+	if err := svc.runImport(ctx, dl); err == nil || !strings.Contains(err.Error(), "storage under this payload changed") {
 		t.Fatalf("newer unreviewed selection inherited earlier legacy approval: %v", err)
 	}
 	item, err := db.GetMediaItemFull(ctx, itemID)
@@ -196,7 +196,7 @@ func TestLegacyReviewWorkerRejectsReusedPathAfterQueuedApproval(t *testing.T) {
 	if err := os.WriteFile(selected, []byte("original bytes"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.W.ExecContext(ctx, `INSERT INTO legacy_cleanup_review(generation_key,path) VALUES('',?)`, payload); err != nil {
+	if _, err := db.W.ExecContext(ctx, `INSERT INTO storage_change_review_paths(review_token,path) VALUES('',?)`, payload); err != nil {
 		t.Fatal(err)
 	}
 	if err := svc.SetCompletedRoots(ctx, completedRoot); err != nil {
@@ -599,7 +599,7 @@ func TestOrdinaryManualImportCannotBypassLegacyFenceThroughParentOrChild(t *test
 			if err := os.WriteFile(file, []byte("retained legacy bytes"), 0o644); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := db.W.ExecContext(ctx, `INSERT INTO legacy_cleanup_review(generation_key,path) VALUES('historical-generation',?)`, payload); err != nil {
+			if _, err := db.W.ExecContext(ctx, `INSERT INTO storage_change_review_paths(review_token,path) VALUES('historical-generation',?)`, payload); err != nil {
 				t.Fatal(err)
 			}
 			path := child

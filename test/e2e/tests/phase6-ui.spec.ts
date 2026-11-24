@@ -67,7 +67,7 @@ test('detail page shows labeled facts: location chip, profile, rating, links', a
   // External links open in a new tab.
   const imdb = page.getByRole('link', { name: /IMDb/ })
   await expect(imdb).toHaveAttribute('target', '_blank')
-  await expect(imdb).toHaveAttribute('href', /imdb\.com\/title\/tt6010001/)
+  await expect(imdb).toHaveAttribute('href', /^https:\/\/(?:www\.)?imdb\.com\/title\/tt6010001\/?$/)
 })
 
 test('interactive search titles link to the indexer details page', async ({ page, request }) => {
@@ -111,12 +111,17 @@ test('saved indexers and clients: per-row Test with stored credentials', async (
   expect((await request.post('/api/v1/indexers/99999/test')).status()).toBe(404)
 
   // And the buttons are on the saved rows in Settings.
-  await page.goto('/settings')
-  await page.locator('#indexers').getByRole('button', { name: 'Test' }).first().click()
-  await expect(page.locator('#indexers .ok-text').first()).toBeVisible()
-  await expect(
-    page.locator('#downloadclients tbody').getByRole('button', { name: 'Test', exact: true }).first(),
-  ).toBeVisible()
+  await page.goto('/settings#indexers')
+  const indexerRow = page.locator('#indexers tbody').getByRole('row').filter({
+    has: page.getByRole('cell', { name: idx[0].name, exact: true }),
+  })
+  await indexerRow.getByRole('button', { name: 'Test', exact: true }).click()
+  await expect(indexerRow.getByText('✓ reachable', { exact: true })).toBeVisible()
+
+  const clientRow = page.locator('#downloadclients tbody').getByRole('row').filter({
+    has: page.getByRole('cell', { name: clients[0].name, exact: true }),
+  })
+  await expect(clientRow.getByRole('button', { name: 'Test', exact: true })).toBeVisible()
 })
 
 test('metadata refresh re-hydrates from the provider', async ({ request }) => {

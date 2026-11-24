@@ -1,0 +1,36 @@
+import { useState } from 'react'
+import { ScrollView, Text, View } from 'react-native'
+import type { MonarrClient } from '../api'
+import type { LibraryShelf, SearchResult } from '../types'
+import { availabilityLabel, matchesAvailability, type AvailabilityFilter } from '../availability'
+import { useResource } from '../useResource'
+import { useTheme } from '../theme'
+import { usePreferences } from '../preferences-context'
+import { Button, Chip, Field, InlineError, LoadingState, Panel, SectionTitle } from './UI'
+import { SearchCard } from './Media'
+
+export function LibraryDiscovery({client,onPick,onOpenLibrary}:{client:MonarrClient;onPick:(item:SearchResult,step:'preview'|'options')=>void;onOpenLibrary:(id:number)=>void}){
+ const theme=useTheme(),[q,setQ]=useState(''),[offset,setOffset]=useState(0),[seed,setSeed]=useState<SearchResult|null>(null),[filter,setFilter]=useState<AvailabilityFilter>('all')
+ const seeds=useResource(()=>client.getLibraryDiscoverySeeds(q,offset),[client,q,offset])
+ return <View style={{gap:16}}>
+  <Text style={{color:theme.muted}}>Choose a library title. Suggestions use catalogue metadata, not watch history.</Text>
+  <Field accessibilityLabel="Find a library title" placeholder="Find a library title" value={q} onChangeText={value=>{setQ(value);setOffset(0)}} />
+  {seeds.loading?<LoadingState label="Loading library titles…"/>:null}<InlineError message={seeds.error}/>
+  {seeds.error?<Button secondary label="Retry library titles" onPress={()=>void seeds.refresh()}/>:null}
+  <ScrollView horizontal showsHorizontalScrollIndicator contentContainerStyle={{gap:8}}>{seeds.data?.items.map(item=><Chip key={`${item.kind}:${item.tmdbId}`} label={`${item.title} · ${item.kind==='series'?'Show':'Movie'}`} selected={seed?.kind===item.kind&&seed.tmdbId===item.tmdbId} onPress={()=>setSeed(item)}/>)}</ScrollView>
+  {seeds.data?<View style={{flexDirection:'row',gap:10,flexWrap:'wrap'}}><Button compact secondary label="Previous titles" disabled={offset===0} onPress={()=>setOffset(Math.max(0,offset-50))}/><Text style={{color:theme.muted}}>Page {Math.floor(offset/50)+1}</Text><Button compact secondary label="More titles" disabled={!seeds.data.hasMore} onPress={()=>setOffset(offset+50)}/></View>:null}
+  {!seed?<Text style={{color:theme.muted}}>{seeds.data?.items.length===0?'No matching title with a TMDB identity. Try another search or Browse all.':'Select a movie or show to load its shelves.'}</Text>:null}
+  <ScrollView horizontal contentContainerStyle={{gap:8}}>{([['all','All availability'],['to-get','Still to get'],['present','Available'],['unknown','Needs a check']] as const).map(([key,label])=><Chip key={key} label={label} selected={filter===key} onPress={()=>setFilter(key)}/>)}</ScrollView>
+  {seed?<SelectedSeed key={`${seed.kind}:${seed.tmdbId}:${seed.availability?.libraryItemId}`} client={client} seed={seed} filter={filter} onPick={onPick} onOpenLibrary={onOpenLibrary}/>:null}
+ </View>
+}
+function SelectedSeed({client,seed,filter,onPick,onOpenLibrary}:{client:MonarrClient;seed:SearchResult;filter:AvailabilityFilter;onPick:(item:SearchResult,step:'preview'|'options')=>void;onOpenLibrary:(id:number)=>void}){
+ const theme=useTheme();const current=useResource(()=>client.getAvailability([seed]),[client,seed.kind,seed.tmdbId,seed.availability?.libraryItemId]);const value=current.error?undefined:current.data?.[0]
+ const ready=value?.catalog==='present'&&value.libraryItemId===seed.availability?.libraryItemId
+ return <View style={{gap:18}}><Panel><SectionTitle>Based on {seed.title}</SectionTitle><Text style={{color:theme.muted}}>Primary copy · known aired regular episodes</Text><Text style={{color:theme.text}}>{availabilityLabel(value)}</Text>{value?.checkedAt?<Text style={{color:theme.muted}}>Last checked {new Date(value.checkedAt).toLocaleString()}</Text>:null}<InlineError message={current.error}/><Button compact secondary label="Refresh library check" onPress={()=>void current.refresh()}/>{!current.loading&&!ready?<Text style={{color:theme.muted}}>The selected library identity is unavailable or changed. Select it again before loading shelves.</Text>:null}{ready&&value.presence==='unknown'?<Text style={{color:theme.muted}}>A successful library scan is needed. Checks expire after 13 hours; changed files stay unknown until checked.</Text>:null}</Panel>
+ {ready?<><NativeShelf client={client} seed={seed} shelf="related" filter={filter} onPick={onPick} onOpenLibrary={onOpenLibrary}/>{seed.kind==='movie'?<NativeShelf client={client} seed={seed} shelf="collection" filter={filter} onPick={onPick} onOpenLibrary={onOpenLibrary}/>:<Panel><SectionTitle>More seasons to review</SectionTitle>{value.seasons?.filter(sn=>(sn.expected>0||sn.unknownDates>0)&&(value.presence==='unknown'||sn.present<sn.expected||sn.unknownDates>0)).map(sn=><View key={sn.number} style={{gap:7,paddingVertical:12}}><Text style={{color:theme.text}}>Season {sn.number}</Text><Text style={{color:theme.muted}}>{value.presence==='unknown'?`${sn.present} confirmed episodes · remaining availability unknown`:`${sn.present} of ${sn.expected} aired episodes available`}</Text>{sn.offloaded>0?<Text style={{color:theme.muted}}>{sn.offloaded} offloaded episodes</Text>:null}{sn.unknownDates>0?<Text style={{color:theme.muted}}>{sn.unknownDates} episodes have unknown air dates</Text>:null}</View>)}{!value.seasons?.length?<Text style={{color:theme.muted}}>No regular season inventory is available yet.</Text>:null}<Button secondary label="View show in library" onPress={()=>onOpenLibrary(value.libraryItemId!)}/></Panel>}</>:null}</View>
+}
+function NativeShelf({client,seed,shelf,filter,onPick,onOpenLibrary}:{client:MonarrClient;seed:SearchResult;shelf:'related'|'collection';filter:AvailabilityFilter;onPick:(item:SearchResult,step:'preview'|'options')=>void;onOpenLibrary:(id:number)=>void}){
+ const theme=useTheme(),{itemSize}=usePreferences();const resource=useResource<LibraryShelf>(()=>client.getLibraryDiscoveryItems(seed,shelf),[client,seed.kind,seed.tmdbId,seed.availability?.libraryItemId,shelf]);const items=(resource.data?.items??[]).filter(item=>matchesAvailability(item.availability,filter)&&(shelf!=='collection'||item.availability?.presence!=='present'))
+ return <View style={{gap:12}}><SectionTitle>{shelf==='related'?`More like ${seed.title}`:resource.data?.title?`Complete ${resource.data.title}`:'Complete the collection'}</SectionTitle><Text style={{color:theme.muted}}>{shelf==='related'?'TMDB recommendations · first page, up to 30 titles':'Verified TMDB collection members · available primary copies omitted'}</Text>{resource.loading?<LoadingState label="Loading shelf…"/>:null}<InlineError message={resource.error}/>{resource.error?<Button secondary label="Retry shelf" onPress={()=>void resource.refresh()}/>:null}{!resource.loading&&!resource.error&&items.length===0?<Text style={{color:theme.muted}}>No titles match this shelf and availability filter.</Text>:null}{!resource.error?items.map(item=><View key={`${item.kind}:${item.tmdbId}`} style={{gap:6}}><SearchCard item={item} itemSize={itemSize} onAdd={()=>onPick(item,'options')} onPreview={()=>onPick(item,'preview')}/>{item.availability?.libraryItemId?<Button compact secondary label={`View ${item.title} in library`} onPress={()=>onOpenLibrary(item.availability!.libraryItemId!)}/>:null}</View>):null}</View>
+}

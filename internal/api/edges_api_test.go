@@ -97,9 +97,9 @@ func TestEdgeAuthRefusesToLockTheDoorWithNoKeyUnderIt(t *testing.T) {
 
 // What the guard must NOT cover. The login route is how you get a session, so
 // gating it is a deadlock; the SPA shell is how the login page loads at all;
-// and /metrics is scraped by a monitoring agent that has no session and,
-// being outside /api/v1, was never meant to need one.
-func TestEdgeAuthGuardLetsTheShellLoginAndMetricsThrough(t *testing.T) {
+// Metrics now requires owner authority, including an integration API key,
+// so it cannot expose protected operational details to household members.
+func TestEdgeAuthGuardLetsShellAndLoginThroughAndProtectsMetrics(t *testing.T) {
 	e := newAPIEnv(t)
 	edgeLockDown(t, e, "edge-key")
 
@@ -117,7 +117,10 @@ func TestEdgeAuthGuardLetsTheShellLoginAndMetricsThrough(t *testing.T) {
 	}
 
 	t.Setenv("MONARR_METRICS", "true")
-	e.get(t, "/metrics").expect(t, http.StatusOK)
+	e.get(t, "/metrics").expect(t, http.StatusUnauthorized)
+	if rr := edgeDo(t, e.h, http.MethodGet, "/metrics", "", map[string]string{"X-Api-Key": "edge-key"}); rr.Code != http.StatusOK {
+		t.Fatalf("owner metrics status=%d: %s", rr.Code, rr.Body.String())
+	}
 }
 
 // A wrong key is not "no key": the comparison is constant-time and easy to
@@ -173,8 +176,8 @@ func TestEdgeLoginRefusesBadBodiesAndMissingCredentials(t *testing.T) {
 
 	rr := e.post(t, "/api/v1/auth/login", `{"username":"edge","password":"s3cret"}`).
 		expect(t, http.StatusUnauthorized)
-	if !strings.Contains(rr.Body.String(), "no credentials") {
-		t.Errorf("an install with no login configured should say so: %s", rr.Body.String())
+	if !strings.Contains(rr.Body.String(), "credentials") {
+		t.Errorf("an install with no login configured must refuse credentials: %s", rr.Body.String())
 	}
 
 	// Configure credentials without enabling auth: login still works, which

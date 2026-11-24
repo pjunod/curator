@@ -1,0 +1,143 @@
+package api
+
+import (
+	"net/http"
+
+	apigen "github.com/pjunod/monarr/internal/api/gen"
+	"github.com/pjunod/monarr/internal/app/acquisition"
+	"github.com/pjunod/monarr/internal/infra/sqlite"
+)
+
+func (s *Server) ListImportActivity(w http.ResponseWriter, r *http.Request, p apigen.ListImportActivityParams) {
+	filter, search, limit, offset := "all", "", 50, 0
+	if p.Filter != nil {
+		filter = string(*p.Filter)
+	}
+	if p.Q != nil {
+		search = *p.Q
+	}
+	if p.Limit != nil {
+		limit = *p.Limit
+	}
+	if p.Offset != nil {
+		offset = *p.Offset
+	}
+	if (filter != "all" && filter != "active" && filter != "queued" && filter != "attention" && filter != "imported" && filter != "history") || limit < 1 || limit > 200 || offset < 0 {
+		writeError(w, 400, "invalid import filter or pagination")
+		return
+	}
+	page, err := s.deps.Acquisition.ImportActivity(r.Context(), filter, search, limit, offset)
+	if err != nil {
+		s.acqErr(w, err)
+		return
+	}
+	s.writeActivityPage(w, r, page)
+}
+
+func (s *Server) ListActivity(w http.ResponseWriter, r *http.Request, p apigen.ListActivityParams) {
+	view, scope, search, limit, offset := "progress", "all", "", 50, 0
+	if p.View != nil {
+		view = string(*p.View)
+	}
+	if p.Scope != nil {
+		scope = string(*p.Scope)
+	}
+	if p.Q != nil {
+		search = *p.Q
+	}
+	if p.Limit != nil {
+		limit = *p.Limit
+	}
+	if p.Offset != nil {
+		offset = *p.Offset
+	}
+	if (view != "progress" && view != "attention" && view != "history") || (scope != "all" && scope != "imports") || limit < 1 || limit > 200 || offset < 0 {
+		writeError(w, 400, "invalid activity view, scope or pagination")
+		return
+	}
+	page, err := s.deps.Acquisition.Activity(r.Context(), view, search, scope == "imports", limit, offset)
+	if err != nil {
+		s.acqErr(w, err)
+		return
+	}
+	s.writeActivityPage(w, r, page)
+}
+
+func (s *Server) writeActivityPage(w http.ResponseWriter, r *http.Request, page acquisition.ImportActivityPage) {
+	rows := make([]sqlite.Download, 0, len(page.Rows))
+	for _, entry := range page.Rows {
+		if entry.ID < 0 {
+			continue
+		}
+		d, e := s.deps.Store.GetDownload(r.Context(), entry.ID)
+		if e != nil {
+			s.acqErr(w, e)
+			return
+		}
+		rows = append(rows, d)
+	}
+	items, err := s.queueItems(r.Context(), rows)
+	if err != nil {
+		s.acqErr(w, err)
+		return
+	}
+	out := apigen.ImportActivityPage{Items: []apigen.ImportActivityItem{}, Counts: page.Counts, Total: page.Total, HasMore: page.HasMore, RetentionDays: s.deps.Acquisition.RetentionDays(r.Context())}
+	byID := make(map[int64]apigen.QueueItem, len(items))
+	for _, item := range items {
+		byID[item.Id] = item
+	}
+	for _, entry := range page.Rows {
+		item := byID[entry.ID]
+		if entry.ID < 0 {
+			pub, e := s.deps.Store.GetPublication(r.Context(), -entry.ID)
+			if e != nil {
+				s.acqErr(w, e)
+				return
+			}
+			files, e := s.deps.Store.ListPublicationFiles(r.Context(), pub.ID)
+			if e != nil {
+				s.acqErr(w, e)
+				return
+			}
+			item = apigen.QueueItem{Id: entry.ID, Title: entry.Title, State: pub.State, Protocol: "historical", AddedAt: pub.DiscoveredAt, ImportPath: &pub.Path}
+			s.fillPipelineV2(&item, sqlite.Download{}, []sqlite.Publication{pub}, map[int64][]sqlite.PublicationFile{pub.ID: files})
+		}
+		result := apigen.ImportActivityItem{Download: item, Category: apigen.ImportActivityItemCategory(entry.Category), Title: entry.Title, Kind: entry.Kind, Destination: entry.Destination, UpdatedAt: entry.UpdatedAt}
+		if entry.ID > 0 {
+			dl, err := s.deps.Store.GetDownload(r.Context(), entry.ID)
+			if err != nil {
+				s.acqErr(w, err)
+				return
+			}
+			info, err := s.deps.Acquisition.ActivityActions(r.Context(), dl)
+			if err != nil {
+				s.acqErr(w, err)
+				return
+			}
+			if info.Identity.GenerationKey != entry.GenerationKey || info.Identity.Epoch != entry.Epoch {
+				writeError(w, http.StatusConflict, "Activity changed while loading; refresh this view")
+				return
+			}
+			result.Identity = &apigen.ActivityIdentity{Id: info.Identity.ID, GenerationKey: info.Identity.GenerationKey, Epoch: info.Identity.Epoch}
+			result.Reason = &info.Reason
+			result.Prerequisite = &info.Prerequisite
+			actions := []apigen.ActivityAction{}
+			for _, a := range info.Actions {
+				actions = append(actions, apigen.ActivityAction{Kind: a.Kind, Label: a.Label, Enabled: a.Enabled})
+			}
+			result.Actions = &actions
+			if info.Operation != nil {
+				r := info.Operation
+				result.Operation = &struct {
+					Action  string `json:"action"`
+					Id      string `json:"id"`
+					Message string `json:"message"`
+					State   string `json:"state"`
+				}{Action: r.Action, Id: r.ID, Message: r.Message, State: r.State}
+			}
+
+		}
+		out.Items = append(out.Items, result)
+	}
+	writeJSON(w, 200, out)
+}

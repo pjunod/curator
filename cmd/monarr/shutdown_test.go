@@ -14,6 +14,7 @@ import (
 
 	"github.com/pjunod/monarr/internal/infra/config"
 	"github.com/pjunod/monarr/internal/infra/sqlite"
+	"github.com/pjunod/monarr/internal/infra/sqlite/sqlitetest"
 )
 
 func TestListenerFailureCancelsAndJoinsWorkersWithoutSignal(t *testing.T) {
@@ -54,13 +55,12 @@ func TestRunShutsDownWithConnectedEventStream(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	port := listener.Addr().(*net.TCPAddr).Port
-	_ = listener.Close()
+	port := listener.Addr().(*net.TCPAddr).Port // served on this listener: no port race
 	ctx, cancel := context.WithCancel(context.Background())
 	finished := make(chan error, 1)
 	dataDir := shutdownTestDataDir(t)
 	go func() {
-		finished <- run(ctx, config.Config{Host: "127.0.0.1", Port: port, DataDir: dataDir}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+		finished <- serve(ctx, config.Config{Host: "127.0.0.1", Port: port, DataDir: dataDir}, slog.New(slog.NewTextHandler(io.Discard, nil)), listener)
 	}()
 	var body io.ReadCloser
 	joined := false
@@ -113,7 +113,7 @@ func TestRunShutsDownWithConnectedEventStream(t *testing.T) {
 // on shared runners can spend seconds migrating an empty database.
 func shutdownTestDataDir(t *testing.T) string {
 	t.Helper()
-	dir := t.TempDir()
+	dir := sqlitetest.Dir(t)
 	db, err := sqlite.Open(dir)
 	if err != nil {
 		t.Fatal(err)

@@ -135,7 +135,19 @@ func (c *Client) doBodyPolicy(ctx context.Context, method, path string, body io.
 		return fmt.Errorf("nzbd: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
-	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+	if stream, ok := out.(statusStream); ok && resp.StatusCode >= 200 && resp.StatusCode < 300 && resp.StatusCode != http.StatusAccepted {
+		if err := stream.readStatusJSON(resp.Body); err != nil {
+			return fmt.Errorf("nzbd: bad response from %s: %w", path, err)
+		}
+		return nil
+	}
+	raw, readErr := io.ReadAll(io.LimitReader(resp.Body, (8<<20)+1))
+	if readErr != nil {
+		return fmt.Errorf("nzbd: read response from %s: %w", path, readErr)
+	}
+	if len(raw) > 8<<20 {
+		return fmt.Errorf("nzbd: response from %s exceeds 8 MiB", path)
+	}
 	if resp.StatusCode == http.StatusUnauthorized {
 		return apiError(resp, "authentication rejected")
 	}
@@ -237,18 +249,27 @@ const ManualAdditionalParam = "monarr-manual-additional"
 
 // job is one row of `GET /api/v1/jobs`.
 type job struct {
-	Kind            string                 `json:"kind"`
-	TorrentRole     string                 `json:"torrent_role"`
-	ID              int64                  `json:"id"`
-	Name            string                 `json:"name"`
-	Status          json.RawMessage        `json:"status"`
-	SizeBytes       int64                  `json:"size_bytes"`
-	DownloadedBytes int64                  `json:"downloaded_bytes"`
-	PPDone          bool                   `json:"pp_done"`
-	Ready           bool                   `json:"ready"`
-	Stages          []stageSpan            `json:"stages"`
-	Control         *ports.DownloadControl `json:"control"`
-	Params          [][2]string            `json:"params"`
+	Kind            string          `json:"kind"`
+	TorrentRole     string          `json:"torrent_role"`
+	ID              int64           `json:"id"`
+	Name            string          `json:"name"`
+	Status          json.RawMessage `json:"status"`
+	SizeBytes       int64           `json:"size_bytes"`
+	DownloadedBytes int64           `json:"downloaded_bytes"`
+	// RateBps and RemainingBytes are Runner's own per-job numbers (its
+	// rolling average speed and the bytes it still has to fetch). Pointers:
+	// an older Runner sends neither, and absent is not zero.
+	RateBps        *int64                 `json:"rate_bps"`
+	RemainingBytes *int64                 `json:"remaining_bytes"`
+	PPDone         bool                   `json:"pp_done"`
+	Ready          bool                   `json:"ready"`
+	Stages         []stageSpan            `json:"stages"`
+	Control        *ports.DownloadControl `json:"control"`
+	Params         [][2]string            `json:"params"`
+	// StatusProjected is Runner's own projection of the job's status
+	// (contract section 2.3): "held" for a job on hold, whatever the
+	// persisted status says. Empty from an older Runner.
+	StatusProjected string `json:"status_projected"`
 }
 
 type stageSpan struct {
@@ -268,7 +289,10 @@ func (j job) downloadComplete() bool {
 // `{"post":{"stage":"unpack"}}` while post-processing runs, so this
 // decodes both shapes rather than assuming either.
 func (j job) state() (ports.DownloadState, string, string) {
-	if j.Control.Held() {
+	if j.StatusProjected == "held" || j.Control.Held() {
+		if j.Control == nil {
+			return ports.StateQueued, "held by Runner", ""
+		}
 		return ports.StateQueued, j.Control.Message, j.Control.Stage
 	}
 
@@ -309,9 +333,10 @@ func (j job) state() (ports.DownloadState, string, string) {
 			}
 			return ports.StateDownloading, "download complete; waiting for post-processing", ""
 		case "failed":
-			// A coarse queue failure precedes authoritative terminal history.
-			// Never replace while its cause/retained custody is unresolved.
-			return ports.StateQueued, "waiting for authoritative failure outcome", ""
+			// The job failed. The terminal itself, with its reason and blame,
+			// arrives on job_pp_finished or the ordered history reader; the
+			// queue only says so (contract section 3.2).
+			return ports.StateFailed, "failed (awaiting history)", ""
 		case "deleted":
 			return ports.StateRemoved, "removed in nzbd", ""
 		default:
@@ -338,126 +363,96 @@ type historyEntry struct {
 	Control     *ports.DownloadControl `json:"control"`
 	Job         int64                  `json:"job"`
 	Name        string                 `json:"name"`
-	Status      string                 `json:"status"`
-	FinalDir    string                 `json:"final_dir"`
 	Seq         int64                  `json:"seq"`
 	Params      [][2]string            `json:"params"`
+	// Record carries the article counts Runner kept for the finished job:
+	// how much of it was actually fetched.
+	Record *historyRecord `json:"record"`
+	// The typed terminal (contract section 2.1).
+	terminalWire
 }
 
-// Statuses implements ports.DownloadClient: the live queue plus recent
-// history, which is where a finished job lives (nzbd retires completed
-// jobs out of the queue, NZBGet-style).
+type historyRecord struct {
+	TotalArticles   int64 `json:"total_articles"`
+	SuccessArticles int64 `json:"success_articles"`
+}
+
+// Statuses implements ports.DownloadClient: the live queue only. Terminals
+// come from the ordered history reader (HistorySince) and the event stream,
+// never from re-reading the last hundred history rows (contract section 2.5).
 func (c *Client) Statuses(ctx context.Context) ([]ports.DownloadStatus, error) {
-	var queue struct {
-		Jobs []job `json:"jobs"`
-	}
+	var queue statusQueue
 	if err := c.do(ctx, http.MethodGet, "/api/v1/jobs", &queue); err != nil {
 		return nil, err
 	}
-	var hist struct {
-		Entries []historyEntry `json:"entries"`
-	}
-	if err := c.do(ctx, http.MethodGet, "/api/v1/history?limit=100", &hist); err != nil {
-		return nil, err
-	}
-	out := make([]ports.DownloadStatus, 0, len(queue.Jobs)+len(hist.Entries))
-	historical := make(map[int64]int, len(hist.Entries))
-	for i, h := range hist.Entries {
-		if !c.acceptsTorrentRole(h.Kind, h.TorrentRole) {
-			continue
-		}
-		historical[h.Job] = i
-	}
+	out := make([]ports.DownloadStatus, 0, len(queue.Jobs))
 	for _, j := range queue.Jobs {
 		if !c.acceptsTorrentRole(j.Kind, j.TorrentRole) {
 			continue
 		}
-		// PP finalization writes history before setting ready on the live job.
-		// During that overlap the history row is the only observation carrying
-		// final_dir, so do not let the pathless queue copy win matchStatus's
-		// first-match rule.
-		if i, ok := historical[j.ID]; ok && !j.Control.Held() {
-			// Preserve an observed queue resolution when an older history
-			// shape has no control. A bare legacy SUCCESS never clears a hold.
-			if historyControl(hist.Entries[i]) == nil {
-				hist.Entries[i].Control = j.Control
-			}
-			continue
-		}
 		st, msg, stage := j.state()
+		operational := ""
+		if j.StatusProjected == "held" || j.Control.Held() {
+			operational = "held"
+		}
 		progress := 0.0
 		if j.SizeBytes > 0 {
 			progress = float64(j.DownloadedBytes) / float64(j.SizeBytes)
 		}
 		out = append(out, ports.DownloadStatus{
-			Control:  j.Control,
-			Handle:   ports.Handle(strconv.FormatInt(j.ID, 10)),
-			Name:     j.Name,
-			Transfer: paramValue(j.Params, TransferParam),
-			State:    st,
-			Progress: progress,
-			Message:  msg,
-			Stage:    stage,
+			Control:          j.Control,
+			Handle:           ports.Handle(strconv.FormatInt(j.ID, 10)),
+			Name:             j.Name,
+			Transfer:         paramValue(j.Params, TransferParam),
+			State:            st,
+			Progress:         progress,
+			Message:          msg,
+			Stage:            stage,
+			OperationalState: operational,
+			RateBps:          j.RateBps,
+			RemainingBytes:   j.RemainingBytes,
 		})
-	}
-	// Unrelated live rows must precede history. A failed handle write falls
-	// back to release-title matching; history-first ordering can otherwise
-	// bind a new download to an older job with the same release title.
-	for _, h := range hist.Entries {
-		if !c.acceptsTorrentRole(h.Kind, h.TorrentRole) {
-			continue
-		}
-		out = append(out, statusOfHistory(h))
 	}
 	return out, nil
 }
 
-// statusOfHistory maps one history row onto Monarr's lifecycle.
-//
-// The status string is nzbd's verbatim: `SUCCESS` for a clean
-// post-processing run, `PAR_FAILURE`/`UNPACK_FAILURE`/`SCRIPT_FAILURE`
-// for a failed one, and the pre-PP terminals `FAILURE/HEALTH` and
-// `FAILURE/FETCH` for downloads that never reached post-processing. They
-// all share a SUCCESS/FAILURE prefix, so matching the prefix is stable
-// against nzbd adding a new terminal reason — matching the exact strings
-// would not be.
-func statusOfHistory(h historyEntry) ports.DownloadStatus {
+// statusOfTerminal maps a finished job's typed terminal onto Monarr's
+// lifecycle for the event stream's progress view. The reducer decides from
+// the terminal fact itself; this is only what the live row shows meanwhile.
+func statusOfTerminal(job int64, name string, params [][2]string, control *ports.DownloadControl, t ports.RunnerTerminal) ports.DownloadStatus {
 	st := ports.DownloadStatus{
-		Control:  historyControl(h),
-		Handle:   ports.Handle(strconv.FormatInt(h.Job, 10)),
-		Name:     h.Name,
-		Transfer: paramValue(h.Params, TransferParam),
+		Control:  historyControl(control, params),
+		Handle:   ports.Handle(strconv.FormatInt(job, 10)),
+		Name:     name,
+		Transfer: paramValue(params, TransferParam),
 		Progress: 1,
-		SavePath: h.FinalDir,
 	}
-	switch {
-	case strings.HasPrefix(h.Status, "SUCCESS") && strings.TrimSpace(h.FinalDir) == "":
-		// SUCCESS without a final path violates nzbd's handoff contract. Keep
-		// the row active instead of turning a malformed response into an import
-		// from the process working directory.
-		st.State = ports.StateDownloading
-		st.Message = "post-processing: waiting for final path"
-	case strings.HasPrefix(h.Status, "SUCCESS"):
+	switch t.Outcome {
+	case ports.OutcomeCompleted:
 		st.State = ports.StateCompleted
-	case h.Status == "DELETED" || strings.HasPrefix(h.Status, "DELETED"):
-		// Someone removed the job in nzbd.
-		//
-		// This was StateFailed+Blameless, which fixed the blocklist and left
-		// the louder half in place: the failure path also runs an automatic
-		// re-search, so deleting a job in nzbd made Monarr grab another copy
-		// of the same film within seconds. Blameless was never going to stop
-		// that — it only ever guarded the blocklist.
+		if t.Publication != nil {
+			st.SavePath = t.Publication.Path
+		}
+	case ports.OutcomeCancelled:
+		// Someone removed the job in Runner: never re-grabbed, never blocklisted.
 		st.State = ports.StateRemoved
 		st.Message = "removed in nzbd"
 		st.Blameless = true
 	default:
 		st.State = ports.StateFailed
-		st.Message = h.Status
-		for _, param := range h.Params {
-			if param[0] == "Failure:Files" && strings.TrimSpace(param[1]) != "" {
-				st.Message += "; files: " + param[1]
-				break
-			}
+		st.Message = t.Message
+		if st.Message == "" {
+			st.Message = t.Reason
+		}
+		// A failure is not a finished transfer. Report what was actually
+		// fetched: a release that failed health before a single article
+		// arrived cost nothing, and the re-grab budget counts bytes.
+		if t.Fetched.TotalArticles > 0 {
+			f := float64(t.Fetched.SuccessArticles) / float64(t.Fetched.TotalArticles)
+			st.Progress, st.FetchedKnown = min(max(f, 0), 1), true
+		}
+		if files := paramValue(params, "Failure:Files"); strings.TrimSpace(files) != "" {
+			st.Message += "; files: " + files
 		}
 	}
 	return st
@@ -472,11 +467,11 @@ func paramValue(params [][2]string, key string) string {
 	return ""
 }
 
-func historyControl(h historyEntry) *ports.DownloadControl {
-	if h.Control != nil {
-		return h.Control
+func historyControl(control *ports.DownloadControl, params [][2]string) *ports.DownloadControl {
+	if control != nil {
+		return control
 	}
-	for _, param := range h.Params {
+	for _, param := range params {
 		if param[0] == "*Control:v1" {
 			var control ports.DownloadControl
 			if json.Unmarshal([]byte(param[1]), &control) == nil {
@@ -520,17 +515,34 @@ func (c *Client) Remove(ctx context.Context, h ports.Handle, deleteData bool) er
 	return nil
 }
 
+// CancelQueued deletes a job from the queue only, keeping its payload. A job
+// that already left the queue (404: finished or removed meanwhile) is not an
+// error, and, unlike Remove, its history record is never touched.
+func (c *Client) CancelQueued(ctx context.Context, h ports.Handle) error {
+	id, err := strconv.ParseInt(string(h), 10, 64)
+	if err != nil {
+		return fmt.Errorf("nzbd: bad handle %q", h)
+	}
+	err = c.do(ctx, http.MethodPost, fmt.Sprintf("/api/v1/jobs/%d/actions/delete", id), nil)
+	var apiErr *APIError
+	if errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusNotFound {
+		return nil
+	}
+	return err
+}
+
 // statusDto is the slice of `GET /api/v1/status` Monarr reads: the version
 // (which is also how Test knows it is talking to nzbd) and the queue-hold
 // reasons.
 type statusDto struct {
-	Version        string   `json:"version"`
-	Capabilities   []string `json:"capabilities"`
-	DownloadPaused bool     `json:"download_paused"`
-	DiskLow        bool     `json:"disk_low"`
-	QuotaReached   bool     `json:"quota_reached"`
-	BlockedServers []int    `json:"blocked_servers"`
-	HealthAbort    bool     `json:"health_abort"`
+	Storage        []ports.StorageVolumeObservation `json:"storage"`
+	Version        string                           `json:"version"`
+	Capabilities   []string                         `json:"capabilities"`
+	DownloadPaused bool                             `json:"download_paused"`
+	DiskLow        bool                             `json:"disk_low"`
+	QuotaReached   bool                             `json:"quota_reached"`
+	BlockedServers []int                            `json:"blocked_servers"`
+	HealthAbort    bool                             `json:"health_abort"`
 }
 
 // SupportsDeliveryV1 negotiates the explicit status capability without reading
@@ -587,7 +599,22 @@ func (c *Client) GetRequestAdmission(ctx context.Context, transferToken string) 
 	if wire.RequestToken != transferToken || wire.ProtocolVersion != 1 {
 		return ports.RequestAdmission{}, false, fmt.Errorf("nzbd: request admission identity or protocol version mismatch")
 	}
-	return wire.portValue(), true, nil
+	adm := wire.portValue()
+	if adm.Outcome == "failed" && !adm.Fetched.Known() {
+		// Older receipts omit counts. History is measurement evidence only:
+		// the receipt still decides the terminal and its blame. Bound this
+		// optional read; missing/pruned history keeps conservative accounting.
+		var page statusHistory
+		if err := c.do(ctx, http.MethodGet, "/api/v1/history?limit=100", &page); err == nil {
+			for _, h := range page.Entries {
+				if h.Job == int64(wire.JobID) && paramValue(h.Params, TransferParam) == transferToken && h.Record != nil && h.Record.TotalArticles > 0 {
+					adm.Fetched = ports.Fetched{TotalArticles: h.Record.TotalArticles, SuccessArticles: h.Record.SuccessArticles}
+					break
+				}
+			}
+		}
+	}
+	return adm, true, nil
 }
 
 // Test implements ports.DownloadClient.

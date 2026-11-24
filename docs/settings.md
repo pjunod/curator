@@ -4,6 +4,51 @@ Everything on the Settings and System pages, field by field. Process-level
 configuration (port, data dir, log level) is environment-based and lives in
 the [README](../README.md#configuration).
 
+## Household accounts and optional Cinema login
+
+**Access → Household accounts** manages local Curator people. Configure your
+first local owner username/password with the existing User login form, sign in,
+then create a single-use invitation after confirming that password. Accepting
+an invitation creates a separate local member with a password of at least
+12 characters. Issuing an invitation requires authenticated household access;
+anonymous owner access stays disabled after household access is established.
+Existing owner API keys and paired owner devices keep owner privileges. Use a
+personal account for members; remove an old owner connection or rotate its key
+when converting an owner device to member use.
+
+**Account** changes your own display name and local password after confirming
+your current local password. Password, role and suspension changes revoke the
+affected account's sessions. The last active local owner cannot be suspended or
+demoted. Other local owners can reset an account's password through the account
+API. Sole-owner recovery is a host operation described in
+[usage.md](usage.md#recover-a-local-owner-password).
+
+**Access → Cinema sign-in connection** is independent of media notifications,
+calendar and watch-state synchronization. In Cinema, use **Settings →
+Integrations → Manage optional Curator sign-in connections** to register the
+exact Curator HTTPS callback `/api/v1/auth/cinema/callback`. Open Curator through HTTPS before entering credentials. Copy the new client
+ID and one-time client secret into Curator with Cinema's HTTPS address and the
+same callback. Verify and save with your local owner password. This establishes
+authenticated household access. Both services need these new delegation routes;
+an older Cinema answers unavailable and local Curator sign-in still works.
+
+Each person links Cinema from their own **Account** page using a local Curator
+password and explicit Cinema consent. Names/emails never merge accounts. An
+unlinked Cinema identity must first sign in locally or accept an invitation.
+Cinema sign-in grants household discovery/requests access even if the permanent
+Curator account is an owner. Owner administration and account changes require
+local sign-in. Native clients open the system browser and receive their own
+proof-bound, one-use handoff. Finish consent and use the browser return link on
+the same device that started sign-in, then confirm the displayed local account.
+The app requires both its original verifier and that browser-returned completion
+code; it never receives the Cinema bearer or a shared owner key.
+
+Unlink revokes Cinema-derived Curator sessions immediately and durably queues
+remote grant revocation for fair retry until each remote grant expires. Local credentials, local sessions and request
+history remain. Replacing/disconnecting the saved Cinema login connection
+unlinks all its identities and revokes its derived sessions. Cinema outages
+fail closed for Cinema-derived requests; local sign-in stays independent.
+
 ## Display preferences
 
 **Display** at the bottom of the desktop navigation (or in the phone's
@@ -212,6 +257,20 @@ express:
   repair takes.
 - **Live updates** (below), which need an event stream compat does not have.
 
+Since v0.39.0 a native Runner client is driven by pipeline contract v2 (see
+[integration.md](integration.md#4-facts-terminals-and-the-next-grab)): Runner's
+terminal facts, publications imported file by file, and a failure's
+replacement grab written with the failure itself. **There is nothing new to
+configure** — no setting enables or tunes it. The deadlines it uses (10
+minutes to confirm a submission, 30 minutes without progress, a hold's own
+deadline plus 5 minutes, 6 hours to import a publication) are the contract's
+and are not settings. *Manual approval* on the client is honoured: a
+completed publication waits in *Awaiting approval* until you import it.
+Since v0.40.0 a publication's files are also cleaned up one by one by their
+recorded outcome (placed with a matching digest, or discarded); **Clean up
+after import** does not apply to Runner publications and nothing new is
+configured.
+
 The native Usenet and NZBGet compatibility types reconcile existing Usenet
 downloads by handle. Native torrent acquisition is a separate client type;
 add it as its own configuration rather than changing an existing client's
@@ -262,7 +321,7 @@ push works and assuming it does.
 
 **Approve imports** (per client, default off) holds every completed
 download at *awaiting approval* instead of importing it — nothing touches
-the library until you press **Import now** on the Activity page. Turn it on
+the library until you press **Approve import** on the Activity page. Turn it on
 with the checkbox on the client's row (or when adding it) for a client
 whose completed files you want to eyeball first. The toggle round-trips
 without re-entering the password.
@@ -284,14 +343,12 @@ authority; declare the owned root here to resolve files through Curator. Overlap
 collapsed to avoid counting a file twice. Roots overlapping a library root
 produce a configuration error rather than a scan of library media.
 
-Changes take effect on the next five-minute `downloads.inventory` run, or
-immediately after queuing **Scan download storage** in Activity. Inventory
-also runs at startup. Inventory scans no longer stop after 30 seconds on slow
-network storage; they respect server shutdown and retain the 100,000-entry
-limit per root. Activity shows queued, running, and completed or failed scan
-status. A failed scan preserves the last complete inventory and disables file
-actions for that root until a complete scan succeeds. Deletion checks scan only
-the selected payload, rather than walking every sibling again.
+Inventory runs at startup and every five minutes through
+`downloads.inventory`. Scans respect server shutdown and keep the
+100,000-entry limit per root. A failed scan preserves the last complete
+inventory. System → Storage shows the last drive observation and cleanup
+status. See [completed folders](usage.md#completed-folders--accounting-survives-an-empty-queue).
+
 Storage verification accepts ordinary remounts automatically, including device
 number changes and configured bind aliases. The currently observed mount source
 and filesystem type are persisted independently of other settings. A missing
@@ -302,13 +359,13 @@ must succeed again when the expected mount returns. Path containment and
 per-operation file identity checks still apply.
 `GET /api/v1/downloads/inventory` reads the cached result;
 it does not walk the disk. See [usage](usage.md#completed-folders--accounting-survives-an-empty-queue)
-for the classifications, size semantics, and recovery actions. Activity
+for capacity and cleanup status. Activity
 retention never deletes these file associations or cached inventory.
 
 When a download storage mount is replaced, the inventory keeps its last complete
-counts and reports the changed identity. Restore the original mount or save the
-storage folders again to accept the replacement, then run a scan. Saving does
-not erase the prior counts before a complete scan succeeds.
+counts and reports the changed identity. Restore the original mount to recover automatically. For an intentional
+replacement, use **Review replacement storage** in System → Storage. Existing
+jobs keep their prior storage requirements.
 
 ### Completed downloads: where files land, and how Monarr finds them
 
@@ -331,7 +388,7 @@ That reported path must be **openable by Monarr as-is**:
   container at `/pool/downloads/...` → map `/data/completed` →
   `/pool/downloads`.
 
-Activity → **Manual import** starts at the completed folder Monarr sees. A
+Activity → **Import files…** starts at the completed folder Monarr sees. A
 remote-path mapping's local prefix is authoritative; without one, Monarr uses
 the parent of a recent completed payload, then `/pool/downloads` as the
 standard-deployment fallback. This is a convenience default, not a second
@@ -368,31 +425,21 @@ payload (nothing importable, every file declined by policy), the retry waits
 about as long as the delivery has already been blocked — up to once an hour —
 and a repeat of the same failure adds no new history entry or notification.
 While Runner's acknowledgement is still pending the 5-minute pace holds.
-**Retry** in Activity or Resolve retries one immediately. The
-lifecycle trace shows the cause and next attempt; a rejected or conflicting
-manifest requires review. A missing path in a legacy client row
+When Activity offers **Retry**, correct the reason shown on the job and then
+resubmit. The service checks the same job and its recorded files. A missing path in a legacy client row
 still uses the explicit Retry action described above.
 
-Every failed row offers **Retry** (re-run the import once the underlying
-problem is fixed, using the same path), **Manual import** (browse to the
-real files and pick the target title/copy yourself), **Blocklist** (declare
-the release bad — blocklists it and searches a replacement), and **Remove**.
-Nothing is auto-blocklisted on an import failure, so a config problem never
-churns through replacements behind your back.
+Activity shows the cause, prerequisites and server-approved actions. An active
+import reports measured progress, and an interrupted import can recover
+automatically. Use **Approve import** when a client requires approval or
+**Import files…** to select input files and a destination yourself.
+See [the Activity guide](usage.md#activity--transfers-imports-and-history-in-one-place).
 
-An **importing** row with a live worker shows its bytes, total, rate, elapsed
-time, and current detail. If Monarr stopped after persisting `importing`, the
-worker disappeared but the row survived; that row is labelled **interrupted**
-instead of pretending to be busy forever. **Restart import** queues it again,
-and **Cancel import** stops queued/live work while keeping the source payload
-for a later restart. The normal client reconciliation also restarts an
-interrupted row automatically after Monarr comes back up.
-
-When the failures are no longer useful, **Clear failed** on the Failed
-grouping dismisses all failed Activity rows after confirmation. This cleans
-up the queue view only: it does not delete a payload or library file, change
-a blocklist, or remove anything from a download client. The native app shows
-the same action beneath Activity's filters when Failed is selected.
+**Delete** fences new work for the selected attempt and verifies cleanup with
+the file owner. For Runner, update to a version that supports verified
+disposition if Activity reports that the command is unavailable. Older or
+external clients unable to verify disposal can leave deletion blocked.
+Library media and manual-import originals stay in place.
 
 ### Activity retention
 
@@ -415,8 +462,14 @@ five consecutive failed grabs of one movie inside ten hours looked, from
 the outside, like a quiet evening.
 
 Event types: `grabbed`, `failed`, `imported`, `import_failed`,
+`publication_orphaned` (a committed Runner folder whose download Curator no
+longer has; its files are discarded and the folder removed),
+`publication_closed` (a record-only publication whose folder is gone, or
+that was never a payload folder; nothing deleted),
 `import_blocked` (ran out of disk part-way), `import_retried`,
-`regrab_capped` (a replacement search that was deliberately not made),
+`regrab_capped` (a replacement search that was deliberately not made:
+three releases' worth of bytes, or twenty failures, spent on one want inside
+twelve hours),
 `short_delivery`, `payload_removed`, `quality_mismatch`,
 `implausible_file`, `language_mismatch` (a placed file measured to carry
 none of the profile's required audio languages; the release is
@@ -532,7 +585,7 @@ override applies to its primary and additional quality copies.
 
 ### HDR & Dolby Vision order
 
-A film or TV profile can rank HDR presentations (ADR 0026). **Rank by HDR
+A film or TV profile can rank HDR presentations (ADR 0031). **Rank by HDR
 and Dolby Vision** starts from the order most people want for a UHD
 library, which you can reorder, trim, or extend:
 
@@ -686,25 +739,26 @@ any item page ignores the cache entirely.
 
 ## Verification read budget (`MONARR_VERIFY_READ_MBPS`)
 
-Curator proves bytes by reading them: a Runner delivery is hashed against its
-manifest before import, a duplicate is hashed against the library file it
-matches before its payload is deleted, and a placement is checked after the
-copy. On network storage every one of those reads crosses the storage link.
+Imports do not verify by reading. A Runner publication's manifest digest is
+the authority for its bytes: the placement hashes its copy as it writes and
+compares that with the manifest, and later decisions (resuming an import,
+reconciling after a restart, cleaning up the publication) are made from the
+identity Curator recorded — size, inode and modification time — not by
+reading the file again. A library file with no such record (a historical or
+v1 import) is hashed once when cleanup needs it.
 
-Verification reads are held to a budget in megabytes per second. The
-default is **100**, about a third of a 2.5 GbE link, so verification never
-crowds out placement writes, Runner, or playback on the same storage. `0`
+What still reads whole files is background proof work: a duplicate is hashed
+against the library file it matches before its payload is deleted, and
+inventory and retained-payload checks. Those reads are held to a budget in
+megabytes per second. The default is **100**, about a third of a 2.5 GbE link,
+so they never crowd out imports, Runner, or playback on the same storage. `0`
 removes the limit; an invalid value keeps the default and logs a warning.
-Placement copies are not limited — they are the import itself (small
-sidecar copies are verified as they copy, so they count). Concurrent checks
-of the same unchanged file share one read.
+Concurrent checks of the same unchanged file share one read.
 
-Reads something is waiting on — an import attempt's checks, checks under a
-title's publication lock, an operator's **Delete files…** request — have their
-own budget of the same size. While one is running, background checks (scheduled
-duplicate proofs and inventory verification) slow to a tenth of the budget, so
-a waiting
-import or request is never starved by work that is not.
+Reads something is waiting on — under a title's import lock, or for an
+operator's **Delete files…** request — are not paced at all; while one is
+running, background checks slow to a tenth of the budget, so the waiting work
+is never starved by work that is not.
 
 ```bash
 # Raise on 10 GbE or local disks; 0 = unlimited.
@@ -715,6 +769,20 @@ Why it exists: on 2026-11-01 verification reads held nuc3's 2.5 GbE link to
 its NAS at line rate for hours, and whenever writes joined that load the NAS
 stopped answering NFS for up to nine minutes, freezing everything on the
 mount.
+
+## Import workers (`MONARR_IMPORT_WORKERS`)
+
+How many imports run at once. Default **4**. Each import is one streaming
+read of the payload and one write into the library; imports of different
+titles hold different locks and run side by side (two imports into the same
+title still take turns, because each decides that title's episodes). Raise it
+on fast local storage; lower it if the library's NAS struggles with parallel
+writes. A value that is not a positive number keeps the default and logs a
+warning. Read at start.
+
+```bash
+MONARR_IMPORT_WORKERS=6
+```
 
 ## Custom formats
 
@@ -777,9 +845,23 @@ every secret in plurx's own settings — to Monarr, and to anything that can
 read Monarr's database. Mint one in plurx (Settings, or the two curl lines in
 plurx's `docs/CHEATSHEET.md`) and paste it here.
 
-**Test** asks plurx to scan a path that cannot be under any library root and
-counts the rejection as a pass: it proves the URL, the key and the scope
-without starting a scan of anything real.
+Testing a **saved** notifier also records what its plurx supports. A plurx
+with `removed_paths` lets a Re-match drop the old entry when files move
+(Usage → Re-match and Move to…); without it a move scans only the new folder
+and the old entry stays until plurx's next reconcile scan. Nothing is turned
+off either way; the Re-match preview says which applies, and Settings → Connections shows support and its last-read time beside each
+Cinema notifier’s Test button.
+
+**Test** sends plurx the library roots from Settings → Library as
+`probe_paths` and asks which it can see: it proves the URL, the key, the scope
+**and the mounts** without starting a scan of anything real. A root plurx
+cannot see fails the Test with both sides named — `cinema cannot see 1 of 2
+library root(s): Curator /data/media/movies ↔ cinema: not under any of its
+library roots (/media/movies, /media/tv)`. An older plurx cannot check paths:
+the Test then asks it to scan a path that cannot be under any library root,
+counts the rejection as a pass, and says `connected; checking the library
+paths needs a newer cinema`. With no library roots configured the Test does
+the same and says so.
 
 What the failures mean:
 
@@ -788,21 +870,43 @@ What the failures mean:
 | `does not have this path under any library root` (with plurx's roots listed) | The two containers disagree about mounts — Monarr says `/data/media/…`, plurx has `/media/…`. Fix the mapping on Monarr's side. |
 | `rejected the key (401)` | Unknown, revoked, or a plurx *user* token — that route does not accept those. |
 | `lacks the scan:trigger scope (403)` | Real key, wrong scopes. Mint a new one; scopes are fixed at creation. |
-| `N of M paths not indexed` | Partial: some files of a season pack landed and some did not. The per-path reasons follow. |
+| `cinema cannot see N of M library root(s): …` | The Test: plurx cannot `stat` a root Curator places files under (not mounted there, or mounted at another path). |
+| `warning: expected <path> not placed (<reason>)` | plurx scanned the directory but did not index that file as the import left it — plurx's own reason follows. Retried with a fresh scan. |
+| `cinema cannot read <dir> right now` | `503 path_unreadable`: the share under plurx's root is not mounted or not readable. Retried with a fresh scan until it is. |
 
-**Deliveries are queued, not fired and forgotten.** A plurx notification is
-written to a row first and delivered by a worker: first attempt immediately,
-then retries at 5 s, 30 s and 2 m before it is marked failed. The row is the
+**Deliveries are queued, not fired and forgotten.** Every notification of
+an import is written in the import's own transaction and delivered by a
+worker. A chat notifier's row (webhook, Discord) and a Plex/Jellyfin poke are
+attempted once. plurx gets **one row per directory** (a sub-delivery), each
+with its own 20 s deadline per attempt, retried at 5 s, 30 s, 2 m, 5 m, 15 m,
+1 h and then hourly **without end** while the failure is one that can pass
+(plurx down, a timeout, 429, a 5xx, an unmounted share). The row is the
 point — the common way to miss a scan is a host reboot where both
 applications come back and monarr's import finishes a few seconds before
 plurx is listening, and an in-memory retry does not survive the restart that
-causes it. Failures that retrying cannot fix (401, 403, 422, a 404 from a
-plurx too old to have the route) stop on the first attempt instead of
-spending the whole schedule postponing the message you need to read.
+causes it. Failures that retrying cannot fix (401, 403, 400, a directory
+outside plurx's library roots) stop on the first attempt instead of
+postponing the message you need to read.
 
-**Delivery log** on the notifier row shows every attempt: what plurx
-answered (`scanned → plurx item 1201`, or `queued as sr-…` when plurx was
-mid-scan), or why it failed and after how many tries. The terminal outcome is
+Each request carries a key per directory and attempt, so a response lost on
+the way back never makes plurx scan twice, and the files the import placed
+there with their size and nanosecond mtime. plurx re-checks exactly those
+files and reports each; the directory is **visible** only when every one came
+back placed as the import left it. plurx checks at most 64 files a request:
+a bigger directory sends its largest, newest 64, and the log says how many of
+the directory's files that verified (`verified 64 of 91 files`).
+
+Every notifier has a **Delivery log** now, chat ones included: a Discord or
+webhook that refused an import says so there, on its own row, and on the
+download's trace as `notify_<type>`.
+
+**Delivery log** on the notifier row shows every directory: `visible →
+plurx item 1201`, `queued in cinema, waiting on <what plurx is waiting on>`
+while plurx is busy, `warning: expected <file> not placed (<reason>)`, or why
+it failed and after how many tries. A directory still not visible half an
+hour after the import is marked **warning** (it is still retried); an older
+plurx that does not report results reads `queued (cinema does not report
+results)`. The terminal outcome is
 also written onto the download's own handoff trace as a `notify_plurx` step —
 which is where *Activity* sends you when something imported but never
 appeared in plurx.
@@ -810,13 +914,11 @@ appeared in plurx.
 **A failed delivery can be retried** from the log: **Retry** on the row, or
 **Retry all failed (N)** above the table for every failed row of the notifier
 at once. The row goes back to pending, due now, with its attempt count reset
-so the full schedule runs again; the reason it failed stays visible until the
-next attempt replaces it. The schedule gives up after two and a half minutes
-because it is tuned for a restart, not for a media server that refuses work
-for a day (plurx's durable queue did exactly that on 2026-09-28, answering
-`500: internal server error` — now `503: the durable queue refused this
-request` — to every scan), and that is the case the button is for: fix the
-far side, then press it once. **Retry all failed** covers the notifier's whole
+so the full schedule runs again and a fresh scan attempt (the same key, the
+next attempt number); the reason it failed stays visible until the next
+attempt replaces it. Only permanent refusals end as failed, so this is the
+button for after you fix one — give the key its scope, mount the share where
+plurx looks — then press it once. **Retry all failed** covers the notifier's whole
 history, not only the 100 rows the log shows, and says how many it requeued;
 rows that failed permanently (a rejected key, a path outside plurx's roots)
 are requeued too and fail again on their first attempt. A disabled notifier
@@ -964,7 +1066,7 @@ outside your LAN, because plain HTTP exposes the header in transit.
 | `backlog.search` | 12 h | active search for wanted items |
 | `library.reconcile` | 12 h | disk scan |
 | `importlists.sync` | 12 h | import list sync |
-| `metadata.refresh` | 12 h | re-hydrates every item from its provider: new episodes for continuing series, poster/status/**rating** updates |
+| `metadata.refresh` | 12 h | re-hydrates every item from its provider: new episodes for continuing series, poster/status/**rating** updates. A missing provider title appears on System with a link to its library entry. Other provider failures remain task errors. |
 | `backup.run` | 24 h | SQLite `VACUUM INTO` snapshot |
 | `db.wal-checkpoint` | 1 h | WAL checkpoint |
 
@@ -984,14 +1086,13 @@ Off by default.
 
 ## Runner delivery ownership
 
-New native Runner downloads opt into the additive delivery protocol at
-admission. Curator durably records the immutable manifest and matching request
-generation before acknowledging it. Imports and completed-payload cleanup use
-that manifest: Curator removes only verified files with a committed placement,
-same-copy redundancy proof, or completed replacement scope. Recoverable,
-unselected, and unknown siblings remain available in Resolve. This per-file
-cleanup is required for new Runner deliveries and is not controlled by the
-legacy **Clean up after import** setting used for other clients.
+Native Runner downloads are imported and cleaned up by publication (pipeline
+contract v2): a file of the publication is removed only when it was placed and
+the library copy still matches its manifest digest, or when it was discarded.
+Every file of an automatic import ends placed or discarded (only a manual or
+approval-held import leaves a file awaiting explicit import approval). This per-file cleanup always
+applies to Runner publications and is not controlled by the legacy **Clean up
+after import** setting used for other clients.
 
 Runner retains ownership of its separate processing source and reports its
 cleanup status. Curator does not use Runner's whole-job delete operation to
@@ -1008,35 +1109,28 @@ After 30 minutes blocked, the trace calls out that the operator should review
 the recorded cause. Explicit deletion is per selected manifest file; it keeps
 unselected siblings and the remaining receipt visible.
 
-## Recovery and Dev settings
+## Runner published-file mapping
 
-Settings → Dev configures automatic recovery status refresh, the exact Runner
-published prefix, Curator's read-only mount and a separate recovery credential.
-Prerequisite status is advisory: it never disables enablement. Settings →
-Recovery is a three-step flow: choose a handoff (a table of what Runner has
-staged, named by the folder it came from, with its state — only a *ready*
-or *claimed* copy can be chosen; a failed staging shows Runner's reason and
-says to cancel it in Runner's Files tab), pick the library title (searchable;
-the copy selector appears only when the title has more than one copy; series
-files take a `season:episodes` mapping, blank lets the filename decide), then
-preview and import. A readiness strip at the top reports whether Runner is
-reachable, whether the recovery mount is present, and whether the credential
-is set; the Preview button says which of those, or which step, is missing
-instead of failing on the click.
+Settings has **General** and **Connections** tabs. Resolve and Dev are removed.
+Under Connections → Download clients, expand the Runner integration to configure
+its exact published prefix, Curator's read-only mount and separate credential.
+Existing saved refresh settings are preserved; the old automatic-refresh toggle
+and staged-recovery wizard are no longer exposed in ordinary navigation.
 
-Runner's full processing tree must not be mounted as recovery input. Mount only
-`/processing/recovery/published` at `/recovery:ro` and keep it outside all library
-and ordinary completed-download roots. The configured prefixes must match.
+Runner's full processing tree must not be mounted as import input. Mount only
+`/processing/recovery/published` at `/recovery:ro`, outside library and ordinary
+completed-download roots. The configured prefixes must match. Ordinary imports
+operate independently of this optional historical staged-copy integration.
+Existing staged-copy APIs and durable receipts are preserved. Their cancellation,
+preview invalidation and writer-quiescence rules still apply; removing a UI does
+not permit deleting a held source. See
+[ADR 0021](adr/0021-file-lifecycle-recovery.md) for the receipt contract.
 
-Recovery activity and copied bytes survive page reloads. Cancellation waits for
-worker quiescence and preserves files already committed to the library. The
-preview names concrete destinations and existing files in the chosen copy.
-Native container recognition is not a full decode/completeness check.
-
-A library, profile, episode or copy edit during copying can invalidate the
-preview. The initial database revision is intentionally global: an unrelated
-library edit can also require another preview. See
-[ADR 0020](adr/0021-file-lifecycle-recovery.md) for the placement and receipt contract.
+System → **Storage** shows observed drive capacity, storage accessibility and
+automatic cleanup. Open **Import files…** in Activity to choose input files. System → **Diagnostics**
+contains health, connection checks, scheduled tasks and backup controls. Cinema
+capability advice lives beside the corresponding saved notifier's **Test** button
+under Connections; unknown or absent capabilities remain explicit.
 
 ## Series monitoring policy
 
@@ -1113,10 +1207,12 @@ Changing retained Delivery manifests cannot change this negotiated contract.
 
 The legacy review cohort keeps its cleanup fence after upgrade. Historical trace
 evidence may permit an acquisition that was still in flight at cutover to finish
-importing, but it grants no automatic deletion authority over old payloads.
+importing. An explicit Activity Delete can authorize cleanup for that exact
+job generation after Curator verifies its manifest and storage. Saving settings
+or accepting a replacement mount grants no cleanup authority over old files.
 
-Intentional download-storage replacement is reviewed from Activity → Download
-storage. The action compares the exact expected and observed identities and
+Intentional download-storage replacement is reviewed from System → Storage
+under **Download folders**. The action compares the exact expected and observed identities and
 previews affected custody. It applies only to the selected root and cannot grant
 old acquisitions cleanup authority on the replacement volume. Ordinary return of
 the expected storage still recovers automatically without changing settings.
@@ -1131,3 +1227,33 @@ Existing native API authentication applies. No storage setting makes hard NFS
 interruptible. Follow the [deployment drain runbook](NFS_DEPLOYMENT_DRAIN.md);
 its stop wait requires measured qualification for the deployment shape.
 
+
+## Import Queue history
+
+Activity → **History** follows **Activity retention** in Settings → Library.
+Set the window to `0` to disable future expiry of eligible records. Job logs
+follow the retained job record. Outstanding cleanup remains durable.
+
+
+## Library volume review
+
+New root-folder registration records the current volume identity. Existing
+roots may establish their first identity from unchanged file records that
+predate the availability migration. Newly scanned files and an empty folder
+cannot establish that first trust automatically. Use **Review volume** beside
+the root when an existing root has no trustworthy evidence, or after an
+intentional storage replacement.
+
+The dialog compares the saved and observed identities and shows affected file
+records and active work. Restore an unavailable mount first. If the original
+volume returns, no rebind is needed. For an intentional replacement, acknowledge
+the exact current review and choose **Use current volume**. A changed volume,
+library revision or custody state requires another review. Active downloads,
+imports and file-changing operations block rebinding until they finish or stop
+safely. A completed cancellation without retained custody does not block it.
+
+Confirmation invalidates previous availability observations. It does not delete
+filesystem files. Later scans can remove catalogue records for files absent on
+the newly trusted volume, so check the selected mount before confirming. Scan
+disk afterwards to verify availability. Unsupported volume identity platforms
+keep availability unknown while ordinary scanning continues.

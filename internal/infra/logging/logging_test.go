@@ -3,6 +3,7 @@ package logging_test
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -79,5 +80,32 @@ func TestTailUnparseableLevelFallsBackToInfoRatherThanFailing(t *testing.T) {
 	}
 	if !strings.Contains(out, "at info") {
 		t.Errorf("nothing was logged at all after a bad level: %q", out)
+	}
+}
+
+// Every tainted production log sink in the CodeQL snapshot uses slog fields.
+// Test the shared output boundary without changing the underlying metadata.
+func TestUntrustedFieldsCannotForgeLogRecords(t *testing.T) {
+	payload := "movie\r\nlevel=ERROR msg=forged\x1b[2J\t\"title\""
+	for _, format := range []string{"text", "json"} {
+		t.Run(format, func(t *testing.T) {
+			var buf bytes.Buffer
+			log := logging.New(&buf, config.Config{LogLevel: "debug", LogFormat: format})
+			log.Warn(payload, "title", payload, "path", payload, "err", fmt.Errorf("untrusted: %s", payload))
+			if bytes.Count(buf.Bytes(), []byte("\n")) != 1 || bytes.ContainsAny(buf.Bytes(), "\r\x1b") {
+				t.Fatalf("record delimiters escaped output boundary: %q", buf.String())
+			}
+			if format == "json" {
+				var record map[string]any
+				if err := json.Unmarshal(bytes.TrimSpace(buf.Bytes()), &record); err != nil {
+					t.Fatal(err)
+				}
+				if record["msg"] != payload || record["title"] != payload || record["path"] != payload || record["err"] != "untrusted: "+payload {
+					t.Fatalf("metadata changed: %v", record)
+				}
+			} else if !strings.Contains(buf.String(), `\r\nlevel=ERROR`) {
+				t.Fatalf("text value not quoted: %q", buf.String())
+			}
+		})
 	}
 }

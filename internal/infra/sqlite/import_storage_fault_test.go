@@ -10,7 +10,6 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/pjunod/monarr/internal/ports"
 	sqliteDriver "modernc.org/sqlite"
 )
 
@@ -171,7 +170,7 @@ func importDurableSnapshot(t *testing.T, db *DB) string {
 }
 
 func TestImportStorageFailuresCannotCommitPartialAuthority(t *testing.T) {
-	for _, operation := range []string{"admit", "retry", "seal", "grant", "media-result", "cancel", "finalize", "retain", "dispose", "stage", "reuse", "resolve", "complete", "sidecar", "manual-fresh", "manual-retry", "discovery-rejection", "prepare", "sidecar-grant", "dispose-stage", "dispose-stagepath"} {
+	for _, operation := range []string{"admit", "retry", "seal", "grant", "media-result", "cancel", "finalize", "retain", "dispose", "stage", "reuse", "resolve", "complete", "sidecar", "manual-fresh", "manual-retry", "prepare", "sidecar-grant", "dispose-stage", "dispose-stagepath"} {
 		t.Run(operation, func(t *testing.T) {
 			completed := false
 			for point := 1; point <= 80; point++ {
@@ -330,8 +329,6 @@ func TestImportStorageFailuresCannotCommitPartialAuthority(t *testing.T) {
 					_, e = db.CommitManualImportAdmission(ctx, request)
 				case "manual-retry":
 					_, e = db.CommitManualImportAdmission(ctx, dl)
-				case "discovery-rejection":
-					e = db.RecordDeliveryDiscoveryRejection(ctx, 1, ports.RunnerDeliveryRejection{Sequence: 7, DeliveryID: "rejected", Reason: "invalid manifest"})
 				}
 				db.W = original
 				if closeErr := writer.Close(); closeErr != nil {

@@ -137,9 +137,15 @@ type DownloadControl struct {
 	Lifecycle   string `json:"lifecycle"`
 	Cause       string `json:"cause"`
 	Stage       string `json:"stage"`
+	ManualPause bool   `json:"manual_pause,omitempty"`
 	RetryPolicy string `json:"retry_policy"`
 	Message     string `json:"message"`
 	Instance    string `json:"instance"`
+	// DeadlineInS is the seconds left before Runner ends this hold as
+	// failed/hold_expired (contract section 2.3): relative, because hosts do
+	// not share a clock. Nil from a Runner older than contract v2.
+	DeadlineInS  *int64 `json:"deadline_in_s,omitempty"`
+	DeadlineUnix *int64 `json:"deadline_unix,omitempty"`
 }
 
 func (c *DownloadControl) Held() bool {
@@ -172,6 +178,11 @@ type DownloadStatus struct {
 	// repairing a damaged archive was reported as "downloading" — not a
 	// summary of what was happening, a different claim about it.
 	Stage string
+	// RateBps and RemainingBytes are the client's own per-job transfer
+	// numbers (Runner's rate_bps and remaining_bytes), relayed unchanged so an
+	// ETA is the client's arithmetic, not Curator's. Nil = not reported.
+	RateBps        *int64
+	RemainingBytes *int64
 	// Blameless marks a StateFailed the RELEASE is not responsible for, so
 	// it must not be blocklisted.
 	//
@@ -183,6 +194,11 @@ type DownloadStatus struct {
 	// copy — a punishment for an operator action, applied silently and
 	// permanently.
 	Blameless bool
+	// FetchedKnown marks a StateFailed whose Progress is the share of the
+	// release the client actually fetched, measured from its own record.
+	// Without it a failure's progress is a stale or default value, and the
+	// re-grab budget, which counts bytes, must treat it as a full download.
+	FetchedKnown bool
 }
 
 // DownloadClient adds and tracks downloads (blueprint §5 ports).
@@ -281,6 +297,9 @@ type ClientEvent struct {
 	// Seq is the client's own event cursor, for logs and for saying which
 	// channel delivered a step. Zero when the client does not number.
 	Seq uint64
+	// Fact is the pipeline v2 reading of the event, for clients on the
+	// reducer (RunnerFeeds). Nil from every other client.
+	Fact *RunnerFact
 }
 
 // Subscriber is an OPTIONAL capability: a client that can push state
@@ -361,6 +380,13 @@ type CapacityReporter interface {
 // SameJobResumer resumes the existing handle after resource admission.
 type SameJobResumer interface {
 	Resume(context.Context, Handle) error
+}
+
+// QueueCanceller cancels a job only while it is still in the client's queue.
+// Unlike Remove it never falls back to deleting a finished job's history
+// record: a job that already left the queue (HTTP 404) is not an error.
+type QueueCanceller interface {
+	CancelQueued(context.Context, Handle) error
 }
 
 // CompleteInventory is optional evidence that includes all live and retained

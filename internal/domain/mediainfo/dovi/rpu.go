@@ -6,7 +6,7 @@ import (
 )
 
 // Enhancement-layer types. Empty means the probe could not tell, which is
-// not the same as "none" (ADR 0026 §1).
+// not the same as "none" (ADR 0031 §1).
 const (
 	ELNone = "none" // single layer (profile 5, 8, …)
 	ELMEL  = "mel"  // minimal enhancement layer: carries no residual picture

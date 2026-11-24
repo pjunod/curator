@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"path/filepath"
 	"testing"
 	"time"
@@ -300,27 +299,6 @@ func TestStartImportersResumesDueAutomaticSubmission(t *testing.T) {
 	}
 }
 
-func TestRunnerKeepIsSettledCustodyAndDoesNotBlockAutomaticReplacement(t *testing.T) {
-	tests := []struct {
-		name      string
-		admission ports.RequestAdmission
-		wantHold  bool
-	}{
-		{name: "unresolved runner custody", admission: ports.RequestAdmission{CustodyState: "runner_owned", SourceCleanupStatus: "pending"}, wantHold: true},
-		{name: "runner cleanup complete", admission: ports.RequestAdmission{CustodyState: "runner_owned", SourceCleanupStatus: "removed"}, wantHold: false},
-		{name: "explicit keep", admission: ports.RequestAdmission{CustodyState: "runner_owned", KeepSourceOnFailure: true}, wantHold: false},
-		{name: "kept by user", admission: ports.RequestAdmission{CustodyState: "kept_by_user", KeepSourceOnFailure: true}, wantHold: false},
-		{name: "no payload", admission: ports.RequestAdmission{CustodyState: "no_payload"}, wantHold: false},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := runnerFailureNeedsCleanupBeforeReplacement(tt.admission); got != tt.wantHold {
-				t.Fatalf("runnerFailureNeedsCleanupBeforeReplacement() = %v, want %v", got, tt.wantHold)
-			}
-		})
-	}
-}
-
 type requestAdmissionFakeClient struct {
 	*fakeClient
 	admission ports.RequestAdmission
@@ -348,55 +326,6 @@ func (c *statusHookClient) Statuses(ctx context.Context) ([]ports.DownloadStatus
 		c.hook()
 	}
 	return c.fakeClient.Statuses(ctx)
-}
-
-func TestRefreshQueueUsesDurableRunnerReceiptAfterHistoryDisappears(t *testing.T) {
-	base := &fakeClient{}
-	svc, db, itemID := setup(t, nil, base)
-	ctx := context.Background()
-	clients, err := db.ListDownloadClients(ctx)
-	if err != nil || len(clients) == 0 {
-		t.Fatalf("download clients=%v err=%v", clients, err)
-	}
-	dl, err := db.InsertDownloadRecord(ctx, sqlite.Download{MediaItemID: itemID, ClientID: clients[0].ID,
-		ReleaseTitle: "Test.Show.S01E01.1080p.WEB-DL", Protocol: "torrent", State: "downloading",
-		Transfer: "transfer-after-history-clear", RequestTokenIdempotent: true, Intent: GrabIntentManualAdditional})
-	if err != nil {
-		t.Fatal(err)
-	}
-	receipt := ports.RequestAdmission{ProtocolVersion: 1, RequestToken: dl.Transfer, JobID: "removed-job", Generation: "runner-admission-generation",
-		RunnerInstanceID: "runner-instance", Outcome: "failed", TerminalOutcome: "FAILURE/FETCH", CustodyState: "no_payload"}
-	client := &requestAdmissionFakeClient{fakeClient: base, admission: receipt, found: true}
-	svc.newClient = func(ports.ClientConfig) ports.DownloadClient { return client }
-	if err = svc.RefreshQueue(ctx); err != nil {
-		t.Fatal(err)
-	}
-	settled, err := db.GetDownload(ctx, dl.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if settled.State != "failed" || client.lookups != 1 {
-		t.Fatalf("durable receipt was not reconciled after history disappeared: state=%s lookups=%d", settled.State, client.lookups)
-	}
-}
-
-func TestRunnerDeletedCustodyReviewAllowsExplicitKeep(t *testing.T) {
-	for _, tt := range []struct {
-		name       string
-		admission  ports.RequestAdmission
-		wantReview bool
-	}{
-		{name: "unresolved bytes", admission: ports.RequestAdmission{Outcome: "deleted", CustodyState: "runner_owned"}, wantReview: true},
-		{name: "Runner confirmed deletion", admission: ports.RequestAdmission{Outcome: "deleted", CustodyState: "deleted_by_runner"}},
-		{name: "kept after queue removal", admission: ports.RequestAdmission{Outcome: "deleted", CustodyState: "kept_by_user", KeepSourceOnFailure: true}},
-		{name: "explicit keep flag", admission: ports.RequestAdmission{Outcome: "deleted", CustodyState: "runner_owned", KeepSourceOnFailure: true}},
-	} {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := runnerDeletedNeedsCustodyReview(tt.admission); got != tt.wantReview {
-				t.Fatalf("runnerDeletedNeedsCustodyReview() = %v, want %v", got, tt.wantReview)
-			}
-		})
-	}
 }
 
 func TestRunnerReceiptPollAbortsWhenActivityWasRemovedBeforeStatusReconcile(t *testing.T) {
@@ -515,52 +444,4 @@ func (c *statusHookAdmissionClient) Remove(ctx context.Context, handle ports.Han
 
 func (c *statusHookAdmissionClient) Test(ctx context.Context) error {
 	return c.statusHookClient.Test(ctx)
-}
-
-func TestRunnerReceiptPollingIsBoundedAndFairAcrossSweep(t *testing.T) {
-	base := &fakeClient{}
-	svc, db, itemID := setup(t, nil, base)
-	ctx := context.Background()
-	clients, err := db.ListDownloadClients(ctx)
-	if err != nil || len(clients) == 0 {
-		t.Fatalf("clients=%v err=%v", clients, err)
-	}
-	var statuses []ports.DownloadStatus
-	var tokens []string
-	for i := 0; i < 100; i++ {
-		dl, e := db.InsertDownloadRecord(ctx, sqlite.Download{MediaItemID: itemID, ClientID: clients[0].ID,
-			ReleaseTitle: "Test.Show.S01E01.1080p.WEB-DL", Protocol: "torrent", State: "downloading", RequestTokenIdempotent: true})
-		if e != nil {
-			t.Fatal(e)
-		}
-		transfer := fmt.Sprintf("fair-transfer-%d", i)
-		handle := fmt.Sprintf("runner-job-%d", i)
-		if e = db.SetDownloadHandle(ctx, dl.ID, handle, transfer); e != nil {
-			t.Fatal(e)
-		}
-		tokens = append(tokens, transfer)
-		statuses = append(statuses, ports.DownloadStatus{Handle: ports.Handle(handle), State: ports.StateFailed})
-	}
-	base.statuses = statuses
-	client := &requestAdmissionFakeClient{fakeClient: base}
-	svc.newClient = func(ports.ClientConfig) ports.DownloadClient { return client }
-	for round := 0; round < 50; round++ {
-		before := len(client.tokens)
-		if err = svc.RefreshQueue(ctx); err != nil {
-			t.Fatal(err)
-		}
-		if len(client.tokens)-before != 2 {
-			t.Fatalf("queue refresh %d did %d receipt lookups; want bounded batch of two (cumulative=%d)", round, len(client.tokens)-before, len(client.tokens))
-		}
-	}
-	seen := make(map[string]bool, len(client.tokens))
-	for _, token := range client.tokens {
-		if seen[token] {
-			t.Fatalf("same due request was polled repeatedly before the tail: %v", client.tokens)
-		}
-		seen[token] = true
-	}
-	if len(seen) != 100 {
-		t.Fatalf("bounded polling starved tail rows: got %d distinct tokens, want all 100; inserted=%v polled=%v", len(seen), tokens, client.tokens)
-	}
 }

@@ -41,9 +41,8 @@ test('storage comparison previews impact, waits for refresh and accepts exact re
   const observedIdentity = 'linux-v1\u0000ext4\u0000UUID=replacement-volume\u0000/'
   let accepted = false
   let submitted: Record<string, unknown> | undefined
-  const root = { path: '/completed/replacement', checkedAt: new Date().toISOString(), lastCompleteAt: new Date().toISOString(), storageIdentity: expectedIdentity, observedStorageIdentity: observedIdentity, error: 'Expected storage changed: original volume; observed replacement volume', entries: [], bytes: 0 }
-  await page.route('**/api/v1/downloads/inventory', route => route.fulfill({ json: { roots: [{ ...root, ...(accepted ? { storageIdentity: observedIdentity, error: '' } : {}) }], bytes: 0, attention: 0 } }))
-  await page.route('**/api/v1/downloads/deliveries?*', route => route.fulfill({ json: { items: [] } }))
+  const root = { owner: 'Curator', role: 'downloads', status: 'unavailable', path: '/completed/replacement', observedAt: new Date().toISOString(), storageIdentity: expectedIdentity, observedStorageIdentity: observedIdentity, error: 'Expected storage changed: original volume; observed replacement volume' }
+  await page.route('**/api/v1/system/storage-observations', route => route.fulfill({ json: { roots: [{ ...root, ...(accepted ? { storageIdentity: observedIdentity, error: '' } : {}) }], cleanup: {} } }))
   let previews = 0
   let releasePreview: (() => void) | undefined
   await page.route('**/api/v1/downloads/inventory/storage-change/preview', async route => {
@@ -53,17 +52,17 @@ test('storage comparison previews impact, waits for refresh and accepts exact re
     await route.fulfill({ json: { root: root.path, expectedIdentity, observedIdentity, reviewToken: `exact-review-${previews}`, expectedDescription: 'ext4 · original volume', observedDescription: 'ext4 · replacement volume', existingPayloads: 2, existingRequests: 3, inFlightRequests: 1, activeImports: 0 } })
   })
   await page.route('**/api/v1/downloads/inventory/storage-change/accept', async route => { submitted = route.request().postDataJSON(); accepted = true; await route.fulfill({ status: 204 }) })
-  await page.goto('/activity')
-  await page.getByRole('button', { name: 'Review changed storage…' }).click()
-  const dialog = page.getByRole('dialog', { name: 'Review changed download storage' })
-  await expect(dialog.getByText(/2 previously recorded payloads and 3 pre-change requests/)).toBeVisible()
+  await page.goto('/system#storage')
+  await page.getByRole('button', { name: 'Review replacement storage' }).click()
+  const dialog = page.getByRole('dialog', { name: 'Review replacement storage' })
+  await expect(dialog.getByText(/Existing jobs keep their original storage requirements/)).toBeVisible()
   await expect(dialog.getByText('ext4 · original volume')).toBeVisible()
   await expect(dialog.getByText('ext4 · replacement volume')).toBeVisible()
   await inViewport(dialog.getByRole('heading'))
   await screenshot(page, 'storage-comparison')
   const accept = dialog.getByRole('button', { name: 'Accept replacement storage' })
   await dialog.getByRole('button', { name: 'Refresh review' }).click()
-  await expect(dialog.getByText('Checking the current storage and affected requests…')).toBeVisible()
+  await expect(dialog.getByText('Checking the current drive and affected requests…')).toBeVisible()
   await expect(dialog.getByRole('button', { name: 'Accept replacement storage', disabled: false })).toHaveCount(0)
   await expect.poll(() => releasePreview !== undefined).toBe(true)
   releasePreview!()
@@ -72,68 +71,6 @@ test('storage comparison previews impact, waits for refresh and accepts exact re
   await expect(dialog).toHaveCount(0)
   expect(submitted).toMatchObject({ root: root.path, expectedIdentity, observedIdentity, reviewToken: 'exact-review-2' })
   await inViewport(page.getByRole('status').filter({ hasText: 'Replacement storage accepted' }))
-})
-
-const timedReceipt = (id = 901) => ({
-  receiptId: id, clientId: 2, downloadId: 41, generationKey: 'generation-41', mediaItemId: 8, copyId: 0,
-  deliveryId: `delivery-${id}`, publicationGeneration: 'publication-41', manifestDigest: 'a'.repeat(64), runnerInstanceId: 'runner-2', jobId: '41', requestToken: 'transfer-41',
-  mappedPath: `/completed/Reviewable.${id}`, readyAt: new Date().toISOString(), terminalOutcome: 'SUCCESS', keepSourceOnFailure: false, state: 'imported', acceptance: 'accepted', attempts: 1,
-  blockedSince: '0001-01-01T00:00:00Z', attemptHistory: [{ id: 1, stage: 'import', attempt: 1, startedAt: '2026-11-01T10:00:00Z', finishedAt: '2026-11-01T10:00:01Z', result: 'succeeded' }],
-  lifecycleTiming: { version: 1, intervals: [
-    { stage: 'download', nodeId: 'worker-a', clockDomain: 'worker-a:boot-862c4ae1-1941-4eb8-b91f-0cf79da321c9', startUnixMs: 1793527200000, startMonotonicMs: 0, endMonotonicMs: 2000, durationMs: 2000, state: 'completed' },
-    { stage: 'post_processing', nodeId: 'worker-a', clockDomain: 'worker-a:boot-862c4ae1-1941-4eb8-b91f-0cf79da321c9', startUnixMs: 1793527201000, startMonotonicMs: 1000, endMonotonicMs: 3000, durationMs: 2000, state: 'completed' },
-    { stage: 'queue', nodeId: 'leader', clockDomain: 'leader:boot-2', startUnixMs: 1793527200000, state: 'interrupted' },
-  ] },
-  runnerStages: { nodeId: 'worker-a', clockDomain: 'worker-a:post', spans: [{ stage: 'unpack', started_at_unix: 1793527201, ms: 500 }] },
-  sourceCopies: [{ id: 'worker-a-publication-862c4ae1-1941-4eb8-b91f-0cf79da321c9-source-copy-9aa78ce7063553ff', ownerNode: 'worker-a', status: 'retry', attempts: 2, error: 'Storage was temporarily unavailable' }],
-  sourceCleanup: { status: 'retry', attempts: 2 }, sourceCleanupAttempts: 0, directoryCleanupState: 'retry', directoryCleanupAttempts: 1, manifestFiles: [], curatorFiles: [],
-})
-
-test('joined timing, actual retry clicks and receipt pagination stay visible', async ({ page }) => {
-  await emptyActivity(page)
-  await page.route('**/api/v1/downloads/inventory', route => route.fulfill({ json: { roots: [], bytes: 0, attention: 0 } }))
-  const cursors: string[] = []
-  await page.route('**/api/v1/downloads/deliveries?*', route => { const cursor = new URL(route.request().url()).searchParams.get('beforeId') ?? ''; cursors.push(cursor); return route.fulfill({ json: { items: [timedReceipt(cursor ? 801 : 901)], nextBeforeId: cursor ? 0 : 900 } }) })
-  const retried: string[] = []
-  await page.route('**/api/v1/downloads/deliveries/901/retry-*', async route => { retried.push(new URL(route.request().url()).pathname.split('/').at(-1)!); await route.fulfill({ status: 202 }) })
-  await page.goto('/activity')
-  const archive = page.locator('.delivery-lifecycle-archive')
-  await archive.locator(':scope > summary').click()
-  let trace = archive.locator('.delivery-lifecycle')
-  await trace.locator(':scope > summary').click()
-  await expect(trace.getByText(/Measured time.*3.0 s.*1.0 s overlapping/)).toBeVisible()
-  await expect(trace.getByText(/Measured total unavailable.*no complete timing/)).toBeVisible()
-  await expect(trace.getByText(/739.*d ago/)).toHaveCount(0)
-  await screenshot(page, 'joined-lifecycle')
-  const timingLane = trace.locator('.lifecycle-clock-lane').first()
-  await timingLane.getByText('Timing reference', { exact: true }).click()
-  await timingLane.scrollIntoViewIfNeeded()
-  await inViewport(timingLane.getByText('worker-a:boot-862c4ae1-1941-4eb8-b91f-0cf79da321c9', { exact: true }))
-  await screenshot(page, 'lifecycle-stage-lanes')
-  const copies = trace.getByRole('region', { name: 'Processing source copies' })
-  await copies.getByText('Copy reference', { exact: true }).click()
-  const copyId = copies.getByText('worker-a-publication-862c4ae1-1941-4eb8-b91f-0cf79da321c9-source-copy-9aa78ce7063553ff', { exact: true })
-  await copyId.scrollIntoViewIfNeeded()
-  await inViewport(copyId)
-  expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(1)
-  await screenshot(page, 'lifecycle-source-copies')
-  for (const name of ['Retry handoff', 'Retry Runner source cleanup', 'Retry Curator cleanup']) {
-    const button = trace.getByRole('button', { name, exact: true })
-    await button.scrollIntoViewIfNeeded()
-    await inViewport(button)
-    await button.click()
-    const result = trace.getByRole('status').filter({ hasText: 'Retry queued' })
-    await inViewport(result)
-    await expect(button).toBeFocused()
-  }
-  await screenshot(page, 'lifecycle-retry-controls')
-  expect(retried).toEqual(['retry-handoff', 'retry-runner-cleanup', 'retry-curator-cleanup'])
-  await archive.getByRole('button', { name: 'Older receipts' }).click()
-  trace = archive.locator('.delivery-lifecycle')
-  await expect(trace.locator(':scope > summary')).toContainText('Reviewable.801')
-  await archive.getByRole('button', { name: 'Newer receipts' }).click()
-  await expect(archive.locator('.delivery-lifecycle > summary')).toContainText('Reviewable.901')
-  expect(cursors).toContain('900')
 })
 
 async function fileReviewFixture(page: Page, kind: 'movie' | 'series' = 'movie') {
@@ -230,7 +167,7 @@ test('native Runner torrent settings keep explicit protocol choice and unsupport
     tested = route.request().postDataJSON()
     await route.fulfill({ status: 400, json: { message: 'Runner native torrent acquisition is unsupported: native-torrent-deliveries-v1 is required.' } })
   })
-  await page.goto('/settings')
+  await page.goto('/settings#downloadclients')
   const settings = page.locator('section').filter({ has: page.getByRole('heading', { name: 'Download clients', exact: true }) }).first()
   const type = settings.getByRole('combobox').first()
   await expect(type.locator('option[value="nzbd"]')).toHaveText('Runner · Usenet')

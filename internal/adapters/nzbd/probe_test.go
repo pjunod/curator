@@ -11,7 +11,7 @@ import (
 	"github.com/pjunod/monarr/internal/ports"
 )
 
-// The release-probe contract (Runner docs/INTEGRATION.md, ADR 0026 §6):
+// The release-probe contract (Runner docs/INTEGRATION.md, ADR 0031 §6):
 // capability negotiation through /api/v1/status, the URL and byte count on
 // POST /api/v1/probe, a base64 head back, or a refusal with its reason.
 func TestReleaseProbeContract(t *testing.T) {

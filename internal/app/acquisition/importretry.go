@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pjunod/monarr/internal/domain/backoff"
 	"github.com/pjunod/monarr/internal/infra/sqlite"
 )
 
@@ -67,10 +68,10 @@ func (s *Service) RetryBlockedImports(ctx context.Context) error {
 		if path == "" {
 			path = dl.SavePath
 		}
-		legacy, reviewErr := s.db.LegacyAutomaticImportReview(ctx, dl.GenerationKey, path)
+		legacy, reviewErr := s.db.StorageChangeReview(ctx, dl.GenerationKey, path)
 		if reviewErr != nil || legacy {
-			// Keep the migration-era cohort out of even automatic state
-			// transitions until its path and copy have been reviewed.
+			// A payload whose storage changed stays out of even automatic
+			// state transitions until its path and copy have been reviewed.
 			continue
 		}
 		attempts := importAttempts(dl)
@@ -90,7 +91,7 @@ func (s *Service) RetryBlockedImports(ctx context.Context) error {
 		if path == "" {
 			path = row.SavePath
 		}
-		legacy, reviewErr = s.db.LegacyAutomaticImportReview(decisionCtx, row.GenerationKey, path)
+		legacy, reviewErr = s.db.StorageChangeReview(decisionCtx, row.GenerationKey, path)
 		if reviewErr != nil || legacy {
 			releaseStorage()
 			continue
@@ -125,14 +126,7 @@ func importRetryDelay(attempts int) time.Duration {
 	if importRetryBackoff == 0 { // test seam; production leaves the default intact.
 		return 0
 	}
-	delays := [...]time.Duration{30 * time.Second, time.Minute, 2 * time.Minute, 5 * time.Minute}
-	if attempts < 0 {
-		attempts = 0
-	}
-	if attempts >= len(delays) {
-		return delays[len(delays)-1]
-	}
-	return delays[attempts]
+	return backoff.Retry.After(attempts)
 }
 
 // ImportRetryStatus is the durable Activity-facing retry view. The trace

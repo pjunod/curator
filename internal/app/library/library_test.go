@@ -12,6 +12,7 @@ import (
 	"github.com/pjunod/monarr/internal/domain/quality"
 	"github.com/pjunod/monarr/internal/infra/bus"
 	"github.com/pjunod/monarr/internal/infra/sqlite"
+	"github.com/pjunod/monarr/internal/infra/sqlite/sqlitetest"
 	"github.com/pjunod/monarr/internal/ports"
 )
 
@@ -60,7 +61,7 @@ func (fakeProvider) GetSeries(ctx context.Context, id int64) (domain.MediaItem, 
 
 func newService(t *testing.T) (*Service, *sqlite.DB, *bus.Bus) {
 	t.Helper()
-	db, err := sqlite.Open(t.TempDir())
+	db, err := sqlite.Open(sqlitetest.Dir(t))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -1,0 +1,16 @@
+<section id="cinema-consent" aria-label="Cinema sign-in consent preview">
+ <header><span class="brand">Cinema</span><span class="account">Signed in as Alex</span></header>
+ <main><span class="eyebrow">HOUSEHOLD REQUESTS</span><h1>Continue to Curator</h1><p class="lead">Use your Cinema account to discover titles and request something for your household.</p>
+ <div class="destination"><span class="mark">C</span><div><strong>Curator · Home library</strong><p>curator.example.com</p></div></div>
+ <h2>Share with Curator</h2><ul><li>Your display name and a stable account identity</li><li>Permission to keep you signed in for household requests</li></ul>
+ <p class="muted">Curator's owner reviews requests. Cinema administrator access is not shared.</p>
+ <footer><button id="cancel">Cancel</button><button id="continue">Continue as Alex</button></footer>
+ <p class="muted small">You can disconnect Curator in Cinema. Signing out of this Cinema session also ends its delegated access.</p><p id="result" role="status"></p>
+ </main>
+</section>
+<style>
+#cinema-consent{font:16px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#eceef6;background:#101117;max-width:760px;min-height:700px;box-sizing:border-box;margin:auto;padding:28px}#cinema-consent *{box-sizing:border-box}#cinema-consent header{display:flex;align-items:center;justify-content:space-between;gap:16px;padding-bottom:44px}#cinema-consent .brand{font-size:24px;font-weight:650}#cinema-consent .account{font-size:14px;color:#b7bbcd}#cinema-consent main{max-width:500px;margin:auto}#cinema-consent .eyebrow{font-size:12px;letter-spacing:.12em;color:#b3a2fc}#cinema-consent h1{font-size:32px;line-height:1.2;margin:12px 0 16px}#cinema-consent h2{font-size:17px;margin:26px 0 10px}#cinema-consent p{margin:0 0 16px}#cinema-consent .lead{color:#c6c9d8}#cinema-consent .muted{color:#acb0c4}#cinema-consent .small{font-size:13px}#cinema-consent .destination{padding:18px;background:#1d1f2b;border:1px solid #343746;border-radius:14px;display:flex;align-items:center;gap:14px;margin-top:24px}#cinema-consent .destination p{margin:2px 0 0;color:#b9bfd3;font-size:14px}#cinema-consent .mark{background:#8b72e8;padding:8px 15px;border-radius:10px;font-weight:600;font-size:22px}#cinema-consent ul{padding-left:20px;color:#d6d9e6}#cinema-consent li{margin:10px 0}#cinema-consent footer{display:flex;gap:12px;margin:28px 0 18px;justify-content:flex-end}#cinema-consent button{font:inherit;min-height:46px;padding:10px 18px;border-radius:9px;color:#e4e6ef;border:1px solid #42465d;background:#232632}#cinema-consent #continue{background:#8970df;border-color:#8970df;color:#fff}#cinema-consent button:focus-visible{outline:3px solid #d5caff;outline-offset:3px}@media(max-width:450px){#cinema-consent{padding:22px;min-height:760px}#cinema-consent header{padding-bottom:34px}#cinema-consent h1{font-size:28px}#cinema-consent footer{flex-direction:column-reverse}#cinema-consent button{width:100%}}
+</style>
+<script>
+const consent=document.getElementById('cinema-consent');consent.querySelector('#continue').onclick=()=>{consent.querySelector('#result').textContent='Return to Curator · signed in as Alex';};consent.querySelector('#cancel').onclick=()=>{consent.querySelector('#result').textContent='Sign-in cancelled. No access shared.';};
+</script>

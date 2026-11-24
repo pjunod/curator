@@ -89,6 +89,9 @@ func (d *DB) Migrate(ctx context.Context) error {
 	if err := goose.SetDialect("sqlite3"); err != nil {
 		return fmt.Errorf("sqlite: setting goose dialect: %w", err)
 	}
+	if err := d.preflightDropV1(ctx); err != nil {
+		return err
+	}
 	if err := goose.UpContext(ctx, d.W, "migrations"); err != nil {
 		return fmt.Errorf("sqlite: migrating: %w", err)
 	}
@@ -99,11 +102,13 @@ func (d *DB) Migrate(ctx context.Context) error {
 // have added. Deliberately not the whole schema — this is a tripwire for one
 // specific failure, not a substitute for the migrations.
 var requiredColumns = []struct{ table, column string }{
+	{"household_request_decisions", "account_id"}, {"cinema_connection", "client_secret"}, {"cinema_links", "generation"}, {"cinema_handoffs", "grant_secret"}, {"household_sessions", "integration_grant"}, {"household_request_targets", "approval_generation"}, {"household_download_origins", "generation"}, {"household_accounts", "credential_generation"}, {"household_sessions", "link_generation"}, {"household_invites", "consumed_by"}, {"household_security", "established"}, {"library_presence_roots", "generation"}, {"library_presence_observations", "root_generation"}, {"library_presence_observations", "presence_fingerprint"}, {"library_presence_bootstrap_files", "file_generation"}, {"library_presence_observations", "present_file_ids"}, {"library_presence_roots", "identity"},
 	{"import_attempt_stages", "state"}, {"import_attempt_controls", "attempt_epoch"}, {"import_attempt_files", "outcome"}, {"import_publication_authorizations", "resolution"},
 	{"acquisition_plans", "decision"},
 	{"downloads", "plan_id"}, {"downloads", "submission_phase"}, {"downloads", "reserved_episodes"},
 	{"downloads", "observation"}, {"downloads", "cleanup_pending"},
 	{"downloads", "activity_dismissed"},
+	{"media_items", "offloaded_at"}, {"seasons", "offloaded_at"}, {"episodes", "offloaded_at"},
 	{"indexers", "daily_request_cap"}, {"indexers", "next_rss_at"},
 	{"indexer_request_usage", "requested_at"},
 	{"media_items", "monitor"}, {"media_items", "monitor_since"}, {"media_items", "monitor_season"},
@@ -119,6 +124,15 @@ var requiredColumns = []struct{ table, column string }{
 	{"media_aliases", "normalized_title"},
 	{"media_identity_sources", "countries"},
 	{"media_files", "audio_languages"},
+	{"pipeline_timings", "started_at"},
+	{"downloads", "runner_outcome"}, {"downloads", "provisional"}, {"downloads", "deadline_at"}, {"downloads", "runner_stage"},
+	{"publications", "cohort"}, {"publications", "cleanup_paused_at"}, {"publications", "import_attempts"}, {"publications", "last_stop"}, {"publications", "retry_at"}, {"publications", "hold_since"}, {"publications", "holds"}, {"publication_files", "outcome"}, {"replacement_grabs", "next_at"},
+	{"wantable_attempts", "download_id"}, {"runner_history_cursors", "incarnation"},
+	{"notifier_deliveries", "idempotency_key"}, {"notifier_deliveries", "attempt"}, {"notifier_deliveries", "visible_at"},
+	{"media_items", "origin"}, {"notifier_deliveries", "operation_id"}, {"notifiers", "features"},
+	{"downloads", "rate_bps"}, {"downloads", "remaining_bytes"}, {"downloads", "runner_stage_at"},
+	{"rematch_operations", "dismissed_at"}, {"notifier_deliveries", "media_item_id"}, {"notifier_deliveries", "file_results_json"}, {"search_records", "trigger"},
+	{"runner_history_cursors", "deliveries_after"}, {"runner_history_cursors", "history_read"}, {"storage_change_review_paths", "path"},
 	{"media_files", "hdr_tier"},
 }
 

@@ -248,6 +248,8 @@ func TestThePollDoesNotWaitBehindARunningImporter(t *testing.T) {
 }
 
 func TestQueuedImportsAreVisibleAndCanBeCancelled(t *testing.T) {
+	// Two workers, so the third import is the one left queued.
+	t.Setenv("MONARR_IMPORT_WORKERS", "2")
 	client := &fakeClient{}
 	svc, db, itemID := setup(t, nil, client)
 	svc.SetRegistry(transfers.New())
@@ -284,7 +286,7 @@ func TestQueuedImportsAreVisibleAndCanBeCancelled(t *testing.T) {
 		return id
 	}
 
-	started := make(chan struct{}, importWorkers)
+	started := make(chan struct{}, 2)
 	previous := placeFile
 	placeFile = func(ctx context.Context, _, _ string, _ func(done, total int64)) error {
 		started <- struct{}{}
@@ -433,5 +435,16 @@ func TestAnUnmeasurableStageIsNotZeroPercent(t *testing.T) {
 	if _, known := live[0].Fraction(); known {
 		t.Error("a notify has no byte count and must not report a fraction — " +
 			"a 0% bar reads as 'nothing has happened', which is a different claim")
+	}
+}
+
+func TestImportWorkerCountReadsTheSetting(t *testing.T) {
+	for raw, want := range map[string]int{"": defaultImportWorkers, "6": 6, "1": 1, "0": defaultImportWorkers, "-2": defaultImportWorkers, "many": defaultImportWorkers} {
+		if got := importWorkerCount(raw); got != want {
+			t.Errorf("importWorkerCount(%q) = %d, want %d", raw, got, want)
+		}
+	}
+	if defaultImportWorkers != 4 {
+		t.Fatalf("default import workers = %d, want 4", defaultImportWorkers)
 	}
 }

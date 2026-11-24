@@ -13,10 +13,12 @@ import (
 	"github.com/pjunod/monarr/internal/app/discover"
 	"github.com/pjunod/monarr/internal/app/health"
 	"github.com/pjunod/monarr/internal/app/library"
+	"github.com/pjunod/monarr/internal/app/pipeline"
 	"github.com/pjunod/monarr/internal/domain"
 	"github.com/pjunod/monarr/internal/infra/bus"
 	"github.com/pjunod/monarr/internal/infra/scheduler"
 	"github.com/pjunod/monarr/internal/infra/sqlite"
+	"github.com/pjunod/monarr/internal/infra/sqlite/sqlitetest"
 	"github.com/pjunod/monarr/internal/ports"
 )
 
@@ -143,7 +145,7 @@ func (fakeBookProvider) GetBook(_ context.Context, olid string) (domain.MediaIte
 func newAPIEnv(t *testing.T) *apiEnv {
 	t.Helper()
 
-	db, err := sqlite.Open(t.TempDir())
+	db, err := sqlite.Open(sqlitetest.Dir(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -191,6 +193,7 @@ func newAPIEnv(t *testing.T) *apiEnv {
 		DB:             fakeDB{v: 2},
 		Library:        lib,
 		Acquisition:    acq,
+		Pipeline:       pipeline.New(db),
 		Discover:       discover.New(nil, nil),
 		Store:          db,
 		Settings:       db,

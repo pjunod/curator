@@ -78,7 +78,7 @@ export function previewBlocker(o: { mount: boolean | null; handoff: RunnerRecove
   if (!o.handoff.files.length) return 'That handoff has no files.'
   if (!o.itemId) return 'Pick the library title these files belong to.'
   if (o.badEpisode) return 'Fix the episode mapping for ' + o.badEpisode + ' (season:episodes), or clear it.'
-  if (o.mount === false) return 'The recovery mount is not available to Curator — set it under Settings → Dev.'
+  if (o.mount === false) return 'The recovery mount is not available to Curator — set it under Settings → Connections → Download clients.'
   return ''
 }
 
@@ -127,9 +127,9 @@ export function filterTitles(items: MediaItemSummary[] | undefined, q: string): 
   return all.filter(i => (i.title + ' ' + (i.year || '') + ' ' + (i.author || '')).toLowerCase().includes(needle))
 }
 
-// ---- Settings → Dev: enablement ------------------------------------------------
+// ---- Runner published-file mapping ------------------------------------------------
 
-export function RecoveryEnableSettings() {
+export function RunnerRecoverySettings() {
   const qc = useQueryClient()
   const settings = useQuery({ queryKey: ['recovery-settings'], queryFn: getRecoverySettings })
   const [draft, setDraft] = useState<RecoverySettings | null>(null)
@@ -138,16 +138,15 @@ export function RecoveryEnableSettings() {
   if (!value) return <p>{settings.error?.message ?? 'Loading recovery settings…'}</p>
   const edit = (patch: Partial<RecoverySettings>) => setDraft({ ...value, ...patch })
   return <section className="panel recovery-enable">
-    <h2>Enable Runner recovery</h2>
-    <p className="muted">Readiness is advisory. Explicit imports and committed receipt delivery remain available.</p>
-    <label className="inline"><input type="checkbox" checked={value.enabled} onChange={e => edit({ enabled: e.target.checked })} /> Enable automatic recovery status refresh</label>
+    <h3>Published file mapping</h3>
+    <p className="muted">Optional mapping for explicitly staged Runner files. Normal automatic imports do not depend on enabling a recovery screen.</p>
     <div className="recovery-fields">
       <label>Runner published prefix <input type="text" value={value.remote_root} onChange={e => edit({ remote_root: e.target.value })} /></label>
       <label>Curator recovery mount <input type="text" value={value.local_root} onChange={e => edit({ local_root: e.target.value })} /></label>
       <label>Recovery credential <input type="password" autoComplete="new-password" value={value.consumer_token ?? ''} placeholder={value.credential_configured ? 'Configured — blank keeps existing' : 'Same recovery credential as Runner'} onChange={e => edit({ consumer_token: e.target.value })} /></label>
     </div>
     <div className="form-row">
-      <button className="btn-accent" disabled={save.isPending} onClick={() => save.mutate(value)}>Save recovery settings</button>
+      <button className="btn-accent" disabled={save.isPending} onClick={() => save.mutate(value)}>Save published file mapping</button>
       {save.error && <span className="error-text" role="alert">{save.error.message}</span>}
     </div>
     <ul className="recovery-advisory">{Object.entries(settings.data?.advisory ?? {}).map(([key, status]) => <li key={key}>{key.replaceAll('_', ' ')}: <span className={'pill ' + (status === true ? 'pill-ok' : status === false ? 'pill-error' : 'pill-neutral')}>{status === true ? 'met' : status === false ? 'unmet' : 'verify'}</span>{typeof status === 'string' ? <span className="muted"> — {status}</span> : null}</li>)}</ul>
@@ -168,7 +167,6 @@ function Readiness({ label, ok, detail }: { label: string; ok: boolean | null; d
 export function RecoveryImports() {
   const qc = useQueryClient()
   const jobs = useQuery({ queryKey: ['recovery-imports'], queryFn: getRecoveryImports, refetchInterval: 5000 })
-  const cancel = useMutation({ mutationFn: cancelRecoveryImport, onSuccess: () => { void qc.invalidateQueries({ queryKey: ['recovery-imports'] }) } })
   const settings = useQuery({ queryKey: ['recovery-settings'], queryFn: getRecoverySettings })
   const recoveries = useQuery({ queryKey: ['runner-recoveries'], queryFn: getRecoveries, refetchInterval: settings.data?.settings.enabled ? 15000 : false })
   const library = useQuery({ queryKey: ['library', 'all'], queryFn: () => getLibrary() })
@@ -210,9 +208,9 @@ export function RecoveryImports() {
     <div className="recovery-readiness" role="group" aria-label="Recovery readiness">
       <Readiness label="Runner" ok={runnerOk} detail={runnerOk === false ? (recoveries.error?.message ?? clientErrors[0]?.error ?? 'unreachable') : handoffs.length + (handoffs.length === 1 ? ' handoff' : ' handoffs')} />
       <Readiness label="Recovery mount" ok={mount} detail={settings.data?.settings.local_root || 'not set'} />
-      <Readiness label="Credential" ok={advisory ? advisory.credential_configured === true : null} detail={advisory?.credential_configured === true ? 'configured' : 'set the shared recovery credential under Settings → Dev'} />
+      <Readiness label="Credential" ok={advisory ? advisory.credential_configured === true : null} detail={advisory?.credential_configured === true ? 'configured' : 'set the shared recovery credential under Settings → Connections → Download clients'} />
     </div>
-    {mount === false && <div className="banner warning" role="alert">Curator cannot see the recovery mount at <code>{settings.data?.settings.local_root || '(unset)'}</code>. Previews and imports will fail until Runner’s <code>published</code> directory is mounted read-only there. Fix the mount, or the path under Settings → Dev.</div>}
+    {mount === false && <div className="banner warning" role="alert">Curator cannot see the recovery mount at <code>{settings.data?.settings.local_root || '(unset)'}</code>. Previews and imports will fail until Runner’s <code>published</code> directory is mounted read-only there. Fix the mount, or the path under Settings → Connections → Download clients.</div>}
     {clientErrors.map((r, i) => <div className="banner warning" role="alert" key={i}>Runner client {r.client_id}: {r.error}</div>)}
     {recoveries.error && <div className="banner warning" role="alert">{recoveries.error.message}</div>}
 
@@ -303,10 +301,31 @@ export function RecoveryImports() {
         <td><code>{job.id.slice(0, 12)}</code></td>
         <td><span className={'pill ' + (job.state === 'imported' ? 'pill-ok' : job.error ? 'pill-error' : active ? 'pill-warning' : 'pill-neutral')}>{job.state}</span>{job.error && <div className="error-text">{job.error}</div>}</td>
         <td>{job.current_file ? <div><div className="recovery-path">{job.current_file}</div><div className="progress-track" aria-label="copy progress"><i style={{ width: (total ? Math.min(100, Math.round(done / total * 100)) : 0) + '%' }} /></div><div className="muted">{fmtBytes(done)} / {fmtBytes(total)}</div></div> : <span className="muted">—</span>}</td>
-        <td>{active && <button className="small" disabled={cancel.isPending} onClick={() => cancel.mutate(job.id)}>Cancel import</button>}</td>
+        <td>{active && <CancelRecoveryImportButton id={job.id} />}</td>
       </tr>
     })}</tbody></table>}
-    {cancel.error && <div className="banner warning" role="alert">{cancel.error.message}</div>}
     <p className="muted">Cancellation waits for the active file operation to stop. Files already committed to the library remain recorded; Runner retains the source for review.</p>
   </section>
+}
+
+function CancelRecoveryImportButton({ id }: { id: string }) {
+  const qc = useQueryClient()
+  const cancel = useMutation({
+    mutationFn: () => cancelRecoveryImport(id),
+    onSuccess: async () => {
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: ['recovery-imports'] }),
+        qc.invalidateQueries({ queryKey: ['recovery-import', id] }),
+      ])
+    },
+  })
+
+  return (
+    <>
+      <button className="small" disabled={cancel.isPending} onClick={() => cancel.mutate()}>
+        {cancel.isPending ? 'Cancelling…' : 'Cancel import'}
+      </button>
+      {cancel.error && <div className="error-text" role="alert">{cancel.error.message}</div>}
+    </>
+  )
 }

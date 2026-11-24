@@ -66,6 +66,7 @@ test.describe('the page', () => {
   test('the sidebar link opens Discover with its rows and blurbs', async ({ page }) => {
     await page.goto('/')
     await page.getByRole('link', { name: 'Discover', exact: true }).click()
+    await page.getByRole('button', {name:'Browse all',exact:true}).click()
 
     await expect(page.getByRole('heading', { name: 'Discover' })).toBeVisible()
     await expect(page.locator('.discover-section').first()).toBeVisible()
@@ -82,6 +83,7 @@ test.describe('the page', () => {
 
   test('hovering a row shows its scrollbar without moving the page', async ({ page }) => {
     await page.goto('/discover')
+    await page.getByRole('button', {name:'Browse all',exact:true}).click()
     const row = page.locator('[data-list="tmdb-trending-movies"]')
     // Wait for real cards: while the row is still fetching it renders a
     // skeleton track, and that element is REPLACED when the data lands — so
@@ -104,6 +106,7 @@ test.describe('the page', () => {
 
   test('the kind tabs filter which rows are shown', async ({ page }) => {
     await page.goto('/discover')
+    await page.getByRole('button', {name:'Browse all',exact:true}).click()
     await expect(page.locator('.discover-section')).toHaveCount(TMDB_ROWS + DEKKOO_ROWS)
 
     await page.getByRole('tab', { name: /Movies/ }).click()
@@ -121,6 +124,7 @@ test.describe('the page', () => {
 
   test('a poster opens the dialog and adds to the library', async ({ page }) => {
     await page.goto('/discover')
+    await page.getByRole('button', {name:'Browse all',exact:true}).click()
 
     await page.locator('[data-list="tmdb-trending-movies"] .discover-card').first().click()
     const dialog = page.getByRole('dialog', { name: /Add Trending Test Movie/ })
@@ -137,9 +141,10 @@ test.describe('the page', () => {
 
     // ...and the card says so on the way back, without a reload.
     await page.goto('/discover')
+    await page.getByRole('button', {name:'Browse all',exact:true}).click()
     await expect(
-      page.locator('[data-list="tmdb-trending-movies"] .discover-card .pill-ok'),
-    ).toHaveText('in library')
+      page.locator('[data-list="tmdb-trending-movies"] button.discover-card').first(),
+    ).toContainText('In Curator · availability unknown')
   })
 })
 
@@ -173,6 +178,7 @@ test.describe('Trakt', () => {
     expect(boxOffice[0].posterPath).toBe('')
 
     await page.goto('/discover')
+    await page.getByRole('button', {name:'Browse all',exact:true}).click()
     await expect(page.locator('.discover-section')).toHaveCount(TMDB_ROWS + DEKKOO_ROWS + TRAKT_ROWS)
     await expect(page.locator('[data-list="trakt-boxoffice"]')).toHaveCount(1)
   })

@@ -50,6 +50,78 @@ func (e AutoSearchTargetSkipped) Valid() bool {
 	}
 }
 
+// Defines values for AvailabilityAcquisition.
+const (
+	AvailabilityAcquisitionActive  AvailabilityAcquisition = "active"
+	AvailabilityAcquisitionNone    AvailabilityAcquisition = "none"
+	AvailabilityAcquisitionUnknown AvailabilityAcquisition = "unknown"
+)
+
+// Valid indicates whether the value is a known member of the AvailabilityAcquisition enum.
+func (e AvailabilityAcquisition) Valid() bool {
+	switch e {
+	case AvailabilityAcquisitionActive:
+		return true
+	case AvailabilityAcquisitionNone:
+		return true
+	case AvailabilityAcquisitionUnknown:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for AvailabilityCatalog.
+const (
+	AvailabilityCatalogAbsent    AvailabilityCatalog = "absent"
+	AvailabilityCatalogAmbiguous AvailabilityCatalog = "ambiguous"
+	AvailabilityCatalogPresent   AvailabilityCatalog = "present"
+	AvailabilityCatalogUnknown   AvailabilityCatalog = "unknown"
+)
+
+// Valid indicates whether the value is a known member of the AvailabilityCatalog enum.
+func (e AvailabilityCatalog) Valid() bool {
+	switch e {
+	case AvailabilityCatalogAbsent:
+		return true
+	case AvailabilityCatalogAmbiguous:
+		return true
+	case AvailabilityCatalogPresent:
+		return true
+	case AvailabilityCatalogUnknown:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for AvailabilityPresence.
+const (
+	AvailabilityPresenceMissing   AvailabilityPresence = "missing"
+	AvailabilityPresenceOffloaded AvailabilityPresence = "offloaded"
+	AvailabilityPresencePartial   AvailabilityPresence = "partial"
+	AvailabilityPresencePresent   AvailabilityPresence = "present"
+	AvailabilityPresenceUnknown   AvailabilityPresence = "unknown"
+)
+
+// Valid indicates whether the value is a known member of the AvailabilityPresence enum.
+func (e AvailabilityPresence) Valid() bool {
+	switch e {
+	case AvailabilityPresenceMissing:
+		return true
+	case AvailabilityPresenceOffloaded:
+		return true
+	case AvailabilityPresencePartial:
+		return true
+	case AvailabilityPresencePresent:
+		return true
+	case AvailabilityPresenceUnknown:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for BookType.
 const (
 	Audiobook BookType = "audiobook"
@@ -145,22 +217,22 @@ func (e DeliveryStatus) Valid() bool {
 
 // Defines values for DeploymentDrainStatusPhase.
 const (
-	Accepting DeploymentDrainStatusPhase = "accepting"
-	Drained   DeploymentDrainStatusPhase = "drained"
-	Draining  DeploymentDrainStatusPhase = "draining"
-	Stopping  DeploymentDrainStatusPhase = "stopping"
+	DeploymentDrainStatusPhaseAccepting DeploymentDrainStatusPhase = "accepting"
+	DeploymentDrainStatusPhaseDrained   DeploymentDrainStatusPhase = "drained"
+	DeploymentDrainStatusPhaseDraining  DeploymentDrainStatusPhase = "draining"
+	DeploymentDrainStatusPhaseStopping  DeploymentDrainStatusPhase = "stopping"
 )
 
 // Valid indicates whether the value is a known member of the DeploymentDrainStatusPhase enum.
 func (e DeploymentDrainStatusPhase) Valid() bool {
 	switch e {
-	case Accepting:
+	case DeploymentDrainStatusPhaseAccepting:
 		return true
-	case Drained:
+	case DeploymentDrainStatusPhaseDrained:
 		return true
-	case Draining:
+	case DeploymentDrainStatusPhaseDraining:
 		return true
-	case Stopping:
+	case DeploymentDrainStatusPhaseStopping:
 		return true
 	default:
 		return false
@@ -407,6 +479,36 @@ func (e HealthStatus) Valid() bool {
 	case HealthStatusOk:
 		return true
 	case HealthStatusWarning:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ImportActivityItemCategory.
+const (
+	ImportActivityItemCategoryActive    ImportActivityItemCategory = "active"
+	ImportActivityItemCategoryAttention ImportActivityItemCategory = "attention"
+	ImportActivityItemCategoryHistory   ImportActivityItemCategory = "history"
+	ImportActivityItemCategoryImported  ImportActivityItemCategory = "imported"
+	ImportActivityItemCategoryProgress  ImportActivityItemCategory = "progress"
+	ImportActivityItemCategoryQueued    ImportActivityItemCategory = "queued"
+)
+
+// Valid indicates whether the value is a known member of the ImportActivityItemCategory enum.
+func (e ImportActivityItemCategory) Valid() bool {
+	switch e {
+	case ImportActivityItemCategoryActive:
+		return true
+	case ImportActivityItemCategoryAttention:
+		return true
+	case ImportActivityItemCategoryHistory:
+		return true
+	case ImportActivityItemCategoryImported:
+		return true
+	case ImportActivityItemCategoryProgress:
+		return true
+	case ImportActivityItemCategoryQueued:
 		return true
 	default:
 		return false
@@ -779,10 +881,183 @@ func (e NotifierInputType) Valid() bool {
 	}
 }
 
+// Defines values for OffloadBlockedReason.
+const (
+	OffloadBlockedReasonDownload    OffloadBlockedReason = "download"
+	OffloadBlockedReasonImport      OffloadBlockedReason = "import"
+	OffloadBlockedReasonOffload     OffloadBlockedReason = "offload"
+	OffloadBlockedReasonRematch     OffloadBlockedReason = "rematch"
+	OffloadBlockedReasonReplacement OffloadBlockedReason = "replacement"
+	OffloadBlockedReasonUnmounted   OffloadBlockedReason = "unmounted"
+)
+
+// Valid indicates whether the value is a known member of the OffloadBlockedReason enum.
+func (e OffloadBlockedReason) Valid() bool {
+	switch e {
+	case OffloadBlockedReasonDownload:
+		return true
+	case OffloadBlockedReasonImport:
+		return true
+	case OffloadBlockedReasonOffload:
+		return true
+	case OffloadBlockedReasonRematch:
+		return true
+	case OffloadBlockedReasonReplacement:
+		return true
+	case OffloadBlockedReasonUnmounted:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for OffloadFileKind.
+const (
+	Media   OffloadFileKind = "media"
+	Sidecar OffloadFileKind = "sidecar"
+)
+
+// Valid indicates whether the value is a known member of the OffloadFileKind enum.
+func (e OffloadFileKind) Valid() bool {
+	switch e {
+	case Media:
+		return true
+	case Sidecar:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for OffloadOperationScope.
+const (
+	OffloadOperationScopeEpisode OffloadOperationScope = "episode"
+	OffloadOperationScopeItem    OffloadOperationScope = "item"
+	OffloadOperationScopeSeason  OffloadOperationScope = "season"
+)
+
+// Valid indicates whether the value is a known member of the OffloadOperationScope enum.
+func (e OffloadOperationScope) Valid() bool {
+	switch e {
+	case OffloadOperationScopeEpisode:
+		return true
+	case OffloadOperationScopeItem:
+		return true
+	case OffloadOperationScopeSeason:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for OffloadOperationState.
+const (
+	OffloadOperationStateCancelled   OffloadOperationState = "cancelled"
+	OffloadOperationStateComplete    OffloadOperationState = "complete"
+	OffloadOperationStateDeleting    OffloadOperationState = "deleting"
+	OffloadOperationStateFailed      OffloadOperationState = "failed"
+	OffloadOperationStateNeedsReview OffloadOperationState = "needs_review"
+	OffloadOperationStateQueued      OffloadOperationState = "queued"
+	OffloadOperationStateRetrying    OffloadOperationState = "retrying"
+	OffloadOperationStateStopping    OffloadOperationState = "stopping"
+	OffloadOperationStateWaiting     OffloadOperationState = "waiting"
+)
+
+// Valid indicates whether the value is a known member of the OffloadOperationState enum.
+func (e OffloadOperationState) Valid() bool {
+	switch e {
+	case OffloadOperationStateCancelled:
+		return true
+	case OffloadOperationStateComplete:
+		return true
+	case OffloadOperationStateDeleting:
+		return true
+	case OffloadOperationStateFailed:
+		return true
+	case OffloadOperationStateNeedsReview:
+		return true
+	case OffloadOperationStateQueued:
+		return true
+	case OffloadOperationStateRetrying:
+		return true
+	case OffloadOperationStateStopping:
+		return true
+	case OffloadOperationStateWaiting:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for OffloadPreviewScope.
+const (
+	OffloadPreviewScopeEpisode OffloadPreviewScope = "episode"
+	OffloadPreviewScopeItem    OffloadPreviewScope = "item"
+	OffloadPreviewScopeSeason  OffloadPreviewScope = "season"
+)
+
+// Valid indicates whether the value is a known member of the OffloadPreviewScope enum.
+func (e OffloadPreviewScope) Valid() bool {
+	switch e {
+	case OffloadPreviewScopeEpisode:
+		return true
+	case OffloadPreviewScopeItem:
+		return true
+	case OffloadPreviewScopeSeason:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for OffloadRequestScope.
+const (
+	OffloadRequestScopeEpisode OffloadRequestScope = "episode"
+	OffloadRequestScopeItem    OffloadRequestScope = "item"
+	OffloadRequestScopeSeason  OffloadRequestScope = "season"
+)
+
+// Valid indicates whether the value is a known member of the OffloadRequestScope enum.
+func (e OffloadRequestScope) Valid() bool {
+	switch e {
+	case OffloadRequestScopeEpisode:
+		return true
+	case OffloadRequestScopeItem:
+		return true
+	case OffloadRequestScopeSeason:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for PipelineTimingKind.
+const (
+	FailureToNextGrab     PipelineTimingKind = "failure_to_next_grab"
+	ImportToCinemaVisible PipelineTimingKind = "import_to_cinema_visible"
+	RunnerDoneToImport    PipelineTimingKind = "runner_done_to_import"
+)
+
+// Valid indicates whether the value is a known member of the PipelineTimingKind enum.
+func (e PipelineTimingKind) Valid() bool {
+	switch e {
+	case FailureToNextGrab:
+		return true
+	case ImportToCinemaVisible:
+		return true
+	case RunnerDoneToImport:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for PlurxWatchedEventKind.
 const (
 	PlurxWatchedEventKindEpisode PlurxWatchedEventKind = "episode"
 	PlurxWatchedEventKindMovie   PlurxWatchedEventKind = "movie"
+	PlurxWatchedEventKindSeason  PlurxWatchedEventKind = "season"
+	PlurxWatchedEventKindShow    PlurxWatchedEventKind = "show"
 )
 
 // Valid indicates whether the value is a known member of the PlurxWatchedEventKind enum.
@@ -791,6 +1066,10 @@ func (e PlurxWatchedEventKind) Valid() bool {
 	case PlurxWatchedEventKindEpisode:
 		return true
 	case PlurxWatchedEventKindMovie:
+		return true
+	case PlurxWatchedEventKindSeason:
+		return true
+	case PlurxWatchedEventKindShow:
 		return true
 	default:
 		return false
@@ -884,6 +1163,57 @@ func (e QueueItemSubmissionPhase) Valid() bool {
 	}
 }
 
+// Defines values for QueuePublicationCleanupState.
+const (
+	QueuePublicationCleanupStateQueued  QueuePublicationCleanupState = "queued"
+	QueuePublicationCleanupStateRunning QueuePublicationCleanupState = "running"
+)
+
+// Valid indicates whether the value is a known member of the QueuePublicationCleanupState enum.
+func (e QueuePublicationCleanupState) Valid() bool {
+	switch e {
+	case QueuePublicationCleanupStateQueued:
+		return true
+	case QueuePublicationCleanupStateRunning:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ReacquireResultState.
+const (
+	ReacquireResultStateDownloading  ReacquireResultState = "downloading"
+	ReacquireResultStateImporting    ReacquireResultState = "importing"
+	ReacquireResultStateNotOffloaded ReacquireResultState = "not_offloaded"
+	ReacquireResultStateOffloaded    ReacquireResultState = "offloaded"
+	ReacquireResultStateOffloading   ReacquireResultState = "offloading"
+	ReacquireResultStateOnDisk       ReacquireResultState = "on_disk"
+	ReacquireResultStateSearching    ReacquireResultState = "searching"
+)
+
+// Valid indicates whether the value is a known member of the ReacquireResultState enum.
+func (e ReacquireResultState) Valid() bool {
+	switch e {
+	case ReacquireResultStateDownloading:
+		return true
+	case ReacquireResultStateImporting:
+		return true
+	case ReacquireResultStateNotOffloaded:
+		return true
+	case ReacquireResultStateOffloaded:
+		return true
+	case ReacquireResultStateOffloading:
+		return true
+	case ReacquireResultStateOnDisk:
+		return true
+	case ReacquireResultStateSearching:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for RecommendationFiltersTheme.
 const (
 	ComingOfAge      RecommendationFiltersTheme = "coming_of_age"
@@ -934,16 +1264,16 @@ func (e RecommendationRequestKind) Valid() bool {
 
 // Defines values for RecommendationResponseCoverage.
 const (
-	Bounded RecommendationResponseCoverage = "bounded"
-	Partial RecommendationResponseCoverage = "partial"
+	RecommendationResponseCoverageBounded RecommendationResponseCoverage = "bounded"
+	RecommendationResponseCoveragePartial RecommendationResponseCoverage = "partial"
 )
 
 // Valid indicates whether the value is a known member of the RecommendationResponseCoverage enum.
 func (e RecommendationResponseCoverage) Valid() bool {
 	switch e {
-	case Bounded:
+	case RecommendationResponseCoverageBounded:
 		return true
-	case Partial:
+	case RecommendationResponseCoveragePartial:
 		return true
 	default:
 		return false
@@ -1151,6 +1481,108 @@ func (e ReleaseHDRElType) Valid() bool {
 	}
 }
 
+// Defines values for RematchBlockedReason.
+const (
+	RematchBlockedReasonDownload    RematchBlockedReason = "download"
+	RematchBlockedReasonImport      RematchBlockedReason = "import"
+	RematchBlockedReasonOffload     RematchBlockedReason = "offload"
+	RematchBlockedReasonRematch     RematchBlockedReason = "rematch"
+	RematchBlockedReasonReplacement RematchBlockedReason = "replacement"
+)
+
+// Valid indicates whether the value is a known member of the RematchBlockedReason enum.
+func (e RematchBlockedReason) Valid() bool {
+	switch e {
+	case RematchBlockedReasonDownload:
+		return true
+	case RematchBlockedReasonImport:
+		return true
+	case RematchBlockedReasonOffload:
+		return true
+	case RematchBlockedReasonRematch:
+		return true
+	case RematchBlockedReasonReplacement:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for RematchMoveMode.
+const (
+	Copy   RematchMoveMode = "copy"
+	Relink RematchMoveMode = "relink"
+	Rename RematchMoveMode = "rename"
+)
+
+// Valid indicates whether the value is a known member of the RematchMoveMode enum.
+func (e RematchMoveMode) Valid() bool {
+	switch e {
+	case Copy:
+		return true
+	case Relink:
+		return true
+	case Rename:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for RematchOperationState.
+const (
+	RematchOperationStateCancelPending RematchOperationState = "cancel_pending"
+	RematchOperationStateCancelled     RematchOperationState = "cancelled"
+	RematchOperationStateCommitted     RematchOperationState = "committed"
+	RematchOperationStateComplete      RematchOperationState = "complete"
+	RematchOperationStateFailed        RematchOperationState = "failed"
+	RematchOperationStateMoved         RematchOperationState = "moved"
+	RematchOperationStateMoving        RematchOperationState = "moving"
+	RematchOperationStatePlanned       RematchOperationState = "planned"
+)
+
+// Valid indicates whether the value is a known member of the RematchOperationState enum.
+func (e RematchOperationState) Valid() bool {
+	switch e {
+	case RematchOperationStateCancelPending:
+		return true
+	case RematchOperationStateCancelled:
+		return true
+	case RematchOperationStateCommitted:
+		return true
+	case RematchOperationStateComplete:
+		return true
+	case RematchOperationStateFailed:
+		return true
+	case RematchOperationStateMoved:
+		return true
+	case RematchOperationStateMoving:
+		return true
+	case RematchOperationStatePlanned:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for RematchPreviewSourceOutcome.
+const (
+	Removed RematchPreviewSourceOutcome = "removed"
+	Stays   RematchPreviewSourceOutcome = "stays"
+)
+
+// Valid indicates whether the value is a known member of the RematchPreviewSourceOutcome enum.
+func (e RematchPreviewSourceOutcome) Valid() bool {
+	switch e {
+	case Removed:
+		return true
+	case Stays:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ReplacementRequestIntent.
 const (
 	ReplaceBad     ReplacementRequestIntent = "replace_bad"
@@ -1171,16 +1603,16 @@ func (e ReplacementRequestIntent) Valid() bool {
 
 // Defines values for ReplacementRequestScope.
 const (
-	Download ReplacementRequestScope = "download"
-	Episodes ReplacementRequestScope = "episodes"
+	ReplacementRequestScopeDownload ReplacementRequestScope = "download"
+	ReplacementRequestScopeEpisodes ReplacementRequestScope = "episodes"
 )
 
 // Valid indicates whether the value is a known member of the ReplacementRequestScope enum.
 func (e ReplacementRequestScope) Valid() bool {
 	switch e {
-	case Download:
+	case ReplacementRequestScopeDownload:
 		return true
-	case Episodes:
+	case ReplacementRequestScopeEpisodes:
 		return true
 	default:
 		return false
@@ -1240,17 +1672,20 @@ func (e ScanStatusState) Valid() bool {
 
 // Defines values for SeriesMonitorMode.
 const (
-	SeriesMonitorModeAll        SeriesMonitorMode = "all"
-	SeriesMonitorModeFuture     SeriesMonitorMode = "future"
-	SeriesMonitorModeLatest     SeriesMonitorMode = "latest"
-	SeriesMonitorModeNewSeasons SeriesMonitorMode = "new_seasons"
-	SeriesMonitorModeNone       SeriesMonitorMode = "none"
+	SeriesMonitorModeAll         SeriesMonitorMode = "all"
+	SeriesMonitorModeFirstSeason SeriesMonitorMode = "first_season"
+	SeriesMonitorModeFuture      SeriesMonitorMode = "future"
+	SeriesMonitorModeLatest      SeriesMonitorMode = "latest"
+	SeriesMonitorModeNewSeasons  SeriesMonitorMode = "new_seasons"
+	SeriesMonitorModeNone        SeriesMonitorMode = "none"
 )
 
 // Valid indicates whether the value is a known member of the SeriesMonitorMode enum.
 func (e SeriesMonitorMode) Valid() bool {
 	switch e {
 	case SeriesMonitorModeAll:
+		return true
+	case SeriesMonitorModeFirstSeason:
 		return true
 	case SeriesMonitorModeFuture:
 		return true
@@ -1259,6 +1694,237 @@ func (e SeriesMonitorMode) Valid() bool {
 	case SeriesMonitorModeNewSeasons:
 		return true
 	case SeriesMonitorModeNone:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for StatusHeadlineState.
+const (
+	StatusHeadlineStateActive  StatusHeadlineState = "active"
+	StatusHeadlineStateDone    StatusHeadlineState = "done"
+	StatusHeadlineStateFailed  StatusHeadlineState = "failed"
+	StatusHeadlineStateTodo    StatusHeadlineState = "todo"
+	StatusHeadlineStateWaiting StatusHeadlineState = "waiting"
+)
+
+// Valid indicates whether the value is a known member of the StatusHeadlineState enum.
+func (e StatusHeadlineState) Valid() bool {
+	switch e {
+	case StatusHeadlineStateActive:
+		return true
+	case StatusHeadlineStateDone:
+		return true
+	case StatusHeadlineStateFailed:
+		return true
+	case StatusHeadlineStateTodo:
+		return true
+	case StatusHeadlineStateWaiting:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for StatusOffloadScope.
+const (
+	StatusOffloadScopeEpisode StatusOffloadScope = "episode"
+	StatusOffloadScopeItem    StatusOffloadScope = "item"
+	StatusOffloadScopeSeason  StatusOffloadScope = "season"
+)
+
+// Valid indicates whether the value is a known member of the StatusOffloadScope enum.
+func (e StatusOffloadScope) Valid() bool {
+	switch e {
+	case StatusOffloadScopeEpisode:
+		return true
+	case StatusOffloadScopeItem:
+		return true
+	case StatusOffloadScopeSeason:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for StatusOffloadState.
+const (
+	StatusOffloadStateCancelled   StatusOffloadState = "cancelled"
+	StatusOffloadStateComplete    StatusOffloadState = "complete"
+	StatusOffloadStateDeleting    StatusOffloadState = "deleting"
+	StatusOffloadStateFailed      StatusOffloadState = "failed"
+	StatusOffloadStateNeedsReview StatusOffloadState = "needs_review"
+	StatusOffloadStateQueued      StatusOffloadState = "queued"
+	StatusOffloadStateRetrying    StatusOffloadState = "retrying"
+	StatusOffloadStateStopping    StatusOffloadState = "stopping"
+	StatusOffloadStateWaiting     StatusOffloadState = "waiting"
+)
+
+// Valid indicates whether the value is a known member of the StatusOffloadState enum.
+func (e StatusOffloadState) Valid() bool {
+	switch e {
+	case StatusOffloadStateCancelled:
+		return true
+	case StatusOffloadStateComplete:
+		return true
+	case StatusOffloadStateDeleting:
+		return true
+	case StatusOffloadStateFailed:
+		return true
+	case StatusOffloadStateNeedsReview:
+		return true
+	case StatusOffloadStateQueued:
+		return true
+	case StatusOffloadStateRetrying:
+		return true
+	case StatusOffloadStateStopping:
+		return true
+	case StatusOffloadStateWaiting:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for StatusRematchRole.
+const (
+	StatusRematchRoleSource StatusRematchRole = "source"
+	StatusRematchRoleTarget StatusRematchRole = "target"
+)
+
+// Valid indicates whether the value is a known member of the StatusRematchRole enum.
+func (e StatusRematchRole) Valid() bool {
+	switch e {
+	case StatusRematchRoleSource:
+		return true
+	case StatusRematchRoleTarget:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for StatusRematchState.
+const (
+	StatusRematchStateCancelPending StatusRematchState = "cancel_pending"
+	StatusRematchStateCancelled     StatusRematchState = "cancelled"
+	StatusRematchStateCommitted     StatusRematchState = "committed"
+	StatusRematchStateComplete      StatusRematchState = "complete"
+	StatusRematchStateFailed        StatusRematchState = "failed"
+	StatusRematchStateMoved         StatusRematchState = "moved"
+	StatusRematchStateMoving        StatusRematchState = "moving"
+	StatusRematchStatePlanned       StatusRematchState = "planned"
+)
+
+// Valid indicates whether the value is a known member of the StatusRematchState enum.
+func (e StatusRematchState) Valid() bool {
+	switch e {
+	case StatusRematchStateCancelPending:
+		return true
+	case StatusRematchStateCancelled:
+		return true
+	case StatusRematchStateCommitted:
+		return true
+	case StatusRematchStateComplete:
+		return true
+	case StatusRematchStateFailed:
+		return true
+	case StatusRematchStateMoved:
+		return true
+	case StatusRematchStateMoving:
+		return true
+	case StatusRematchStatePlanned:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for StatusStageActions.
+const (
+	CancelDownload    StatusStageActions = "cancel_download"
+	ConfirmCinema     StatusStageActions = "confirm_cinema"
+	InteractiveSearch StatusStageActions = "interactive_search"
+	OpenActivity      StatusStageActions = "open_activity"
+	ResendCinema      StatusStageActions = "resend_cinema"
+	RetryImport       StatusStageActions = "retry_import"
+	Search            StatusStageActions = "search"
+)
+
+// Valid indicates whether the value is a known member of the StatusStageActions enum.
+func (e StatusStageActions) Valid() bool {
+	switch e {
+	case CancelDownload:
+		return true
+	case ConfirmCinema:
+		return true
+	case InteractiveSearch:
+		return true
+	case OpenActivity:
+		return true
+	case ResendCinema:
+		return true
+	case RetryImport:
+		return true
+	case Search:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for StatusStageKey.
+const (
+	StatusStageKeyCinemaNotified StatusStageKey = "cinema_notified"
+	StatusStageKeyDownloading    StatusStageKey = "downloading"
+	StatusStageKeyInCinema       StatusStageKey = "in_cinema"
+	StatusStageKeyMoved          StatusStageKey = "moved"
+	StatusStageKeyProcessed      StatusStageKey = "processed"
+	StatusStageKeySearched       StatusStageKey = "searched"
+)
+
+// Valid indicates whether the value is a known member of the StatusStageKey enum.
+func (e StatusStageKey) Valid() bool {
+	switch e {
+	case StatusStageKeyCinemaNotified:
+		return true
+	case StatusStageKeyDownloading:
+		return true
+	case StatusStageKeyInCinema:
+		return true
+	case StatusStageKeyMoved:
+		return true
+	case StatusStageKeyProcessed:
+		return true
+	case StatusStageKeySearched:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for StatusStageState.
+const (
+	StatusStageStateActive  StatusStageState = "active"
+	StatusStageStateDone    StatusStageState = "done"
+	StatusStageStateFailed  StatusStageState = "failed"
+	StatusStageStateTodo    StatusStageState = "todo"
+	StatusStageStateWaiting StatusStageState = "waiting"
+)
+
+// Valid indicates whether the value is a known member of the StatusStageState enum.
+func (e StatusStageState) Valid() bool {
+	switch e {
+	case StatusStageStateActive:
+		return true
+	case StatusStageStateDone:
+		return true
+	case StatusStageStateFailed:
+		return true
+	case StatusStageStateTodo:
+		return true
+	case StatusStageStateWaiting:
 		return true
 	default:
 		return false
@@ -1291,19 +1957,19 @@ func (e TitleAliasRole) Valid() bool {
 
 // Defines values for TitleAliasScope.
 const (
-	Season               TitleAliasScope = "season"
-	UnsupportedNumbering TitleAliasScope = "unsupported_numbering"
-	Work                 TitleAliasScope = "work"
+	TitleAliasScopeSeason               TitleAliasScope = "season"
+	TitleAliasScopeUnsupportedNumbering TitleAliasScope = "unsupported_numbering"
+	TitleAliasScopeWork                 TitleAliasScope = "work"
 )
 
 // Valid indicates whether the value is a known member of the TitleAliasScope enum.
 func (e TitleAliasScope) Valid() bool {
 	switch e {
-	case Season:
+	case TitleAliasScopeSeason:
 		return true
-	case UnsupportedNumbering:
+	case TitleAliasScopeUnsupportedNumbering:
 		return true
-	case Work:
+	case TitleAliasScopeWork:
 		return true
 	default:
 		return false
@@ -1312,9 +1978,10 @@ func (e TitleAliasScope) Valid() bool {
 
 // Defines values for TransferStage.
 const (
-	TransferStageDownloading TransferStage = "downloading"
-	TransferStageImporting   TransferStage = "importing"
-	TransferStageNotifying   TransferStage = "notifying"
+	TransferStageDownloading        TransferStage = "downloading"
+	TransferStageImporting          TransferStage = "importing"
+	TransferStageNotifying          TransferStage = "notifying"
+	TransferStagePublicationCleanup TransferStage = "publication_cleanup"
 )
 
 // Valid indicates whether the value is a known member of the TransferStage enum.
@@ -1325,6 +1992,8 @@ func (e TransferStage) Valid() bool {
 	case TransferStageImporting:
 		return true
 	case TransferStageNotifying:
+		return true
+	case TransferStagePublicationCleanup:
 		return true
 	default:
 		return false
@@ -1541,6 +2210,183 @@ func (e WantedSearchScopeScope) Valid() bool {
 	}
 }
 
+// Defines values for ListActivityParamsView.
+const (
+	ListActivityParamsViewAttention ListActivityParamsView = "attention"
+	ListActivityParamsViewHistory   ListActivityParamsView = "history"
+	ListActivityParamsViewProgress  ListActivityParamsView = "progress"
+)
+
+// Valid indicates whether the value is a known member of the ListActivityParamsView enum.
+func (e ListActivityParamsView) Valid() bool {
+	switch e {
+	case ListActivityParamsViewAttention:
+		return true
+	case ListActivityParamsViewHistory:
+		return true
+	case ListActivityParamsViewProgress:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ListActivityParamsScope.
+const (
+	ListActivityParamsScopeAll     ListActivityParamsScope = "all"
+	ListActivityParamsScopeImports ListActivityParamsScope = "imports"
+)
+
+// Valid indicates whether the value is a known member of the ListActivityParamsScope enum.
+func (e ListActivityParamsScope) Valid() bool {
+	switch e {
+	case ListActivityParamsScopeAll:
+		return true
+	case ListActivityParamsScopeImports:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for GetLibraryDiscoveryItemsParamsKind.
+const (
+	GetLibraryDiscoveryItemsParamsKindMovie  GetLibraryDiscoveryItemsParamsKind = "movie"
+	GetLibraryDiscoveryItemsParamsKindSeries GetLibraryDiscoveryItemsParamsKind = "series"
+)
+
+// Valid indicates whether the value is a known member of the GetLibraryDiscoveryItemsParamsKind enum.
+func (e GetLibraryDiscoveryItemsParamsKind) Valid() bool {
+	switch e {
+	case GetLibraryDiscoveryItemsParamsKindMovie:
+		return true
+	case GetLibraryDiscoveryItemsParamsKindSeries:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for GetLibraryDiscoveryItemsParamsShelf.
+const (
+	Collection GetLibraryDiscoveryItemsParamsShelf = "collection"
+	Related    GetLibraryDiscoveryItemsParamsShelf = "related"
+)
+
+// Valid indicates whether the value is a known member of the GetLibraryDiscoveryItemsParamsShelf enum.
+func (e GetLibraryDiscoveryItemsParamsShelf) Valid() bool {
+	switch e {
+	case Collection:
+		return true
+	case Related:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for SetPublicationCleanupJSONBodyAction.
+const (
+	Pause  SetPublicationCleanupJSONBodyAction = "pause"
+	Resume SetPublicationCleanupJSONBodyAction = "resume"
+)
+
+// Valid indicates whether the value is a known member of the SetPublicationCleanupJSONBodyAction enum.
+func (e SetPublicationCleanupJSONBodyAction) Valid() bool {
+	switch e {
+	case Pause:
+		return true
+	case Resume:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for SearchHouseholdCatalogueParamsKind.
+const (
+	SearchHouseholdCatalogueParamsKindMovie  SearchHouseholdCatalogueParamsKind = "movie"
+	SearchHouseholdCatalogueParamsKindSeries SearchHouseholdCatalogueParamsKind = "series"
+)
+
+// Valid indicates whether the value is a known member of the SearchHouseholdCatalogueParamsKind enum.
+func (e SearchHouseholdCatalogueParamsKind) Valid() bool {
+	switch e {
+	case SearchHouseholdCatalogueParamsKindMovie:
+		return true
+	case SearchHouseholdCatalogueParamsKindSeries:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for SubmitHouseholdRequestJSONBodyKind.
+const (
+	SubmitHouseholdRequestJSONBodyKindMovie  SubmitHouseholdRequestJSONBodyKind = "movie"
+	SubmitHouseholdRequestJSONBodyKindSeries SubmitHouseholdRequestJSONBodyKind = "series"
+)
+
+// Valid indicates whether the value is a known member of the SubmitHouseholdRequestJSONBodyKind enum.
+func (e SubmitHouseholdRequestJSONBodyKind) Valid() bool {
+	switch e {
+	case SubmitHouseholdRequestJSONBodyKindMovie:
+		return true
+	case SubmitHouseholdRequestJSONBodyKindSeries:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for GetHouseholdTitleParamsKind.
+const (
+	GetHouseholdTitleParamsKindMovie  GetHouseholdTitleParamsKind = "movie"
+	GetHouseholdTitleParamsKindSeries GetHouseholdTitleParamsKind = "series"
+)
+
+// Valid indicates whether the value is a known member of the GetHouseholdTitleParamsKind enum.
+func (e GetHouseholdTitleParamsKind) Valid() bool {
+	switch e {
+	case GetHouseholdTitleParamsKindMovie:
+		return true
+	case GetHouseholdTitleParamsKindSeries:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ListImportActivityParamsFilter.
+const (
+	ListImportActivityParamsFilterActive    ListImportActivityParamsFilter = "active"
+	ListImportActivityParamsFilterAll       ListImportActivityParamsFilter = "all"
+	ListImportActivityParamsFilterAttention ListImportActivityParamsFilter = "attention"
+	ListImportActivityParamsFilterHistory   ListImportActivityParamsFilter = "history"
+	ListImportActivityParamsFilterImported  ListImportActivityParamsFilter = "imported"
+	ListImportActivityParamsFilterQueued    ListImportActivityParamsFilter = "queued"
+)
+
+// Valid indicates whether the value is a known member of the ListImportActivityParamsFilter enum.
+func (e ListImportActivityParamsFilter) Valid() bool {
+	switch e {
+	case ListImportActivityParamsFilterActive:
+		return true
+	case ListImportActivityParamsFilterAll:
+		return true
+	case ListImportActivityParamsFilterAttention:
+		return true
+	case ListImportActivityParamsFilterHistory:
+		return true
+	case ListImportActivityParamsFilterImported:
+		return true
+	case ListImportActivityParamsFilterQueued:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ListQueueParamsFilter.
 const (
 	ListQueueParamsFilterActive   ListQueueParamsFilter = "active"
@@ -1560,6 +2406,84 @@ func (e ListQueueParamsFilter) Valid() bool {
 	default:
 		return false
 	}
+}
+
+// Defines values for ResolveImportReviewJSONBodyAction.
+const (
+	CleanupStages       ResolveImportReviewJSONBodyAction = "cleanup_stages"
+	OperatorAdopted     ResolveImportReviewJSONBodyAction = "operator_adopted"
+	OperatorDisposed    ResolveImportReviewJSONBodyAction = "operator_disposed"
+	PreviewStageCleanup ResolveImportReviewJSONBodyAction = "preview_stage_cleanup"
+	RetainUncertain     ResolveImportReviewJSONBodyAction = "retain_uncertain"
+)
+
+// Valid indicates whether the value is a known member of the ResolveImportReviewJSONBodyAction enum.
+func (e ResolveImportReviewJSONBodyAction) Valid() bool {
+	switch e {
+	case CleanupStages:
+		return true
+	case OperatorAdopted:
+		return true
+	case OperatorDisposed:
+		return true
+	case PreviewStageCleanup:
+		return true
+	case RetainUncertain:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for PlurxWebhook200JSONResponseBodyState.
+const (
+	PlurxWebhook200JSONResponseBodyStateDownloading  PlurxWebhook200JSONResponseBodyState = "downloading"
+	PlurxWebhook200JSONResponseBodyStateImporting    PlurxWebhook200JSONResponseBodyState = "importing"
+	PlurxWebhook200JSONResponseBodyStateNotFound     PlurxWebhook200JSONResponseBodyState = "not_found"
+	PlurxWebhook200JSONResponseBodyStateNotOffloaded PlurxWebhook200JSONResponseBodyState = "not_offloaded"
+	PlurxWebhook200JSONResponseBodyStateOffloaded    PlurxWebhook200JSONResponseBodyState = "offloaded"
+	PlurxWebhook200JSONResponseBodyStateOffloading   PlurxWebhook200JSONResponseBodyState = "offloading"
+	PlurxWebhook200JSONResponseBodyStateOnDisk       PlurxWebhook200JSONResponseBodyState = "on_disk"
+	PlurxWebhook200JSONResponseBodyStateSearching    PlurxWebhook200JSONResponseBodyState = "searching"
+)
+
+// Valid indicates whether the value is a known member of the PlurxWebhook200JSONResponseBodyState enum.
+func (e PlurxWebhook200JSONResponseBodyState) Valid() bool {
+	switch e {
+	case PlurxWebhook200JSONResponseBodyStateDownloading:
+		return true
+	case PlurxWebhook200JSONResponseBodyStateImporting:
+		return true
+	case PlurxWebhook200JSONResponseBodyStateNotFound:
+		return true
+	case PlurxWebhook200JSONResponseBodyStateNotOffloaded:
+		return true
+	case PlurxWebhook200JSONResponseBodyStateOffloaded:
+		return true
+	case PlurxWebhook200JSONResponseBodyStateOffloading:
+		return true
+	case PlurxWebhook200JSONResponseBodyStateOnDisk:
+		return true
+	case PlurxWebhook200JSONResponseBodyStateSearching:
+		return true
+	default:
+		return false
+	}
+}
+
+// ActivityAction defines model for ActivityAction.
+type ActivityAction struct {
+	Enabled bool    `json:"enabled"`
+	Kind    string  `json:"kind"`
+	Label   string  `json:"label"`
+	Reason  *string `json:"reason,omitempty"`
+}
+
+// ActivityIdentity defines model for ActivityIdentity.
+type ActivityIdentity struct {
+	Epoch         string `json:"epoch"`
+	GenerationKey string `json:"generationKey"`
+	Id            int64  `json:"id"`
 }
 
 // AddAliasRequest defines model for AddAliasRequest.
@@ -1583,7 +2507,7 @@ type AddMediaRequest struct {
 	ImdbId *string   `json:"imdbId,omitempty"`
 	Kind   MediaKind `json:"kind"`
 
-	// Monitor Persistent series policy. Applying a mode resets existing selections. All selects everything; latest selects the latest and later seasons; future selects episodes airing today or later; new_seasons selects seasons after the last season started before today; none clears selections. Specials start unmonitored. Refresh preserves manual selections.
+	// Monitor Persistent series policy. Applying a mode resets existing selections. All selects everything; latest selects the latest and later seasons; future selects episodes airing today or later; new_seasons selects seasons after the last season started before today; first_season selects only the lowest regular season (season 1 when none is known yet) and later seasons arrive unmonitored, ready to monitor or Re-acquire; none clears selections. Specials start unmonitored. Refresh preserves manual selections.
 	Monitor   *SeriesMonitorMode `json:"monitor,omitempty"`
 	Monitored *bool              `json:"monitored,omitempty"`
 
@@ -1670,6 +2594,42 @@ type AutoSearchTarget struct {
 
 // AutoSearchTargetSkipped Set when the target was not searched, and why. "unmonitored" means monitoring is off for it; "downloading" means it already has a download in progress; "compared_recently" means this season's comparison completed too recently to repeat, so nothing was queued. Exact Wanted runs can additionally report a target that disappeared, changed reason, reached its re-grab cap, or was left by cancellation.
 type AutoSearchTargetSkipped string
+
+// Availability Read-only primary-copy facts, independent of requests and playback readiness. Series counts cover known aired regular episodes. First-run, failed, changed or older-than-13h observations are unknown.
+type Availability struct {
+	Acquisition   AvailabilityAcquisition `json:"acquisition"`
+	Catalog       AvailabilityCatalog     `json:"catalog"`
+	CheckedAt     *time.Time              `json:"checkedAt,omitempty"`
+	CopyId        int64                   `json:"copyId"`
+	Expected      int                     `json:"expected"`
+	LibraryItemId *int64                  `json:"libraryItemId,omitempty"`
+	Offloaded     int                     `json:"offloaded"`
+	Presence      AvailabilityPresence    `json:"presence"`
+	Present       int                     `json:"present"`
+	Reason        *string                 `json:"reason,omitempty"`
+	Seasons       *[]SeasonAvailability   `json:"seasons,omitempty"`
+}
+
+// AvailabilityAcquisition defines model for Availability.Acquisition.
+type AvailabilityAcquisition string
+
+// AvailabilityCatalog defines model for Availability.Catalog.
+type AvailabilityCatalog string
+
+// AvailabilityPresence defines model for Availability.Presence.
+type AvailabilityPresence string
+
+// AvailabilityTarget defines model for AvailabilityTarget.
+type AvailabilityTarget struct {
+	Asin          *string   `json:"asin,omitempty"`
+	ImdbId        *string   `json:"imdbId,omitempty"`
+	Isbn13        *string   `json:"isbn13,omitempty"`
+	Kind          MediaKind `json:"kind"`
+	LibraryItemId *int64    `json:"libraryItemId,omitempty"`
+	Olid          *string   `json:"olid,omitempty"`
+	TmdbId        *int64    `json:"tmdbId,omitempty"`
+	TvdbId        *int64    `json:"tvdbId,omitempty"`
+}
 
 // BackupInfo defines model for BackupInfo.
 type BackupInfo struct {
@@ -1760,22 +2720,25 @@ type ClearedCount struct {
 type CompletedEntry struct {
 	Bytes int64 `json:"bytes"`
 
-	// DeliveryManaged Runner payload governed by its accepted per-file manifest.
+	// DeliveryManaged A publication claims this directory; its files leave only by their recorded per-file outcome.
 	DeliveryManaged *bool `json:"deliveryManaged,omitempty"`
 	Files           int   `json:"files"`
 
 	// Fingerprint Recursive metadata and filesystem identity token for reviewed deletion.
 	Fingerprint string `json:"fingerprint"`
 
-	// LegacyReview Pre-delivery legacy item held for read-only review.
+	// LegacyReview Payload held for review because the storage under it was replaced.
 	LegacyReview *bool              `json:"legacyReview,omitempty"`
 	Path         string             `json:"path"`
 	Reason       string             `json:"reason"`
 	Receipts     []CompletedReceipt `json:"receipts"`
 
-	// ReviewFiles Current file metadata snapshots for review and exact selected-file operations; the accepted delivery manifest remains the deletion authority.
+	// ReviewFiles Current file metadata snapshots for exact selected-file operations. For a publication, only its unresolved files an operator may discard; the manifest digest remains the deletion authority.
 	ReviewFiles *[]CompletedReviewFile `json:"reviewFiles,omitempty"`
 	Status      string                 `json:"status"`
+
+	// WholeDeletable A publication's directory with no manifest evidence left in it (every manifest file removed, or an approved directory with none): an operator may delete it whole.
+	WholeDeletable *bool `json:"wholeDeletable,omitempty"`
 }
 
 // CompletedInventory defines model for CompletedInventory.
@@ -1789,6 +2752,8 @@ type CompletedInventory struct {
 
 // CompletedReceipt defines model for CompletedReceipt.
 type CompletedReceipt struct {
+	// Archived The operator archived cleanup for this job generation and kept its files.
+	Archived *bool `json:"archived,omitempty"`
 	ClientId int64 `json:"clientId"`
 
 	// CopyId Exact associated copy; zero means primary copy.
@@ -1820,15 +2785,21 @@ type CompletedReviewFile struct {
 
 // CompletedRoot defines model for CompletedRoot.
 type CompletedRoot struct {
-	Bytes                   int64            `json:"bytes"`
-	CheckedAt               time.Time        `json:"checkedAt"`
-	Entries                 []CompletedEntry `json:"entries"`
-	Error                   string           `json:"error"`
-	LastCompleteAt          time.Time        `json:"lastCompleteAt"`
-	ObservedStorageIdentity *string          `json:"observedStorageIdentity,omitempty"`
-	Path                    string           `json:"path"`
-	RootIdentity            string           `json:"rootIdentity"`
-	StorageIdentity         *string          `json:"storageIdentity,omitempty"`
+	Bytes     int64            `json:"bytes"`
+	CheckedAt time.Time        `json:"checkedAt"`
+	Entries   []CompletedEntry `json:"entries"`
+	Error     string           `json:"error"`
+
+	// FreeBytes Available bytes observed on the exact verified download root at checkedAt; omitted when unknown.
+	FreeBytes               *int64    `json:"freeBytes,omitempty"`
+	LastCompleteAt          time.Time `json:"lastCompleteAt"`
+	ObservedStorageIdentity *string   `json:"observedStorageIdentity,omitempty"`
+	Path                    string    `json:"path"`
+	RootIdentity            string    `json:"rootIdentity"`
+	StorageIdentity         *string   `json:"storageIdentity,omitempty"`
+
+	// TotalBytes Filesystem capacity; never summed across path aliases.
+	TotalBytes *int64 `json:"totalBytes,omitempty"`
 }
 
 // Connection defines model for Connection.
@@ -1907,21 +2878,49 @@ type DefaultProfilesUpdate struct {
 
 // Delivery defines model for Delivery.
 type Delivery struct {
-	Attempts   int64   `json:"attempts"`
-	CreatedAt  int64   `json:"createdAt"`
-	DownloadId *int64  `json:"downloadId,omitempty"`
-	Event      string  `json:"event"`
-	Id         int64   `json:"id"`
-	LastError  *string `json:"lastError,omitempty"`
+	// Attempt The attempt Cinema sees as the suffix of the request key. Reused after an ambiguous outcome, advanced after a confirmed retryable result and by Retry.
+	Attempt   *int64 `json:"attempt,omitempty"`
+	Attempts  int64  `json:"attempts"`
+	CreatedAt int64  `json:"createdAt"`
+
+	// Directory The one directory this sub-delivery tells Cinema about (pipeline contract v2 section 4.1). Absent on a chat notifier's row.
+	Directory     *string         `json:"directory,omitempty"`
+	DownloadId    *int64          `json:"downloadId,omitempty"`
+	Event         string          `json:"event"`
+	ExpectedFiles *[]ExpectedFile `json:"expectedFiles,omitempty"`
+	Id            int64           `json:"id"`
+
+	// ItemIds The Cinema item ids reported for this directory.
+	ItemIds   *[]int64 `json:"itemIds,omitempty"`
+	LastError *string  `json:"lastError,omitempty"`
 
 	// NextAt When a pending retry becomes due (epoch ms).
-	NextAt     *int64 `json:"nextAt,omitempty"`
-	NotifierId int64  `json:"notifierId"`
+	NextAt        *int64 `json:"nextAt,omitempty"`
+	NotifierId    int64  `json:"notifierId"`
+	PublicationId *int64 `json:"publicationId,omitempty"`
+
+	// RemoteRequestId Cinema's request id after it queued the scan.
+	RemoteRequestId *string `json:"remoteRequestId,omitempty"`
+
+	// RemoteState queued, running, done or failed, as Cinema last reported the request.
+	RemoteState *string `json:"remoteState,omitempty"`
+
+	// RequestKey The request key the current attempt is sent with, "<transfer>/<generation>/<dir-hash>/<attempt>".
+	RequestKey *string `json:"requestKey,omitempty"`
 
 	// Result What the far side answered on success, e.g. "scanned → plurx item 1201".
 	Result    *string        `json:"result,omitempty"`
 	Status    DeliveryStatus `json:"status"`
 	UpdatedAt int64          `json:"updatedAt"`
+
+	// VisibleAt When Cinema reported every expected file placed with matching bytes and mtime (epoch ms).
+	VisibleAt *int64 `json:"visibleAt,omitempty"`
+
+	// WaitingOn What Cinema says the queued request is waiting on (full_scan:<library>, heavy_lane:<holder>, root_unreadable:<path>, queue_position:<n>).
+	WaitingOn *string `json:"waitingOn,omitempty"`
+
+	// Warning Still pending 30 minutes after it was written — shown with waitingOn or the reason a file is not placed. Never given up on.
+	Warning *bool `json:"warning,omitempty"`
 }
 
 // DeliveryStatus defines model for Delivery.Status.
@@ -2048,7 +3047,7 @@ type DiscoverList struct {
 	Title string `json:"title"`
 }
 
-// DolbyVision The measured Dolby Vision record of a file (ADR 0026).
+// DolbyVision The measured Dolby Vision record of a file (ADR 0031).
 type DolbyVision struct {
 	Bl bool `json:"bl"`
 
@@ -2156,8 +3155,20 @@ type EpisodeInfo struct {
 	HasFile       bool   `json:"hasFile"`
 	Id            int64  `json:"id"`
 	Monitored     bool   `json:"monitored"`
-	SeasonNumber  int    `json:"seasonNumber"`
-	Title         string `json:"title"`
+
+	// Offloaded Offloaded (ADR 0028); Re-acquire is the way back.
+	Offloaded    *bool  `json:"offloaded,omitempty"`
+	SeasonNumber int    `json:"seasonNumber"`
+	Title        string `json:"title"`
+}
+
+// EpisodeTarget defines model for EpisodeTarget.
+type EpisodeTarget struct {
+	Episodes []int `json:"episodes"`
+
+	// Path Absolute path of one selected file.
+	Path   string `json:"path"`
+	Season int    `json:"season"`
 }
 
 // Error defines model for Error.
@@ -2165,6 +3176,13 @@ type Error struct {
 	// Code Stable machine-readable classification when available.
 	Code    *string `json:"code,omitempty"`
 	Message string  `json:"message"`
+}
+
+// ExpectedFile defines model for ExpectedFile.
+type ExpectedFile struct {
+	Bytes   int64  `json:"bytes"`
+	MtimeNs int64  `json:"mtimeNs"`
+	Path    string `json:"path"`
 }
 
 // ExternalIds defines model for ExternalIds.
@@ -2240,7 +3258,7 @@ type HDRDevices struct {
 	} `json:"errors"`
 }
 
-// HDRTier An HDR presentation (ADR 0026). Profiles name the first eight; dv-p7 (EL type unknown), dv (profile unknown) and the empty string (nothing known) appear only as observations.
+// HDRTier An HDR presentation (ADR 0031). Profiles name the first eight; dv-p7 (EL type unknown), dv (profile unknown) and the empty string (nothing known) appear only as observations.
 type HDRTier string
 
 // HDRTierOption defines model for HDRTierOption.
@@ -2248,7 +3266,7 @@ type HDRTierOption struct {
 	// Label Display name ("DV P7 FEL").
 	Label string `json:"label"`
 
-	// Tier An HDR presentation (ADR 0026). Profiles name the first eight; dv-p7 (EL type unknown), dv (profile unknown) and the empty string (nothing known) appear only as observations.
+	// Tier An HDR presentation (ADR 0031). Profiles name the first eight; dv-p7 (EL type unknown), dv (profile unknown) and the empty string (nothing known) appear only as observations.
 	Tier HDRTier `json:"tier"`
 }
 
@@ -2308,6 +3326,40 @@ type IgnoredPath struct {
 	Reason    string    `json:"reason"`
 }
 
+// ImportActivityItem defines model for ImportActivityItem.
+type ImportActivityItem struct {
+	Actions     *[]ActivityAction          `json:"actions,omitempty"`
+	Category    ImportActivityItemCategory `json:"category"`
+	Destination string                     `json:"destination"`
+
+	// Download Negative IDs identify read-only unattributed historical publications, never queue mutation targets.
+	Download  QueueItem         `json:"download"`
+	Identity  *ActivityIdentity `json:"identity,omitempty"`
+	Kind      string            `json:"kind"`
+	Operation *struct {
+		Action  string `json:"action"`
+		Id      string `json:"id"`
+		Message string `json:"message"`
+		State   string `json:"state"`
+	} `json:"operation,omitempty"`
+	Prerequisite *string   `json:"prerequisite,omitempty"`
+	Reason       *string   `json:"reason,omitempty"`
+	Title        string    `json:"title"`
+	UpdatedAt    time.Time `json:"updatedAt"`
+}
+
+// ImportActivityItemCategory defines model for ImportActivityItem.Category.
+type ImportActivityItemCategory string
+
+// ImportActivityPage defines model for ImportActivityPage.
+type ImportActivityPage struct {
+	Counts        map[string]int       `json:"counts"`
+	HasMore       bool                 `json:"hasMore"`
+	Items         []ImportActivityItem `json:"items"`
+	RetentionDays int                  `json:"retentionDays"`
+	Total         int                  `json:"total"`
+}
+
 // ImportAttemptIdentity defines model for ImportAttemptIdentity.
 type ImportAttemptIdentity struct {
 	Epoch         string `json:"epoch"`
@@ -2365,6 +3417,51 @@ type ImportPathDefault struct {
 	Path string `json:"path"`
 }
 
+// ImportPlanFile defines model for ImportPlanFile.
+type ImportPlanFile struct {
+	// Action new | replace | beside
+	Action *string `json:"action,omitempty"`
+
+	// Destination Exact library path from the naming template.
+	Destination *string `json:"destination,omitempty"`
+	Episodes    []int   `json:"episodes"`
+
+	// Error Why this file cannot be imported as chosen.
+	Error *string `json:"error,omitempty"`
+
+	// Existing Quality of the file there now.
+	Existing *string `json:"existing,omitempty"`
+
+	// Mode runner | hardlink | copy | rename | copy_remove
+	Mode *string `json:"mode,omitempty"`
+
+	// Note What else placing it does (a runner delivery moved here from another title).
+	Note *string `json:"note,omitempty"`
+	Path string  `json:"path"`
+
+	// Publication The runner delivery a scanned file is part of. Such a file is placed through Resolve, never through /import/manual.
+	Publication *ScannedPublication `json:"publication,omitempty"`
+	Quality     string              `json:"quality"`
+	Reason      *string             `json:"reason,omitempty"`
+
+	// Season -1 when not a series file
+	Season    int `json:"season"`
+	Subtitles int `json:"subtitles"`
+}
+
+// ImportPlanRequest defines model for ImportPlanRequest.
+type ImportPlanRequest struct {
+	// CopyId Target copy or edition; 0 = the primary.
+	CopyId *int64 `json:"copyId,omitempty"`
+	Files  []struct {
+		Episodes *[]int `json:"episodes,omitempty"`
+		Path     string `json:"path"`
+		Season   *int   `json:"season,omitempty"`
+	} `json:"files"`
+	MediaItemId    int64 `json:"mediaItemId"`
+	RemoveOriginal *bool `json:"removeOriginal,omitempty"`
+}
+
 // Indexer defines model for Indexer.
 type Indexer struct {
 	ApiKey     *string `json:"apiKey,omitempty"`
@@ -2397,6 +3494,33 @@ type IndexerInput struct {
 
 // IndexerInputProtocol defines model for IndexerInput.Protocol.
 type IndexerInputProtocol string
+
+// ItemStatus defines model for ItemStatus.
+type ItemStatus struct {
+	// Active A download is moving; poll every 2 s.
+	Active   bool             `json:"active"`
+	Attempts *[]StatusAttempt `json:"attempts,omitempty"`
+	Cinema   *StatusCinema    `json:"cinema,omitempty"`
+
+	// Done Every stage is done; the panel collapses to one line.
+	Done     bool             `json:"done"`
+	Download *StatusDownload  `json:"download,omitempty"`
+	Episodes *[]StatusEpisode `json:"episodes,omitempty"`
+
+	// GeneratedAt Unix ms.
+	GeneratedAt int64          `json:"generatedAt"`
+	Headline    StatusHeadline `json:"headline"`
+	Kind        string         `json:"kind"`
+	MediaItemId int64          `json:"mediaItemId"`
+
+	// Offload The open Offload deleting this title's files (the panel's "Offloading files" block), and once it is over its final stage "Offloaded <date> · <bytes> freed" until dismissed. Stop is POST /offload/{operationId}/cancel, dismiss POST /offload/{operationId}/dismiss.
+	Offload *StatusOffload `json:"offload,omitempty"`
+
+	// Rematch The open Re-match moving files out of or into this item (the panel's "Moving files" block). Stop is POST /rematch/{operationId}/cancel.
+	Rematch *StatusRematch  `json:"rematch,omitempty"`
+	Seasons *[]StatusSeason `json:"seasons,omitempty"`
+	Stages  *[]StatusStage  `json:"stages,omitempty"`
+}
 
 // LanguageOption defines model for LanguageOption.
 type LanguageOption struct {
@@ -2437,6 +3561,27 @@ type LibraryReviewFlag struct {
 // LibraryReviewFlagState defines model for LibraryReviewFlag.State.
 type LibraryReviewFlagState string
 
+// LibraryVolumeReview defines model for LibraryVolumeReview.
+type LibraryVolumeReview struct {
+	Blocker          *string            `json:"blocker,omitempty"`
+	Empty            bool               `json:"empty"`
+	Fingerprint      string             `json:"fingerprint"`
+	ObservedIdentity string             `json:"observedIdentity"`
+	State            LibraryVolumeState `json:"state"`
+}
+
+// LibraryVolumeState defines model for LibraryVolumeState.
+type LibraryVolumeState struct {
+	ActiveWork       int    `json:"activeWork"`
+	ExpectedIdentity string `json:"expectedIdentity"`
+	FileRecords      int    `json:"fileRecords"`
+	Generation       int64  `json:"generation"`
+	LibraryRevision  int64  `json:"libraryRevision"`
+	Path             string `json:"path"`
+	RootId           int64  `json:"rootId"`
+	SharedRevision   int64  `json:"sharedRevision"`
+}
+
 // ManualImportAccepted defines model for ManualImportAccepted.
 type ManualImportAccepted struct {
 	// DownloadId Activity row that now owns the background import.
@@ -2449,12 +3594,18 @@ type ManualImportRequest struct {
 	CopyId *int64 `json:"copyId,omitempty"`
 
 	// DownloadId Tie the import to a stuck queue row so it's marked imported (or failed) by this attempt. 0 = a standalone import.
-	DownloadId  *int64 `json:"downloadId,omitempty"`
-	MediaItemId int64  `json:"mediaItemId"`
-	Path        string `json:"path"`
+	DownloadId *int64 `json:"downloadId,omitempty"`
+
+	// EpisodeTargets A series file's episode(s), chosen by a person, per selected path. Admitted with the selection: every retry places the file as these episodes whatever its name says.
+	EpisodeTargets *[]EpisodeTarget `json:"episodeTargets,omitempty"`
+	MediaItemId    int64            `json:"mediaItemId"`
+	Path           string           `json:"path"`
 
 	// Paths Exact files selected from the scan. Every path must be a media file under path. Absent imports the whole path for backwards compatibility; an explicit selection must contain a file.
 	Paths *[]string `json:"paths,omitempty"`
+
+	// RemoveOriginal Remove each source once its library copy is placed (a rename on one filesystem; copy, verify and remove across volumes). Standalone imports of loose files only; refused for a file inside a runner delivery.
+	RemoveOriginal *bool `json:"removeOriginal,omitempty"`
 
 	// ReviewLegacy Explicitly approve only the selected files from a fenced legacy payload for this manual import.
 	ReviewLegacy *bool `json:"reviewLegacy,omitempty"`
@@ -2528,7 +3679,7 @@ type MediaFileInfo struct {
 	// CopyId Which quality copy this file belongs to; 0/absent = primary.
 	CopyId *int64 `json:"copyId,omitempty"`
 
-	// DolbyVision The measured Dolby Vision record of a file (ADR 0026).
+	// DolbyVision The measured Dolby Vision record of a file (ADR 0031).
 	DolbyVision *DolbyVision `json:"dolbyVision,omitempty"`
 	EpisodeIds  []int64      `json:"episodeIds"`
 
@@ -2536,7 +3687,7 @@ type MediaFileInfo struct {
 	Facts          *string `json:"facts,omitempty"`
 	FileGeneration *string `json:"fileGeneration,omitempty"`
 
-	// HdrTier An HDR presentation (ADR 0026). Profiles name the first eight; dv-p7 (EL type unknown), dv (profile unknown) and the empty string (nothing known) appear only as observations.
+	// HdrTier An HDR presentation (ADR 0031). Profiles name the first eight; dv-p7 (EL type unknown), dv (profile unknown) and the empty string (nothing known) appear only as observations.
 	HdrTier *HDRTier `json:"hdrTier,omitempty"`
 	Id      int64    `json:"id"`
 
@@ -2580,8 +3731,11 @@ type MediaItemDetail struct {
 	AudioLanguages *[]string `json:"audioLanguages,omitempty"`
 
 	// Author Books only (ADR 0006); empty for movies/series.
-	Author       string `json:"author"`
-	BackdropPath string `json:"backdropPath"`
+	Author string `json:"author"`
+
+	// Availability Read-only primary-copy facts, independent of requests and playback readiness. Series counts cover known aired regular episodes. First-run, failed, changed or older-than-13h observations are unknown.
+	Availability *Availability `json:"availability,omitempty"`
+	BackdropPath string        `json:"backdropPath"`
 
 	// BookType A persistent edition medium under the book kind. The quality profile chooses formats within this medium and cannot change it (ADR 0018).
 	BookType *BookType `json:"bookType,omitempty"`
@@ -2593,7 +3747,7 @@ type MediaItemDetail struct {
 	Copies    []MediaCopy       `json:"copies"`
 	Countries []CountryEvidence `json:"countries"`
 
-	// DiscEnhancementLayer The title's Dolby Vision disc master as measurement has shown it (ADR 0026): fel once any profile 7 file or pre-flight probe of the title measured a full enhancement layer, mel while only minimal ones were seen, empty before any.
+	// DiscEnhancementLayer The title's Dolby Vision disc master as measurement has shown it (ADR 0031): fel once any profile 7 file or pre-flight probe of the title measured a full enhancement layer, mel while only minimal ones were seen, empty before any.
 	DiscEnhancementLayer *MediaItemDetailDiscEnhancementLayer `json:"discEnhancementLayer,omitempty"`
 
 	// DownloadPriority Effective scheduler priority after applying the per-item override or inheriting the selected quality profile. Supported values are -100, -50, 0, 50, 100, and 900 (force).
@@ -2605,19 +3759,22 @@ type MediaItemDetail struct {
 	Files                    []MediaFileInfo `json:"files"`
 	Genres                   []string        `json:"genres"`
 
-	// HdrTier An HDR presentation (ADR 0026). Profiles name the first eight; dv-p7 (EL type unknown), dv (profile unknown) and the empty string (nothing known) appear only as observations.
+	// HdrTier An HDR presentation (ADR 0031). Profiles name the first eight; dv-p7 (EL type unknown), dv (profile unknown) and the empty string (nothing known) appear only as observations.
 	HdrTier         *HDRTier               `json:"hdrTier,omitempty"`
 	Id              int64                  `json:"id"`
 	IdentitySources []IdentitySourceStatus `json:"identitySources"`
 	Ids             ExternalIds            `json:"ids"`
 	Kind            MediaKind              `json:"kind"`
 
-	// Monitor Persistent series policy. Applying a mode resets existing selections. All selects everything; latest selects the latest and later seasons; future selects episodes airing today or later; new_seasons selects seasons after the last season started before today; none clears selections. Specials start unmonitored. Refresh preserves manual selections.
-	Monitor    *SeriesMonitorMode `json:"monitor,omitempty"`
-	Monitored  bool               `json:"monitored"`
-	Overview   string             `json:"overview"`
-	Path       string             `json:"path"`
-	PosterPath string             `json:"posterPath"`
+	// Monitor Persistent series policy. Applying a mode resets existing selections. All selects everything; latest selects the latest and later seasons; future selects episodes airing today or later; new_seasons selects seasons after the last season started before today; first_season selects only the lowest regular season (season 1 when none is known yet) and later seasons arrive unmonitored, ready to monitor or Re-acquire; none clears selections. Specials start unmonitored. Refresh preserves manual selections.
+	Monitor   *SeriesMonitorMode `json:"monitor,omitempty"`
+	Monitored bool               `json:"monitored"`
+
+	// Offloaded A movie that is offloaded (ADR 0028). Seasons and episodes carry their own.
+	Offloaded  *bool  `json:"offloaded,omitempty"`
+	Overview   string `json:"overview"`
+	Path       string `json:"path"`
+	PosterPath string `json:"posterPath"`
 
 	// Quality The weakest quality among the primary copy's files ("1080p WEB-DL"); empty when nothing is on disk or no quality was recorded. Weakest because that is what decides whether the item is still being hunted.
 	Quality          *string `json:"quality,omitempty"`
@@ -2652,7 +3809,7 @@ type MediaItemDetail struct {
 	Year          int     `json:"year"`
 }
 
-// MediaItemDetailDiscEnhancementLayer The title's Dolby Vision disc master as measurement has shown it (ADR 0026): fel once any profile 7 file or pre-flight probe of the title measured a full enhancement layer, mel while only minimal ones were seen, empty before any.
+// MediaItemDetailDiscEnhancementLayer The title's Dolby Vision disc master as measurement has shown it (ADR 0031): fel once any profile 7 file or pre-flight probe of the title measured a full enhancement layer, mel while only minimal ones were seen, empty before any.
 type MediaItemDetailDiscEnhancementLayer string
 
 // MediaItemDetailUpgrade missing = nothing on disk · seeking = below the cutoff and being hunted · met = cutoff reached · capped = below the cutoff with upgrades switched off.
@@ -2668,6 +3825,9 @@ type MediaItemSummary struct {
 
 	// Author Books only (ADR 0006); empty for movies/series.
 	Author string `json:"author"`
+
+	// Availability Read-only primary-copy facts, independent of requests and playback readiness. Series counts cover known aired regular episodes. First-run, failed, changed or older-than-13h observations are unknown.
+	Availability *Availability `json:"availability,omitempty"`
 
 	// BookEditions Per-edition completeness for book library views. Empty/absent for video.
 	BookEditions *[]BookEditionSummary `json:"bookEditions,omitempty"`
@@ -2685,12 +3845,18 @@ type MediaItemSummary struct {
 	EpisodeFileCount int `json:"episodeFileCount"`
 
 	// FileCount Files on disk for the item (movies/books completeness).
-	FileCount  int       `json:"fileCount"`
-	Id         int64     `json:"id"`
-	Kind       MediaKind `json:"kind"`
-	Monitored  bool      `json:"monitored"`
-	Path       string    `json:"path"`
-	PosterPath string    `json:"posterPath"`
+	FileCount int       `json:"fileCount"`
+	Id        int64     `json:"id"`
+	Kind      MediaKind `json:"kind"`
+	Monitored bool      `json:"monitored"`
+
+	// Offloaded Offloaded (ADR 0028): a movie whose files were deleted on purpose, or a show with any offloaded episode (see offloadedEpisodes).
+	Offloaded *bool `json:"offloaded,omitempty"`
+
+	// OffloadedEpisodes Shows only; the number of offloaded episodes.
+	OffloadedEpisodes *int   `json:"offloadedEpisodes,omitempty"`
+	Path              string `json:"path"`
+	PosterPath        string `json:"posterPath"`
 
 	// Quality The WEAKEST quality among the item's files, rendered for display ("1080p WEB-DL"); empty when nothing is on disk or no file's quality was recorded. Weakest rather than best because that is what decides whether the item is still being hunted.
 	Quality *string `json:"quality,omitempty"`
@@ -2777,13 +3943,19 @@ type MonitorRequest struct {
 
 // Notifier defines model for Notifier.
 type Notifier struct {
-	Enabled  *bool  `json:"enabled,omitempty"`
-	Id       int64  `json:"id"`
-	Name     string `json:"name"`
-	OnFailed *bool  `json:"onFailed,omitempty"`
-	OnGrab   *bool  `json:"onGrab,omitempty"`
-	OnHealth *bool  `json:"onHealth,omitempty"`
-	OnImport *bool  `json:"onImport,omitempty"`
+	Enabled *bool `json:"enabled,omitempty"`
+
+	// Features What the far side's connection test said it supports (Cinema: removed_paths, contract 4.4). Advisory; nothing is gated on it.
+	Features *[]string `json:"features,omitempty"`
+
+	// FeaturesReadAt When features were last read (Unix ms); absent = never.
+	FeaturesReadAt *int64 `json:"featuresReadAt,omitempty"`
+	Id             int64  `json:"id"`
+	Name           string `json:"name"`
+	OnFailed       *bool  `json:"onFailed,omitempty"`
+	OnGrab         *bool  `json:"onGrab,omitempty"`
+	OnHealth       *bool  `json:"onHealth,omitempty"`
+	OnImport       *bool  `json:"onImport,omitempty"`
 
 	// Settings Type-specific: webhook/discord {url}; plex {url, token}; jellyfin and plurx {url, apiKey} — for plurx a scoped plx_ key with scan:trigger, never an admin token.
 	Settings *map[string]string `json:"settings,omitempty"`
@@ -2810,6 +3982,155 @@ type NotifierInput struct {
 // NotifierInputType defines model for NotifierInput.Type.
 type NotifierInputType string
 
+// NotifierTestResult defines model for NotifierTestResult.
+type NotifierTestResult struct {
+	// Message A pass that still has something to say, e.g. that checking the library paths needs a newer Cinema.
+	Message *string `json:"message,omitempty"`
+}
+
+// OffloadBlocked defines model for OffloadBlocked.
+type OffloadBlocked struct {
+	Message string               `json:"message"`
+	Reason  OffloadBlockedReason `json:"reason"`
+	Ref     *string              `json:"ref,omitempty"`
+	Retry   bool                 `json:"retry"`
+}
+
+// OffloadBlockedReason defines model for OffloadBlocked.Reason.
+type OffloadBlockedReason string
+
+// OffloadConflict defines model for OffloadConflict.
+type OffloadConflict struct {
+	Blocked *OffloadBlocked `json:"blocked,omitempty"`
+	Code    *string         `json:"code,omitempty"`
+	Message string          `json:"message"`
+}
+
+// OffloadFile defines model for OffloadFile.
+type OffloadFile struct {
+	Bytes int64 `json:"bytes"`
+
+	// Episodes S01E02 labels.
+	Episodes *[]string       `json:"episodes,omitempty"`
+	Kind     OffloadFileKind `json:"kind"`
+	Path     string          `json:"path"`
+
+	// Shared Another hard link keeps the bytes allocated (a seeding copy).
+	Shared *bool `json:"shared,omitempty"`
+}
+
+// OffloadFileKind defines model for OffloadFile.Kind.
+type OffloadFileKind string
+
+// OffloadOperation defines model for OffloadOperation.
+type OffloadOperation struct {
+	BytesFreed int64 `json:"bytesFreed"`
+	BytesTotal int64 `json:"bytesTotal"`
+	Cinema     *[]struct {
+		Directory *string `json:"directory,omitempty"`
+		LastError *string `json:"lastError,omitempty"`
+		Result    *string `json:"result,omitempty"`
+		Status    *string `json:"status,omitempty"`
+		VisibleAt *int64  `json:"visibleAt,omitempty"`
+	} `json:"cinema,omitempty"`
+	CinemaLine  *string   `json:"cinemaLine,omitempty"`
+	CreatedAt   int64     `json:"createdAt"`
+	EpisodeId   *int64    `json:"episodeId,omitempty"`
+	Failed      *[]string `json:"failed,omitempty"`
+	FilesDone   int       `json:"filesDone"`
+	FilesTotal  int       `json:"filesTotal"`
+	ItemId      int64     `json:"itemId"`
+	Label       *string   `json:"label,omitempty"`
+	LastError   *string   `json:"lastError,omitempty"`
+	OperationId string    `json:"operationId"`
+
+	// Plan The stored request and preview.
+	Plan      *map[string]interface{} `json:"plan,omitempty"`
+	RequestId string                  `json:"requestId"`
+	Result    *map[string]interface{} `json:"result,omitempty"`
+	Scope     OffloadOperationScope   `json:"scope"`
+	Season    *int                    `json:"season,omitempty"`
+
+	// State queued = confirmed and waiting to execute; needs_review = the reviewed scope changed. waiting = the share is not mounted (nothing is marked deleted); retrying = an unlink failed (see failed); both resume by themselves.
+	State     OffloadOperationState `json:"state"`
+	Stoppable bool                  `json:"stoppable"`
+	UpdatedAt int64                 `json:"updatedAt"`
+}
+
+// OffloadOperationScope defines model for OffloadOperation.Scope.
+type OffloadOperationScope string
+
+// OffloadOperationState queued = confirmed and waiting to execute; needs_review = the reviewed scope changed. waiting = the share is not mounted (nothing is marked deleted); retrying = an unlink failed (see failed); both resume by themselves.
+type OffloadOperationState string
+
+// OffloadPreview defines model for OffloadPreview.
+type OffloadPreview struct {
+	Blocked *OffloadBlocked `json:"blocked,omitempty"`
+
+	// Bytes Every byte deleted.
+	Bytes int64 `json:"bytes"`
+
+	// Cinema What Cinema will do. Advisory.
+	Cinema *string `json:"cinema,omitempty"`
+
+	// CinemaWarning True when Cinema will drop the title and its watch history (it does not advertise offload).
+	CinemaWarning *bool `json:"cinemaWarning,omitempty"`
+
+	// Episodes What becomes offloaded
+	Episodes    *[]string     `json:"episodes,omitempty"`
+	Files       []OffloadFile `json:"files"`
+	Fingerprint string        `json:"fingerprint"`
+	FreeAfter   int64         `json:"freeAfter"`
+
+	// FreeBefore Library volume free bytes; -1 unknown.
+	FreeBefore int64 `json:"freeBefore"`
+
+	// Freed What returns to the volume now (hard-linked bytes are not counted until the other link goes).
+	Freed int64 `json:"freed"`
+
+	// Item {id, kind, title, year}.
+	Item    map[string]interface{} `json:"item"`
+	Label   string                 `json:"label"`
+	Root    *string                `json:"root,omitempty"`
+	Scope   OffloadPreviewScope    `json:"scope"`
+	Summary string                 `json:"summary"`
+
+	// Widened Episodes the request did not name but a multi-episode file takes with it.
+	Widened *[]string `json:"widened,omitempty"`
+}
+
+// OffloadPreviewScope defines model for OffloadPreview.Scope.
+type OffloadPreviewScope string
+
+// OffloadRequest defines model for OffloadRequest.
+type OffloadRequest struct {
+	// EpisodeId Scope episode: the episode's id.
+	EpisodeId *int64 `json:"episodeId,omitempty"`
+
+	// Fingerprint Execution only: the preview's fingerprint; a library that changed since refuses with 409 stale.
+	Fingerprint *string `json:"fingerprint,omitempty"`
+
+	// RequestId Execution only: idempotency key.
+	RequestId *string `json:"requestId,omitempty"`
+
+	// Scope item is the whole movie or show.
+	Scope OffloadRequestScope `json:"scope"`
+
+	// Season Scope season: the season number.
+	Season *int `json:"season,omitempty"`
+}
+
+// OffloadRequestScope item is the whole movie or show.
+type OffloadRequestScope string
+
+// OperatorIssue defines model for OperatorIssue.
+type OperatorIssue struct {
+	Id     int64  `json:"id"`
+	Kind   string `json:"kind"`
+	Reason string `json:"reason"`
+	Title  string `json:"title"`
+}
+
 // PathMapping defines model for PathMapping.
 type PathMapping struct {
 	// Local Same location as Monarr sees it.
@@ -2818,6 +4139,40 @@ type PathMapping struct {
 	// Remote Path prefix as the download client reports it.
 	Remote string `json:"remote"`
 }
+
+// PipelineSummary defines model for PipelineSummary.
+type PipelineSummary struct {
+	// HeldPublications Publications the environment is holding — a full or blocked library, completed storage unavailable or outside the configured roots, a manifest missing or unreadable. They wait (retried on the retry ladder, never ended by their deadline); each row says why.
+	HeldPublications int              `json:"heldPublications"`
+	Issues           *[]OperatorIssue `json:"issues,omitempty"`
+
+	// OverdueRows Downloads older than their state's allowance (the pipeline:overdue health check).
+	OverdueRows int              `json:"overdueRows"`
+	Timings     []PipelineTiming `json:"timings"`
+
+	// WindowHours The look-back window of every figure here.
+	WindowHours int `json:"windowHours"`
+}
+
+// PipelineTiming defines model for PipelineTiming.
+type PipelineTiming struct {
+	Kind PipelineTimingKind `json:"kind"`
+
+	// P50Seconds Absent when there are no samples.
+	P50Seconds *float64 `json:"p50Seconds,omitempty"`
+
+	// P95Seconds Absent when there are no samples.
+	P95Seconds *float64 `json:"p95Seconds,omitempty"`
+
+	// Samples Timings that finished inside the window.
+	Samples int `json:"samples"`
+
+	// Waiting Timings that started inside the window and have not finished. Never folded into the percentiles.
+	Waiting int `json:"waiting"`
+}
+
+// PipelineTimingKind defines model for PipelineTiming.Kind.
+type PipelineTimingKind string
 
 // PlacementSuggestion defines model for PlacementSuggestion.
 type PlacementSuggestion struct {
@@ -2830,26 +4185,28 @@ type PlacementSuggestion struct {
 type PlurxWatchedEvent struct {
 	Episode *int `json:"episode,omitempty"`
 
-	// Event "watched" today; the field exists so the route can grow others.
-	Event  string                `json:"event"`
-	Imdb   *string               `json:"imdb,omitempty"`
+	// Event `watched` (the default), `reacquire`, or `reacquire_status`. An event this build does not know is accepted and dropped.
+	Event string  `json:"event"`
+	Imdb  *string `json:"imdb,omitempty"`
+
+	// Kind watched: movie or episode. reacquire / reacquire_status: movie, show, season or episode (ids as for watched: movie tmdb/imdb; show, season and episode use the SHOW's tmdb plus season and episode).
 	Kind   PlurxWatchedEventKind `json:"kind"`
 	Season *int                  `json:"season,omitempty"`
 
-	// Tmdb For an episode this is the SHOW's id, not the episode's.
+	// Tmdb For an episode, season or show this is the SHOW's id, not the episode's.
 	Tmdb *int64 `json:"tmdb,omitempty"`
 
 	// User The plurx username. Per the §11.1 decision the signal is per-user; this is plurx's user, not a Monarr account, and Monarr does not create one.
 	User *string `json:"user,omitempty"`
 
-	// WatchedAt Unix seconds.
-	WatchedAt int64 `json:"watched_at"`
+	// WatchedAt Unix seconds. Required for `watched`.
+	WatchedAt *int64 `json:"watched_at,omitempty"`
 }
 
-// PlurxWatchedEventKind defines model for PlurxWatchedEvent.Kind.
+// PlurxWatchedEventKind watched: movie or episode. reacquire / reacquire_status: movie, show, season or episode (ids as for watched: movie tmdb/imdb; show, season and episode use the SHOW's tmdb plus season and episode).
 type PlurxWatchedEventKind string
 
-// PreflightPolicy How a profile measures releases before grabbing them (ADR 0026). It applies whenever the profile has an HDR order or refusal list.
+// PreflightPolicy How a profile measures releases before grabbing them (ADR 0031). It applies whenever the profile has an HDR order or refusal list.
 type PreflightPolicy struct {
 	// Bytes Head size per probe; 0 = default (4 MiB), at most 16 MiB.
 	Bytes *int64 `json:"bytes,omitempty"`
@@ -2861,14 +4218,14 @@ type PreflightPolicy struct {
 	Top *int `json:"top,omitempty"`
 }
 
-// ProbeEvidence What a pre-flight probe found (ADR 0026): Runner read the head of the release's main file and Curator measured it with the prober it runs on imported files.
+// ProbeEvidence What a pre-flight probe found (ADR 0031): Runner read the head of the release's main file and Curator measured it with the prober it runs on imported files.
 type ProbeEvidence struct {
 	Articles  *int    `json:"articles,omitempty"`
 	Bytes     *int    `json:"bytes,omitempty"`
 	Container *string `json:"container,omitempty"`
 	Detail    *string `json:"detail,omitempty"`
 
-	// DolbyVision The measured Dolby Vision record of a file (ADR 0026).
+	// DolbyVision The measured Dolby Vision record of a file (ADR 0031).
 	DolbyVision *DolbyVision `json:"dolbyVision,omitempty"`
 
 	// Facts The measured facts line
@@ -2888,7 +4245,7 @@ type ProbeEvidence struct {
 	// Status unavailable = Runner said why it could not read the head; failed = no answer.
 	Status ProbeEvidenceStatus `json:"status"`
 
-	// Tier An HDR presentation (ADR 0026). Profiles name the first eight; dv-p7 (EL type unknown), dv (profile unknown) and the empty string (nothing known) appear only as observations.
+	// Tier An HDR presentation (ADR 0031). Profiles name the first eight; dv-p7 (EL type unknown), dv (profile unknown) and the empty string (nothing known) appear only as observations.
 	Tier *HDRTier `json:"tier,omitempty"`
 }
 
@@ -2914,7 +4271,7 @@ type ProfileInput struct {
 	HdrTies *[][]HDRTier `json:"hdrTies,omitempty"`
 	Name    string       `json:"name"`
 
-	// Preflight How a profile measures releases before grabbing them (ADR 0026). It applies whenever the profile has an HDR order or refusal list.
+	// Preflight How a profile measures releases before grabbing them (ADR 0031). It applies whenever the profile has an HDR order or refusal list.
 	Preflight       *PreflightPolicy `json:"preflight,omitempty"`
 	Target          QualityInput     `json:"target"`
 	UpgradesAllowed *bool            `json:"upgradesAllowed,omitempty"`
@@ -2970,7 +4327,7 @@ type QualityProfile struct {
 	DownloadPriority int      `json:"downloadPriority"`
 	Floor            *Quality `json:"floor,omitempty"`
 
-	// HdrOrder Preferred HDR presentation, best first (ADR 0026). Breaks ties after resolution and source; a file below the first tier keeps the item wanted when upgrades are on. Empty means no opinion.
+	// HdrOrder Preferred HDR presentation, best first (ADR 0031). Breaks ties after resolution and source; a file below the first tier keeps the item wanted when upgrades are on. Empty means no opinion.
 	HdrOrder *[]HDRTier `json:"hdrOrder,omitempty"`
 
 	// HdrReject HDR tiers the profile never takes. A release is refused only when measured, or named outright, as one of them.
@@ -2984,7 +4341,7 @@ type QualityProfile struct {
 	InUse *int   `json:"inUse,omitempty"`
 	Name  string `json:"name"`
 
-	// Preflight How a profile measures releases before grabbing them (ADR 0026). It applies whenever the profile has an HDR order or refusal list.
+	// Preflight How a profile measures releases before grabbing them (ADR 0031). It applies whenever the profile has an HDR order or refusal list.
 	Preflight *PreflightPolicy `json:"preflight,omitempty"`
 
 	// Sentence The profile rendered as the one true sentence it now is -- "hunts the best release up to WEB-DL 1080p, then stops". Server-rendered so every client says exactly the same thing about a profile.
@@ -2997,6 +4354,9 @@ type QualityProfile struct {
 type QueueItem struct {
 	AddedAt time.Time `json:"addedAt"`
 
+	// BlamesRelease Whether the failure blocklisted the release.
+	BlamesRelease *bool `json:"blamesRelease,omitempty"`
+
 	// Bytes Bytes moved at the current stage. Absent when the stage cannot measure itself.
 	Bytes *int64 `json:"bytes,omitempty"`
 
@@ -3008,11 +4368,20 @@ type QueueItem struct {
 	Control *map[string]interface{} `json:"control,omitempty"`
 
 	// CopyId The media copy this grab targets; 0 = the primary copy.
-	CopyId *int64  `json:"copyId,omitempty"`
-	Error  *string `json:"error,omitempty"`
+	CopyId *int64 `json:"copyId,omitempty"`
+
+	// DeadlineAt When this state becomes overdue (contract section 3.5). Absent when it has none.
+	DeadlineAt *time.Time `json:"deadlineAt,omitempty"`
+	Error      *string    `json:"error,omitempty"`
+
+	// FetchCause fetch failures: gone | indexer_unavailable.
+	FetchCause *string `json:"fetchCause,omitempty"`
 
 	// Handoff The download → import handoff, step by step.
-	Handoff            *[]HandoffEntry      `json:"handoff,omitempty"`
+	Handoff *[]HandoffEntry `json:"handoff,omitempty"`
+
+	// HeldReason Runner's hold message while held.
+	HeldReason         *string              `json:"heldReason,omitempty"`
 	Id                 int64                `json:"id"`
 	ImportBlockedSince *time.Time           `json:"importBlockedSince,omitempty"`
 	ImportControl      *ImportAttemptStatus `json:"importControl,omitempty"`
@@ -3023,15 +4392,32 @@ type QueueItem struct {
 	ImportRetryAttempts *int       `json:"importRetryAttempts,omitempty"`
 
 	// ImportState The in-memory importer state. `queued` means the job was accepted and is waiting for one of the bounded import workers; `running` means a worker owns it. Absent means no importer owns this row.
-	ImportState  *QueueItemImportState `json:"importState,omitempty"`
-	Match        *MatchEvidence        `json:"match,omitempty"`
-	MediaItemId  int64                 `json:"mediaItemId"`
-	ParkedReason *string               `json:"parkedReason,omitempty"`
-	PlanId       *int64                `json:"planId,omitempty"`
-	PlanState    *string               `json:"planState,omitempty"`
-	Progress     float32               `json:"progress"`
-	Protocol     string                `json:"protocol"`
-	Quality      string                `json:"quality"`
+	ImportState *QueueItemImportState `json:"importState,omitempty"`
+	Match       *MatchEvidence        `json:"match,omitempty"`
+	MediaItemId int64                 `json:"mediaItemId"`
+
+	// ParkedReason Why a legacy (non-Runner) client's row, or a season episode held in custody, is reserved. Runner rows are never parked (pipeline contract v2).
+	ParkedReason *string `json:"parkedReason,omitempty"`
+	PlanId       *int64  `json:"planId,omitempty"`
+	PlanState    *string `json:"planState,omitempty"`
+	Progress     float32 `json:"progress"`
+	Protocol     string  `json:"protocol"`
+
+	// Provisional The terminal is Curator's own and any later Runner fact re-opens it.
+	Provisional *bool `json:"provisional,omitempty"`
+
+	// Publications The publications (one per Runner generation) and what became of each file.
+	Publications *[]QueuePublication `json:"publications,omitempty"`
+	Quality      string              `json:"quality"`
+
+	// ReservationActionable Whether current custody can be explicitly released after duplicate-risk acknowledgement.
+	ReservationActionable *bool `json:"reservationActionable,omitempty"`
+
+	// RunnerOutcome The recorded terminal - completed | failed | cancelled - or absent while open.
+	RunnerOutcome *string `json:"runnerOutcome,omitempty"`
+
+	// RunnerReason Why it failed: health | fetch | par | unpack | script | publish | io | identity | hold_expired (Runner's), or submit | lost | parked (Curator's, always provisional).
+	RunnerReason *string `json:"runnerReason,omitempty"`
 
 	// SavePath The completed-download path the client reported.
 	SavePath *string `json:"savePath,omitempty"`
@@ -3039,7 +4425,7 @@ type QueueItem struct {
 	// Selection Recorded public selection facts; absent for legacy or manual rows. Contains no transport URLs.
 	Selection *map[string]interface{} `json:"selection,omitempty"`
 
-	// Stage What is happening to this job RIGHT NOW, finer-grained than `state` and present only while something is moving: downloading | par_rename | par_verify | par_repair | rar_rename | unpack | cleanup | move | post_unpack_rename | script | importing | notifying. The post-processing names are the download client's own spellings. Absent means nothing is in flight for this row.
+	// Stage What is happening to this job RIGHT NOW, finer-grained than `state` and present only while something is moving: downloading | par_rename | par_verify | par_repair | rar_rename | unpack | cleanup | move | post_unpack_rename | publication_verify | script | importing | notifying. The post-processing names are the download client's own spellings. Absent means nothing is in flight for this row.
 	Stage *string `json:"stage,omitempty"`
 
 	// StageDetail One line describing the current stage, in the client's words.
@@ -3049,8 +4435,14 @@ type QueueItem struct {
 	StagePeer  *string    `json:"stagePeer,omitempty"`
 	StageSince *time.Time `json:"stageSince,omitempty"`
 
-	// State planned | grabbed | downloading | downloaded | awaiting_import | importing | imported | failed.
-	State           string                    `json:"state"`
+	// Stale A held row past its deadline - Runner has not reported since; never a Curator failure.
+	Stale *bool `json:"stale,omitempty"`
+
+	// State planned | grabbed | submitting | downloading | held | downloaded | awaiting_import | importing | imported | notified | failed. `downloaded` means the download completed (pipeline contract v2).
+	State string `json:"state"`
+
+	// StateEnteredAt When the row entered its current state; Activity shows how long an awaiting_import row has waited for a person.
+	StateEnteredAt  *time.Time                `json:"stateEnteredAt,omitempty"`
 	SubmissionPhase *QueueItemSubmissionPhase `json:"submissionPhase,omitempty"`
 	Title           string                    `json:"title"`
 
@@ -3063,6 +4455,67 @@ type QueueItemImportState string
 
 // QueueItemSubmissionPhase defines model for QueueItem.SubmissionPhase.
 type QueueItemSubmissionPhase string
+
+// QueuePublication defines model for QueuePublication.
+type QueuePublication struct {
+	// CleanupApprovedAt When a historical publication's review batch was approved; absent until then.
+	CleanupApprovedAt *time.Time `json:"cleanupApprovedAt,omitempty"`
+
+	// CleanupPausedAt When an operator paused this publication's automatic cleanup; absent when it runs.
+	CleanupPausedAt *time.Time `json:"cleanupPausedAt,omitempty"`
+
+	// CleanupReason Why the queued or running pass runs (after its import
+	CleanupReason *string `json:"cleanupReason,omitempty"`
+
+	// CleanupState A per-file cleanup pass waiting on or running in the cleanup lane; absent when none.
+	CleanupState *QueuePublicationCleanupState `json:"cleanupState,omitempty"`
+
+	// Cohort live | historical. historical publications are never deleted automatically until their review batch is approved.
+	Cohort     string                 `json:"cohort"`
+	Error      *string                `json:"error,omitempty"`
+	Files      []QueuePublicationFile `json:"files"`
+	Generation *string                `json:"generation,omitempty"`
+
+	// Held The environment is holding this publication (it waits; heldReason says why).
+	Held *bool `json:"held,omitempty"`
+
+	// HeldReason Why it is held
+	HeldReason *string `json:"heldReason,omitempty"`
+
+	// HeldSince When the hold began, when held.
+	HeldSince *time.Time `json:"heldSince,omitempty"`
+	Id        int64      `json:"id"`
+
+	// Kind completed | salvage
+	Kind string `json:"kind"`
+
+	// ManifestSource file | none (v1_record on a removed publication until migration 0079 normalises it)
+	ManifestSource *string `json:"manifestSource,omitempty"`
+	Path           string  `json:"path"`
+
+	// State discovered | importing | imported | import_failed | notified | removed
+	State string `json:"state"`
+}
+
+// QueuePublicationCleanupState A per-file cleanup pass waiting on or running in the cleanup lane; absent when none.
+type QueuePublicationCleanupState string
+
+// QueuePublicationFile defines model for QueuePublicationFile.
+type QueuePublicationFile struct {
+	Bytes *int64 `json:"bytes,omitempty"`
+
+	// DiscardReason superseded | duplicate | rejected, when discarded
+	DiscardReason *string `json:"discardReason,omitempty"`
+	LibraryPath   *string `json:"libraryPath,omitempty"`
+
+	// Outcome pending | placed | discarded | unresolved
+	Outcome string  `json:"outcome"`
+	Path    string  `json:"path"`
+	Reason  *string `json:"reason,omitempty"`
+
+	// Removed The file's bytes have left the publication directory (per-file cleanup).
+	Removed *bool `json:"removed,omitempty"`
+}
 
 // QueueSummary defines model for QueueSummary.
 type QueueSummary struct {
@@ -3089,6 +4542,18 @@ type Rating struct {
 	Value float32 `json:"value"`
 	Votes *int    `json:"votes,omitempty"`
 }
+
+// ReacquireResult defines model for ReacquireResult.
+type ReacquireResult struct {
+	// Cleared This call cleared offloaded.
+	Cleared     bool                 `json:"cleared"`
+	MediaItemId int64                `json:"mediaItemId"`
+	Message     *string              `json:"message,omitempty"`
+	State       ReacquireResultState `json:"state"`
+}
+
+// ReacquireResultState defines model for ReacquireResult.State.
+type ReacquireResultState string
 
 // RecommendationApplied defines model for RecommendationApplied.
 type RecommendationApplied struct {
@@ -3256,7 +4721,7 @@ type ReleaseCandidate struct {
 	// Formats Names of matched custom formats.
 	Formats *[]string `json:"formats,omitempty"`
 
-	// Hdr One description of a release's HDR: what its name claims, or what a pre-flight probe of its first bytes measured (ADR 0026).
+	// Hdr One description of a release's HDR: what its name claims, or what a pre-flight probe of its first bytes measured (ADR 0031).
 	Hdr       *ReleaseHDR `json:"hdr,omitempty"`
 	Indexer   string      `json:"indexer"`
 	InfoUrl   *string     `json:"infoUrl,omitempty"`
@@ -3266,10 +4731,10 @@ type ReleaseCandidate struct {
 	Languages *[]string     `json:"languages,omitempty"`
 	Match     MatchEvidence `json:"match"`
 
-	// MeasuredHdr One description of a release's HDR: what its name claims, or what a pre-flight probe of its first bytes measured (ADR 0026).
+	// MeasuredHdr One description of a release's HDR: what its name claims, or what a pre-flight probe of its first bytes measured (ADR 0031).
 	MeasuredHdr *ReleaseHDR `json:"measuredHdr,omitempty"`
 
-	// Probe What a pre-flight probe found (ADR 0026): Runner read the head of the release's main file and Curator measured it with the prober it runs on imported files.
+	// Probe What a pre-flight probe found (ADR 0031): Runner read the head of the release's main file and Curator measured it with the prober it runs on imported files.
 	Probe      *ProbeEvidence `json:"probe,omitempty"`
 	Protocol   string         `json:"protocol"`
 	Quality    string         `json:"quality"`
@@ -3285,7 +4750,7 @@ type ReleaseCandidate struct {
 	Warning *string `json:"warning,omitempty"`
 }
 
-// ReleaseHDR One description of a release's HDR: what its name claims, or what a pre-flight probe of its first bytes measured (ADR 0026).
+// ReleaseHDR One description of a release's HDR: what its name claims, or what a pre-flight probe of its first bytes measured (ADR 0031).
 type ReleaseHDR struct {
 	// Confidence How sure a claim is; empty for a measurement.
 	Confidence *ReleaseHDRConfidence `json:"confidence,omitempty"`
@@ -3294,7 +4759,7 @@ type ReleaseHDR struct {
 	Label      string                `json:"label"`
 	Measured   bool                  `json:"measured"`
 
-	// Tier An HDR presentation (ADR 0026). Profiles name the first eight; dv-p7 (EL type unknown), dv (profile unknown) and the empty string (nothing known) appear only as observations.
+	// Tier An HDR presentation (ADR 0031). Profiles name the first eight; dv-p7 (EL type unknown), dv (profile unknown) and the empty string (nothing known) appear only as observations.
 	Tier HDRTier `json:"tier"`
 }
 
@@ -3303,6 +4768,172 @@ type ReleaseHDRConfidence string
 
 // ReleaseHDRElType defines model for ReleaseHDR.ElType.
 type ReleaseHDRElType string
+
+// RematchBlocked defines model for RematchBlocked.
+type RematchBlocked struct {
+	ItemId  int64                `json:"itemId"`
+	Message string               `json:"message"`
+	Reason  RematchBlockedReason `json:"reason"`
+	Ref     string               `json:"ref"`
+	Retry   bool                 `json:"retry"`
+}
+
+// RematchBlockedReason defines model for RematchBlocked.Reason.
+type RematchBlockedReason string
+
+// RematchConflict defines model for RematchConflict.
+type RematchConflict struct {
+	Blocked *RematchBlocked `json:"blocked,omitempty"`
+	Code    *string         `json:"code,omitempty"`
+	Message string          `json:"message"`
+}
+
+// RematchItemRef defines model for RematchItemRef.
+type RematchItemRef struct {
+	Folder       *string `json:"folder,omitempty"`
+	FolderChosen *bool   `json:"folderChosen,omitempty"`
+	Id           int64   `json:"id"`
+	InLibrary    bool    `json:"inLibrary"`
+	Kind         string  `json:"kind"`
+	Title        string  `json:"title"`
+	Year         *int    `json:"year,omitempty"`
+}
+
+// RematchMove defines model for RematchMove.
+type RematchMove struct {
+	Bytes     int64            `json:"bytes"`
+	Episodes  []int            `json:"episodes"`
+	FileId    int64            `json:"fileId"`
+	From      string           `json:"from"`
+	Label     *string          `json:"label,omitempty"`
+	Mode      *RematchMoveMode `json:"mode,omitempty"`
+	NeedsPick *bool            `json:"needsPick,omitempty"`
+	Note      *string          `json:"note,omitempty"`
+
+	// Problem Why it is left out (stays on disk, leaves the library).
+	Problem  *string `json:"problem,omitempty"`
+	Quality  *string `json:"quality,omitempty"`
+	Season   int     `json:"season"`
+	Sidecars *[]struct {
+		From *string `json:"from,omitempty"`
+		To   *string `json:"to,omitempty"`
+	} `json:"sidecars,omitempty"`
+	To *string `json:"to,omitempty"`
+}
+
+// RematchMoveMode defines model for RematchMove.Mode.
+type RematchMoveMode string
+
+// RematchOperation defines model for RematchOperation.
+type RematchOperation struct {
+	BytesDone  int64 `json:"bytesDone"`
+	BytesTotal int64 `json:"bytesTotal"`
+	Cinema     *[]struct {
+		Directory *string `json:"directory,omitempty"`
+		LastError *string `json:"lastError,omitempty"`
+		Result    *string `json:"result,omitempty"`
+		Status    *string `json:"status,omitempty"`
+		VisibleAt *int64  `json:"visibleAt,omitempty"`
+	} `json:"cinema,omitempty"`
+	CreatedAt   int64   `json:"createdAt"`
+	LastError   *string `json:"lastError,omitempty"`
+	OperationId string  `json:"operationId"`
+
+	// Plan The stored request and preview.
+	Plan      *map[string]interface{} `json:"plan,omitempty"`
+	RequestId string                  `json:"requestId"`
+
+	// Result moved [{from,to,episodes,mode}], leftOut, failed, blocklisted, sourceRemoved, leftBehind, cinemaNote.
+	Result       *map[string]interface{} `json:"result,omitempty"`
+	SourceItemId int64                   `json:"sourceItemId"`
+	State        RematchOperationState   `json:"state"`
+	TargetItemId int64                   `json:"targetItemId"`
+	UpdatedAt    int64                   `json:"updatedAt"`
+}
+
+// RematchOperationState defines model for RematchOperation.State.
+type RematchOperationState string
+
+// RematchPreview defines model for RematchPreview.
+type RematchPreview struct {
+	Blocked   *RematchBlocked `json:"blocked,omitempty"`
+	Blocklist []struct {
+		FileId  *int64  `json:"fileId,omitempty"`
+		Indexer *string `json:"indexer,omitempty"`
+		Release *string `json:"release,omitempty"`
+	} `json:"blocklist"`
+	BlocklistNote *string `json:"blocklistNote,omitempty"`
+	BlocklistOn   bool    `json:"blocklistOn"`
+	Cinema        *string `json:"cinema,omitempty"`
+	Copies        *[]struct {
+		BookType *string `json:"bookType,omitempty"`
+		Id       *int64  `json:"id,omitempty"`
+		Name     *string `json:"name,omitempty"`
+	} `json:"copies,omitempty"`
+	Episodes *[]struct {
+		Episode *int    `json:"episode,omitempty"`
+		HasFile *bool   `json:"hasFile,omitempty"`
+		Season  *int    `json:"season,omitempty"`
+		Title   *string `json:"title,omitempty"`
+	} `json:"episodes,omitempty"`
+	Fingerprint    string                      `json:"fingerprint"`
+	LeftOut        []RematchMove               `json:"leftOut"`
+	Moves          []RematchMove               `json:"moves"`
+	Source         RematchItemRef              `json:"source"`
+	SourceOutcome  RematchPreviewSourceOutcome `json:"sourceOutcome"`
+	SourceReason   string                      `json:"sourceReason"`
+	SourceRevision int64                       `json:"sourceRevision"`
+	Summary        string                      `json:"summary"`
+	Target         RematchItemRef              `json:"target"`
+	TargetCopyId   *int64                      `json:"targetCopyId,omitempty"`
+	TargetRevision int64                       `json:"targetRevision"`
+}
+
+// RematchPreviewSourceOutcome defines model for RematchPreview.SourceOutcome.
+type RematchPreviewSourceOutcome string
+
+// RematchRequest defines model for RematchRequest.
+type RematchRequest struct {
+	// Blocklist Blocklist the moved files' releases for this item (default true).
+	Blocklist *bool `json:"blocklist,omitempty"`
+	Choices   *[]struct {
+		Episodes *[]int `json:"episodes,omitempty"`
+		FileId   int64  `json:"fileId"`
+
+		// Leave Leave it out: it stays on disk and leaves the library.
+		Leave  *bool `json:"leave,omitempty"`
+		Season *int  `json:"season,omitempty"`
+	} `json:"choices,omitempty"`
+
+	// CopyId Target copy or edition; 0 = primary.
+	CopyId *int64 `json:"copyId,omitempty"`
+
+	// FileIds Move to… these files; absent = every file of the item (Re-match…).
+	FileIds *[]int64 `json:"fileIds,omitempty"`
+
+	// Fingerprint Execute only: the preview's.
+	Fingerprint *string `json:"fingerprint,omitempty"`
+
+	// RequestId Execute only.
+	RequestId *string `json:"requestId,omitempty"`
+
+	// SourceRevision Execute only: the preview's.
+	SourceRevision *int64 `json:"sourceRevision,omitempty"`
+
+	// Target A library item (itemId), or a title by provider id.
+	Target *struct {
+		HydrationSource *string    `json:"hydrationSource,omitempty"`
+		ImdbId          *string    `json:"imdbId,omitempty"`
+		ItemId          *int64     `json:"itemId,omitempty"`
+		Kind            *MediaKind `json:"kind,omitempty"`
+		Olid            *string    `json:"olid,omitempty"`
+		TmdbId          *int64     `json:"tmdbId,omitempty"`
+		TvdbId          *int64     `json:"tvdbId,omitempty"`
+	} `json:"target,omitempty"`
+
+	// TargetRevision Execute only: the preview's (0 for a new title).
+	TargetRevision *int64 `json:"targetRevision,omitempty"`
+}
 
 // RemoveFileResult defines model for RemoveFileResult.
 type RemoveFileResult struct {
@@ -3473,22 +5104,46 @@ type ScannedFile struct {
 	Episodes []int `json:"episodes"`
 
 	// Kind video | book
-	Kind    string `json:"kind"`
-	Name    string `json:"name"`
-	Path    string `json:"path"`
-	Quality string `json:"quality"`
+	Kind string `json:"kind"`
+	Name string `json:"name"`
+	Path string `json:"path"`
+
+	// Publication The runner delivery a scanned file is part of. Such a file is placed through Resolve, never through /import/manual.
+	Publication *ScannedPublication `json:"publication,omitempty"`
+	Quality     string              `json:"quality"`
 
 	// Season -1 when not a series file
 	Season int   `json:"season"`
 	Size   int64 `json:"size"`
 
+	// Skipped Why this entry cannot be imported (a symlink, an unreadable file); depth=1 only.
+	Skipped *string `json:"skipped,omitempty"`
+
 	// SnapshotIdentity Stable preview snapshot token used to detect changed files before explicit legacy review import.
 	SnapshotIdentity *string `json:"snapshotIdentity,omitempty"`
+
+	// Subtitles Subtitle files that travel with this video (depth=1 only).
+	Subtitles *int `json:"subtitles,omitempty"`
+}
+
+// ScannedPublication The runner delivery a scanned file is part of. Such a file is placed through Resolve, never through /import/manual.
+type ScannedPublication struct {
+	DownloadId int64 `json:"downloadId"`
+
+	// Outcome The file's recorded outcome; empty when the manifest does not name it.
+	Outcome string `json:"outcome"`
+
+	// Path The file's path relative to the publication.
+	Path          string `json:"path"`
+	PublicationId int64  `json:"publicationId"`
 }
 
 // SearchResult defines model for SearchResult.
 type SearchResult struct {
 	Author *string `json:"author,omitempty"`
+
+	// Availability Read-only primary-copy facts, independent of requests and playback readiness. Series counts cover known aired regular episodes. First-run, failed, changed or older-than-13h observations are unknown.
+	Availability *Availability `json:"availability,omitempty"`
 
 	// BookTypes Which editions of this Open Library work are already curated.
 	BookTypes *[]BookType `json:"bookTypes,omitempty"`
@@ -3514,14 +5169,26 @@ type SearchResult struct {
 	Year   int    `json:"year"`
 }
 
+// SeasonAvailability defines model for SeasonAvailability.
+type SeasonAvailability struct {
+	Expected     int `json:"expected"`
+	Number       int `json:"number"`
+	Offloaded    int `json:"offloaded"`
+	Present      int `json:"present"`
+	UnknownDates int `json:"unknownDates"`
+}
+
 // SeasonInfo defines model for SeasonInfo.
 type SeasonInfo struct {
 	Episodes  []EpisodeInfo `json:"episodes"`
 	Monitored bool          `json:"monitored"`
 	Number    int           `json:"number"`
+
+	// Offloaded Offloaded (ADR 0028); Re-acquire is the way back.
+	Offloaded *bool `json:"offloaded,omitempty"`
 }
 
-// SeriesMonitorMode Persistent series policy. Applying a mode resets existing selections. All selects everything; latest selects the latest and later seasons; future selects episodes airing today or later; new_seasons selects seasons after the last season started before today; none clears selections. Specials start unmonitored. Refresh preserves manual selections.
+// SeriesMonitorMode Persistent series policy. Applying a mode resets existing selections. All selects everything; latest selects the latest and later seasons; future selects episodes airing today or later; new_seasons selects seasons after the last season started before today; first_season selects only the lowest regular season (season 1 when none is known yet) and later seasons arrive unmonitored, ready to monitor or Re-acquire; none clears selections. Specials start unmonitored. Refresh preserves manual selections.
 type SeriesMonitorMode string
 
 // Settings defines model for Settings.
@@ -3587,6 +5254,206 @@ type SettingsUpdate struct {
 	// TraktClientId Optional — a free Trakt app client id, which adds five rows to Discover (ADR 0015). "" clears it. Import lists keep their own per-list id and are unaffected either way.
 	TraktClientId *string `json:"traktClientId,omitempty"`
 }
+
+// StatusAttempt defines model for StatusAttempt.
+type StatusAttempt struct {
+	At         int64   `json:"at"`
+	DownloadId int64   `json:"downloadId"`
+	Indexer    *string `json:"indexer,omitempty"`
+	Outcome    string  `json:"outcome"`
+	Reason     *string `json:"reason,omitempty"`
+	Release    string  `json:"release"`
+}
+
+// StatusCinema defines model for StatusCinema.
+type StatusCinema struct {
+	DeliveryId int64    `json:"deliveryId"`
+	Error      *string  `json:"error,omitempty"`
+	ItemIds    *[]int64 `json:"itemIds,omitempty"`
+	NotifierId int64    `json:"notifierId"`
+	Status     string   `json:"status"`
+	VisibleAt  *int64   `json:"visibleAt,omitempty"`
+	WaitingOn  *string  `json:"waitingOn,omitempty"`
+
+	// Warnings Cinema's lasting answers about files that left (a Re-match).
+	Warnings *[]string `json:"warnings,omitempty"`
+}
+
+// StatusDownload defines model for StatusDownload.
+type StatusDownload struct {
+	Bytes int64 `json:"bytes"`
+
+	// Episodes Episodes covered; more than one is a season pack.
+	Episodes *int `json:"episodes,omitempty"`
+
+	// EtaSeconds remaining_bytes / rate_bps.
+	EtaSeconds *int64  `json:"etaSeconds,omitempty"`
+	Id         int64   `json:"id"`
+	Indexer    *string `json:"indexer,omitempty"`
+	Progress   float32 `json:"progress"`
+
+	// RateBps Runner's rate_bps, relayed.
+	RateBps *int64 `json:"rateBps,omitempty"`
+	Release string `json:"release"`
+
+	// Stage Runner's post-processing stage.
+	Stage      *string `json:"stage,omitempty"`
+	StageSince *int64  `json:"stageSince,omitempty"`
+	State      string  `json:"state"`
+	Total      int64   `json:"total"`
+}
+
+// StatusEpisode defines model for StatusEpisode.
+type StatusEpisode struct {
+	// At Unix ms the client formats beside the summary.
+	At     *int64        `json:"at,omitempty"`
+	Cinema *StatusCinema `json:"cinema,omitempty"`
+
+	// DownloadId The download this episode's track follows.
+	DownloadId *int64        `json:"downloadId,omitempty"`
+	Episode    int           `json:"episode"`
+	EpisodeId  int64         `json:"episodeId"`
+	InPack     bool          `json:"inPack"`
+	Season     int           `json:"season"`
+	Stages     []StatusStage `json:"stages"`
+	Summary    string        `json:"summary"`
+	Title      *string       `json:"title,omitempty"`
+
+	// WantableId Scopes Search now to this episode (POST /wanted/searches
+	WantableId string `json:"wantableId"`
+}
+
+// StatusHeadline defines model for StatusHeadline.
+type StatusHeadline struct {
+	// At Unix ms the client formats beside the title.
+	At     *int64              `json:"at,omitempty"`
+	Detail *string             `json:"detail,omitempty"`
+	State  StatusHeadlineState `json:"state"`
+	Title  string              `json:"title"`
+}
+
+// StatusHeadlineState defines model for StatusHeadline.State.
+type StatusHeadlineState string
+
+// StatusOffload The open Offload deleting this title's files (the panel's "Offloading files" block), and once it is over its final stage "Offloaded <date> · <bytes> freed" until dismissed. Stop is POST /offload/{operationId}/cancel, dismiss POST /offload/{operationId}/dismiss.
+type StatusOffload struct {
+	BytesFreed int64 `json:"bytesFreed"`
+	BytesTotal int64 `json:"bytesTotal"`
+	Cinema     *[]struct {
+		Directory *string `json:"directory,omitempty"`
+		LastError *string `json:"lastError,omitempty"`
+		Result    *string `json:"result,omitempty"`
+		Status    *string `json:"status,omitempty"`
+		VisibleAt *int64  `json:"visibleAt,omitempty"`
+	} `json:"cinema,omitempty"`
+	CinemaLine *string `json:"cinemaLine,omitempty"`
+	Ended      bool    `json:"ended"`
+
+	// Error The plain reason it is waiting or retrying.
+	Error       *string            `json:"error,omitempty"`
+	Failed      *[]string          `json:"failed,omitempty"`
+	FilesDone   int                `json:"filesDone"`
+	FilesTotal  int                `json:"filesTotal"`
+	FinishedAt  *int64             `json:"finishedAt,omitempty"`
+	Headline    string             `json:"headline"`
+	Label       string             `json:"label"`
+	OperationId string             `json:"operationId"`
+	Scope       StatusOffloadScope `json:"scope"`
+	State       StatusOffloadState `json:"state"`
+	Stoppable   bool               `json:"stoppable"`
+}
+
+// StatusOffloadScope defines model for StatusOffload.Scope.
+type StatusOffloadScope string
+
+// StatusOffloadState defines model for StatusOffload.State.
+type StatusOffloadState string
+
+// StatusRematch The open Re-match moving files out of or into this item (the panel's "Moving files" block). Stop is POST /rematch/{operationId}/cancel.
+type StatusRematch struct {
+	BytesDone  int64 `json:"bytesDone"`
+	BytesTotal int64 `json:"bytesTotal"`
+	Cinema     *[]struct {
+		Directory string  `json:"directory"`
+		LastError *string `json:"lastError,omitempty"`
+		Result    *string `json:"result,omitempty"`
+		Status    string  `json:"status"`
+		VisibleAt *int64  `json:"visibleAt,omitempty"`
+	} `json:"cinema,omitempty"`
+	CinemaLine *string `json:"cinemaLine,omitempty"`
+
+	// Ended The operation is over (failed
+	Ended       bool    `json:"ended"`
+	Error       *string `json:"error,omitempty"`
+	FailedMoves *[]struct {
+		From   string `json:"from"`
+		Reason string `json:"reason"`
+	} `json:"failedMoves,omitempty"`
+	FilesDone  int `json:"filesDone"`
+	FilesTotal int `json:"filesTotal"`
+
+	// Headline For this item's side, e.g. Files moving here from Dune (1984).
+	Headline string `json:"headline"`
+	Moves    *[]struct {
+		Bytes int64  `json:"bytes"`
+		From  string `json:"from"`
+		State string `json:"state"`
+		To    string `json:"to"`
+	} `json:"moves,omitempty"`
+	OperationId string `json:"operationId"`
+
+	// Role Which side of the move this item is.
+	Role         StatusRematchRole  `json:"role"`
+	SourceItemId int64              `json:"sourceItemId"`
+	SourceTitle  string             `json:"sourceTitle"`
+	State        StatusRematchState `json:"state"`
+
+	// Stoppable False once the files are committed.
+	Stoppable    bool   `json:"stoppable"`
+	TargetItemId int64  `json:"targetItemId"`
+	TargetTitle  string `json:"targetTitle"`
+
+	// Warnings Cinema's retained and present lines.
+	Warnings *[]string `json:"warnings,omitempty"`
+}
+
+// StatusRematchRole Which side of the move this item is.
+type StatusRematchRole string
+
+// StatusRematchState defines model for StatusRematch.State.
+type StatusRematchState string
+
+// StatusSeason defines model for StatusSeason.
+type StatusSeason struct {
+	Active   bool            `json:"active"`
+	Download *StatusDownload `json:"download,omitempty"`
+	Episodes int             `json:"episodes"`
+	InCinema int             `json:"inCinema"`
+	OnDisk   int             `json:"onDisk"`
+	Season   int             `json:"season"`
+	Summary  string          `json:"summary"`
+}
+
+// StatusStage defines model for StatusStage.
+type StatusStage struct {
+	// Actions Actions that apply to this stage.
+	Actions *[]StatusStageActions `json:"actions,omitempty"`
+
+	// At Unix ms; absent when there is no time to show.
+	At     *int64           `json:"at,omitempty"`
+	Detail *string          `json:"detail,omitempty"`
+	Key    StatusStageKey   `json:"key"`
+	State  StatusStageState `json:"state"`
+}
+
+// StatusStageActions defines model for StatusStage.Actions.
+type StatusStageActions string
+
+// StatusStageKey defines model for StatusStage.Key.
+type StatusStageKey string
+
+// StatusStageState defines model for StatusStage.State.
+type StatusStageState string
 
 // StorageChangeRequest defines model for StorageChangeRequest.
 type StorageChangeRequest struct {
@@ -3673,7 +5540,7 @@ type Transfer struct {
 	// Peer The application on the other side. Absent for `importing` — Monarr is moving its own files, and naming a peer would invent a seam that does not exist.
 	Peer *string `json:"peer,omitempty"`
 
-	// Stage Which seam this is at. `downloading` is nzbd's work that Monarr is watching; `importing` is Monarr moving bytes itself; `notifying` is telling plurx, including the waits between retries.
+	// Stage Which seam this is at. `downloading` is nzbd's work that Monarr is watching; `importing` is Monarr moving bytes itself; `notifying` is telling plurx, including the waits between retries; `publication_cleanup` is Curator verifying and removing a publication's evidenced files (detail says why it runs; a download-less publication reports a negative downloadId, minus its publication id).
 	Stage     TransferStage `json:"stage"`
 	StartedAt time.Time     `json:"startedAt"`
 	Title     string        `json:"title"`
@@ -3683,7 +5550,7 @@ type Transfer struct {
 	Transfer *string `json:"transfer,omitempty"`
 }
 
-// TransferStage Which seam this is at. `downloading` is nzbd's work that Monarr is watching; `importing` is Monarr moving bytes itself; `notifying` is telling plurx, including the waits between retries.
+// TransferStage Which seam this is at. `downloading` is nzbd's work that Monarr is watching; `importing` is Monarr moving bytes itself; `notifying` is telling plurx, including the waits between retries; `publication_cleanup` is Curator verifying and removing a publication's evidenced files (detail says why it runs; a download-less publication reports a negative downloadId, minus its publication id).
 type TransferStage string
 
 // UnmatchedDir defines model for UnmatchedDir.
@@ -3701,7 +5568,7 @@ type UpdateMediaItemRequest struct {
 	// InheritDownloadPriority Clear the per-item override and inherit from the quality profile.
 	InheritDownloadPriority *bool `json:"inheritDownloadPriority,omitempty"`
 
-	// Monitor Persistent series policy. Applying a mode resets existing selections. All selects everything; latest selects the latest and later seasons; future selects episodes airing today or later; new_seasons selects seasons after the last season started before today; none clears selections. Specials start unmonitored. Refresh preserves manual selections.
+	// Monitor Persistent series policy. Applying a mode resets existing selections. All selects everything; latest selects the latest and later seasons; future selects episodes airing today or later; new_seasons selects seasons after the last season started before today; first_season selects only the lowest regular season (season 1 when none is known yet) and later seasons arrive unmonitored, ready to monitor or Re-acquire; none clears selections. Specials start unmonitored. Refresh preserves manual selections.
 	Monitor   *SeriesMonitorMode `json:"monitor,omitempty"`
 	Monitored *bool              `json:"monitored,omitempty"`
 
@@ -3744,20 +5611,16 @@ type WantedItemKind string
 // WantedItemReason defines model for WantedItem.Reason.
 type WantedItemReason string
 
-// WantedSearchConflict defines model for WantedSearchConflict.
-type WantedSearchConflict struct {
-	ActiveRunId string `json:"activeRunId"`
-	CanCancel   bool   `json:"canCancel"`
-	Message     string `json:"message"`
-}
-
 // WantedSearchRequest defines model for WantedSearchRequest.
 type WantedSearchRequest struct {
-	MediaItemId   *int64                     `json:"mediaItemId,omitempty"`
-	Reason        *WantedSearchRequestReason `json:"reason,omitempty"`
-	Scope         WantedSearchRequestScope   `json:"scope"`
-	TargetDelayMs *int                       `json:"targetDelayMs,omitempty"`
-	WantableId    *string                    `json:"wantableId,omitempty"`
+	MediaItemId *int64                     `json:"mediaItemId,omitempty"`
+	Reason      *WantedSearchRequestReason `json:"reason,omitempty"`
+
+	// RequestId Replay the same submission while the accepted run is retained.
+	RequestId     *string                  `json:"requestId,omitempty"`
+	Scope         WantedSearchRequestScope `json:"scope"`
+	TargetDelayMs *int                     `json:"targetDelayMs,omitempty"`
+	WantableId    *string                  `json:"wantableId,omitempty"`
 }
 
 // WantedSearchRequestReason defines model for WantedSearchRequest.Reason.
@@ -3819,6 +5682,11 @@ type WantedSearchRun struct {
 // WantedSearchRunStatus defines model for WantedSearchRun.Status.
 type WantedSearchRunStatus string
 
+// WantedSearchRunsPage defines model for WantedSearchRunsPage.
+type WantedSearchRunsPage struct {
+	Items []WantedSearchRun `json:"items"`
+}
+
 // WantedSearchScope defines model for WantedSearchScope.
 type WantedSearchScope struct {
 	MediaItemId *int64                   `json:"mediaItemId,omitempty"`
@@ -3836,10 +5704,49 @@ type WantedSearchScopeScope string
 // WantedSearchRunId defines model for WantedSearchRunId.
 type WantedSearchRunId = string
 
+// ListActivityParams defines parameters for ListActivity.
+type ListActivityParams struct {
+	View   *ListActivityParamsView  `form:"view,omitempty" json:"view,omitempty"`
+	Scope  *ListActivityParamsScope `form:"scope,omitempty" json:"scope,omitempty"`
+	Q      *string                  `form:"q,omitempty" json:"q,omitempty"`
+	Limit  *int                     `form:"limit,omitempty" json:"limit,omitempty"`
+	Offset *int                     `form:"offset,omitempty" json:"offset,omitempty"`
+}
+
+// ListActivityParamsView defines parameters for ListActivity.
+type ListActivityParamsView string
+
+// ListActivityParamsScope defines parameters for ListActivity.
+type ListActivityParamsScope string
+
+// CreateActivityActionJSONBody defines parameters for CreateActivityAction.
+type CreateActivityActionJSONBody map[string]interface{}
+
+// CreateActivitySelectionJSONBody defines parameters for CreateActivitySelection.
+type CreateActivitySelectionJSONBody map[string]interface{}
+
+// UpdateOwnAccountJSONBody defines parameters for UpdateOwnAccount.
+type UpdateOwnAccountJSONBody = map[string]interface{}
+
+// AcceptHouseholdInvitationJSONBody defines parameters for AcceptHouseholdInvitation.
+type AcceptHouseholdInvitationJSONBody struct {
+	DisplayName *string `json:"displayName,omitempty"`
+	Password    string  `json:"password"`
+	Token       string  `json:"token"`
+	Username    string  `json:"username"`
+}
+
 // LoginJSONBody defines parameters for Login.
 type LoginJSONBody struct {
 	Password string `json:"password"`
 	Username string `json:"username"`
+}
+
+// CreateAccountSessionJSONBody defines parameters for CreateAccountSession.
+type CreateAccountSessionJSONBody struct {
+	Device   *string `json:"device,omitempty"`
+	Password string  `json:"password"`
+	Username string  `json:"username"`
 }
 
 // GetCalendarParams defines parameters for GetCalendar.
@@ -3857,6 +5764,25 @@ type DiscoverItemsParams struct {
 	Page *int `form:"page,omitempty" json:"page,omitempty"`
 }
 
+// ListLibraryDiscoverySeedsParams defines parameters for ListLibraryDiscoverySeeds.
+type ListLibraryDiscoverySeedsParams struct {
+	Q      *string `form:"q,omitempty" json:"q,omitempty"`
+	Offset *int    `form:"offset,omitempty" json:"offset,omitempty"`
+}
+
+// GetLibraryDiscoveryItemsParams defines parameters for GetLibraryDiscoveryItems.
+type GetLibraryDiscoveryItemsParams struct {
+	Kind   GetLibraryDiscoveryItemsParamsKind  `form:"kind" json:"kind"`
+	TmdbId int64                               `form:"tmdbId" json:"tmdbId"`
+	Shelf  GetLibraryDiscoveryItemsParamsShelf `form:"shelf" json:"shelf"`
+}
+
+// GetLibraryDiscoveryItemsParamsKind defines parameters for GetLibraryDiscoveryItems.
+type GetLibraryDiscoveryItemsParamsKind string
+
+// GetLibraryDiscoveryItemsParamsShelf defines parameters for GetLibraryDiscoveryItems.
+type GetLibraryDiscoveryItemsParamsShelf string
+
 // ListDeliveryLifecycleParams defines parameters for ListDeliveryLifecycle.
 type ListDeliveryLifecycleParams struct {
 	BeforeId   *int64 `form:"beforeId,omitempty" json:"beforeId,omitempty"`
@@ -3866,7 +5792,7 @@ type ListDeliveryLifecycleParams struct {
 
 // DeleteCompletedEntryJSONBody defines parameters for DeleteCompletedEntry.
 type DeleteCompletedEntryJSONBody struct {
-	// Files Exact inventory file identities selected for explicit deletion of a delivery-managed or explicitly reviewed legacy payload. Required for these entries; no directory removal is performed.
+	// Files Exact inventory files selected for deletion. For a publication-managed directory each must be an unresolved file of the publication; it is discarded and leaves through the per-file cleanup (digest-checked, storage-checked). For an entry held for storage-change review, the selected current files are deleted. No directory is removed recursively.
 	Files *[]struct {
 		Path             string `json:"path"`
 		SnapshotIdentity string `json:"snapshotIdentity"`
@@ -3874,9 +5800,22 @@ type DeleteCompletedEntryJSONBody struct {
 	Fingerprint string `json:"fingerprint"`
 	Path        string `json:"path"`
 
-	// ReviewLegacy Explicitly approve deletion of only the selected current files from a legacy review entry.
+	// ReviewLegacy Explicitly approve deletion of only the selected current files from an entry held for storage-change review.
 	ReviewLegacy *bool `json:"reviewLegacy,omitempty"`
 }
+
+// ApprovePublicationCleanupJSONBody defines parameters for ApprovePublicationCleanup.
+type ApprovePublicationCleanupJSONBody struct {
+	Ids []int64 `json:"ids"`
+}
+
+// SetPublicationCleanupJSONBody defines parameters for SetPublicationCleanup.
+type SetPublicationCleanupJSONBody struct {
+	Action SetPublicationCleanupJSONBodyAction `json:"action"`
+}
+
+// SetPublicationCleanupJSONBodyAction defines parameters for SetPublicationCleanup.
+type SetPublicationCleanupJSONBodyAction string
 
 // BrowseFilesystemParams defines parameters for BrowseFilesystem.
 type BrowseFilesystemParams struct {
@@ -3892,13 +5831,88 @@ type ListHistoryParams struct {
 	Offset      *int   `form:"offset,omitempty" json:"offset,omitempty"`
 }
 
+// UpdateHouseholdAccountJSONBody defines parameters for UpdateHouseholdAccount.
+type UpdateHouseholdAccountJSONBody = map[string]interface{}
+
+// SearchHouseholdCatalogueParams defines parameters for SearchHouseholdCatalogue.
+type SearchHouseholdCatalogueParams struct {
+	Kind SearchHouseholdCatalogueParamsKind `form:"kind" json:"kind"`
+	Q    string                             `form:"q" json:"q"`
+}
+
+// SearchHouseholdCatalogueParamsKind defines parameters for SearchHouseholdCatalogue.
+type SearchHouseholdCatalogueParamsKind string
+
+// CreateHouseholdInvitationJSONBody defines parameters for CreateHouseholdInvitation.
+type CreateHouseholdInvitationJSONBody struct {
+	Password string `json:"password"`
+}
+
+// ListHouseholdRequestsParams defines parameters for ListHouseholdRequests.
+type ListHouseholdRequestsParams struct {
+	Before *int64 `form:"before,omitempty" json:"before,omitempty"`
+}
+
+// SubmitHouseholdRequestJSONBody defines parameters for SubmitHouseholdRequest.
+type SubmitHouseholdRequestJSONBody struct {
+	Kind    SubmitHouseholdRequestJSONBodyKind `json:"kind"`
+	Seasons *[]int                             `json:"seasons,omitempty"`
+	TmdbId  int64                              `json:"tmdbId"`
+}
+
+// SubmitHouseholdRequestJSONBodyKind defines parameters for SubmitHouseholdRequest.
+type SubmitHouseholdRequestJSONBodyKind string
+
+// ApproveHouseholdRequestJSONBody defines parameters for ApproveHouseholdRequest.
+type ApproveHouseholdRequestJSONBody struct {
+	Fingerprint string  `json:"fingerprint"`
+	PrivateNote *string `json:"privateNote,omitempty"`
+	ProfileId   *int64  `json:"profileId,omitempty"`
+	Reacquire   *bool   `json:"reacquire,omitempty"`
+	RootId      *int64  `json:"rootId,omitempty"`
+}
+
+// DeclineHouseholdRequestJSONBody defines parameters for DeclineHouseholdRequest.
+type DeclineHouseholdRequestJSONBody = map[string]interface{}
+
+// SaveHouseholdRequestNoteJSONBody defines parameters for SaveHouseholdRequestNote.
+type SaveHouseholdRequestNoteJSONBody = map[string]interface{}
+
+// ReviewHouseholdRequestParams defines parameters for ReviewHouseholdRequest.
+type ReviewHouseholdRequestParams struct {
+	RootId    *int64 `form:"rootId,omitempty" json:"rootId,omitempty"`
+	ProfileId *int64 `form:"profileId,omitempty" json:"profileId,omitempty"`
+}
+
+// GetHouseholdTitleParams defines parameters for GetHouseholdTitle.
+type GetHouseholdTitleParams struct {
+	Kind GetHouseholdTitleParamsKind `form:"kind" json:"kind"`
+}
+
+// GetHouseholdTitleParamsKind defines parameters for GetHouseholdTitle.
+type GetHouseholdTitleParamsKind string
+
 // PlanRetainedRecoveryJSONBody defines parameters for PlanRetainedRecovery.
 type PlanRetainedRecoveryJSONBody = []map[string]interface{}
 
 // ScanImportPathParams defines parameters for ScanImportPath.
 type ScanImportPathParams struct {
 	Path string `form:"path" json:"path"`
+
+	// Depth 1 lists only the files directly in path (the item page's Import file… browser), each with its subtitle count and, for a file inside a runner delivery, that delivery, plus an entry with skipped set for each entry it could not offer. Absent walks the whole tree; any other value is refused.
+	Depth *int `form:"depth,omitempty" json:"depth,omitempty"`
 }
+
+// ListImportActivityParams defines parameters for ListImportActivity.
+type ListImportActivityParams struct {
+	Filter *ListImportActivityParamsFilter `form:"filter,omitempty" json:"filter,omitempty"`
+	Q      *string                         `form:"q,omitempty" json:"q,omitempty"`
+	Limit  *int                            `form:"limit,omitempty" json:"limit,omitempty"`
+	Offset *int                            `form:"offset,omitempty" json:"offset,omitempty"`
+}
+
+// ListImportActivityParamsFilter defines parameters for ListImportActivity.
+type ListImportActivityParamsFilter string
 
 // UpdateIndexerBudgetJSONBody defines parameters for UpdateIndexerBudget.
 type UpdateIndexerBudgetJSONBody struct {
@@ -3992,6 +6006,12 @@ type RemoveLibraryFileParams struct {
 	Search *bool `form:"search,omitempty" json:"search,omitempty"`
 }
 
+// RefreshLibraryItemJSONBody defines parameters for RefreshLibraryItem.
+type RefreshLibraryItemJSONBody struct {
+	PreviousTmdbId int64 `json:"previousTmdbId"`
+	TmdbId         int64 `json:"tmdbId"`
+}
+
 // SearchReleasesParams defines parameters for SearchReleases.
 type SearchReleasesParams struct {
 	Season  *int `form:"season,omitempty" json:"season,omitempty"`
@@ -4014,6 +6034,20 @@ type RepairLibraryFolderJSONBody struct {
 type ResolveLibraryReviewFlagJSONBody struct {
 	FileGeneration string `json:"fileGeneration"`
 }
+
+// GetLibraryItemStatusParams defines parameters for GetLibraryItemStatus.
+type GetLibraryItemStatusParams struct {
+	Season *int `form:"season,omitempty" json:"season,omitempty"`
+}
+
+// ConfirmLibraryItemInCinemaParams defines parameters for ConfirmLibraryItemInCinema.
+type ConfirmLibraryItemInCinemaParams struct {
+	// Episode An episode id; only that episode's files are named.
+	Episode *int64 `form:"episode,omitempty" json:"episode,omitempty"`
+}
+
+// LookupAvailabilityJSONBody defines parameters for LookupAvailability.
+type LookupAvailabilityJSONBody = []AvailabilityTarget
 
 // PreviewMetadataParams defines parameters for PreviewMetadata.
 type PreviewMetadataParams struct {
@@ -4045,6 +6079,48 @@ type ListQueueParamsFilter string
 // RemoveQueueItemParams defines parameters for RemoveQueueItem.
 type RemoveQueueItemParams struct {
 	FromClient *bool `form:"fromClient,omitempty" json:"fromClient,omitempty"`
+
+	// Blocklist With fromClient: also blocklist the release (the item page's Cancel download), so automation does not grab it again. Activity's Remove leaves it off: a removal is not a verdict on the release.
+	Blocklist *bool `form:"blocklist,omitempty" json:"blocklist,omitempty"`
+}
+
+// ResolveImportReviewJSONBody defines parameters for ResolveImportReview.
+type ResolveImportReviewJSONBody struct {
+	Acknowledged  *bool                             `json:"acknowledged,omitempty"`
+	Action        ResolveImportReviewJSONBodyAction `json:"action"`
+	Epoch         string                            `json:"epoch"`
+	Fingerprints  *map[string]string                `json:"fingerprints,omitempty"`
+	GenerationKey string                            `json:"generationKey"`
+	Ids           []string                          `json:"ids"`
+}
+
+// ResolveImportReviewJSONBodyAction defines parameters for ResolveImportReview.
+type ResolveImportReviewJSONBodyAction string
+
+// PlacePublicationFilesJSONBody defines parameters for PlacePublicationFiles.
+type PlacePublicationFilesJSONBody struct {
+	// CopyId Target copy or edition; 0 = the primary.
+	CopyId *int64 `json:"copyId,omitempty"`
+	Files  []struct {
+		// Episodes The episode(s) this file is, overriding its name.
+		Episodes *[]int `json:"episodes,omitempty"`
+
+		// Path The file's path relative to the publication.
+		Path   string `json:"path"`
+		Season *int   `json:"season,omitempty"`
+	} `json:"files"`
+
+	// MediaItemId Target item; absent = the download's own.
+	MediaItemId *int64 `json:"mediaItemId,omitempty"`
+}
+
+// ResolvePublicationFileJSONBody defines parameters for ResolvePublicationFile.
+type ResolvePublicationFileJSONBody struct {
+	// Action place | discard | keep
+	Action string `json:"action"`
+
+	// Path The file's path relative to the publication.
+	Path string `json:"path"`
 }
 
 // ResolveQueueReservationJSONBody defines parameters for ResolveQueueReservation.
@@ -4065,6 +6141,12 @@ type UpdateRootFolderJSONBody struct {
 	Kind RootKind `json:"kind"`
 }
 
+// ConfirmLibraryVolumeJSONBody defines parameters for ConfirmLibraryVolume.
+type ConfirmLibraryVolumeJSONBody struct {
+	Acknowledged bool   `json:"acknowledged"`
+	Fingerprint  string `json:"fingerprint"`
+}
+
 // AbortDeploymentDrainJSONBody defines parameters for AbortDeploymentDrain.
 type AbortDeploymentDrainJSONBody struct {
 	Generation string `json:"generation"`
@@ -4083,8 +6165,26 @@ type ListWantedSearchResultsParams struct {
 	Offset *int `form:"offset,omitempty" json:"offset,omitempty"`
 }
 
+// PlurxWebhook200JSONResponseBodyState defines parameters for PlurxWebhook.
+type PlurxWebhook200JSONResponseBodyState string
+
+// CreateActivityActionJSONRequestBody defines body for CreateActivityAction for application/json ContentType.
+type CreateActivityActionJSONRequestBody CreateActivityActionJSONBody
+
+// CreateActivitySelectionJSONRequestBody defines body for CreateActivitySelection for application/json ContentType.
+type CreateActivitySelectionJSONRequestBody CreateActivitySelectionJSONBody
+
+// UpdateOwnAccountJSONRequestBody defines body for UpdateOwnAccount for application/json ContentType.
+type UpdateOwnAccountJSONRequestBody = UpdateOwnAccountJSONBody
+
+// AcceptHouseholdInvitationJSONRequestBody defines body for AcceptHouseholdInvitation for application/json ContentType.
+type AcceptHouseholdInvitationJSONRequestBody AcceptHouseholdInvitationJSONBody
+
 // LoginJSONRequestBody defines body for Login for application/json ContentType.
 type LoginJSONRequestBody LoginJSONBody
+
+// CreateAccountSessionJSONRequestBody defines body for CreateAccountSession for application/json ContentType.
+type CreateAccountSessionJSONRequestBody CreateAccountSessionJSONBody
 
 // AddCustomFormatJSONRequestBody defines body for AddCustomFormat for application/json ContentType.
 type AddCustomFormatJSONRequestBody = CustomFormatInput
@@ -4110,11 +6210,38 @@ type AcceptCompletedStorageChangeJSONRequestBody = StorageChangeRequest
 // PreviewCompletedStorageChangeJSONRequestBody defines body for PreviewCompletedStorageChange for application/json ContentType.
 type PreviewCompletedStorageChangeJSONRequestBody = StorageChangeRequest
 
+// ApprovePublicationCleanupJSONRequestBody defines body for ApprovePublicationCleanup for application/json ContentType.
+type ApprovePublicationCleanupJSONRequestBody ApprovePublicationCleanupJSONBody
+
+// SetPublicationCleanupJSONRequestBody defines body for SetPublicationCleanup for application/json ContentType.
+type SetPublicationCleanupJSONRequestBody SetPublicationCleanupJSONBody
+
 // GrabReleaseJSONRequestBody defines body for GrabRelease for application/json ContentType.
 type GrabReleaseJSONRequestBody = GrabRequest
 
+// UpdateHouseholdAccountJSONRequestBody defines body for UpdateHouseholdAccount for application/json ContentType.
+type UpdateHouseholdAccountJSONRequestBody = UpdateHouseholdAccountJSONBody
+
+// CreateHouseholdInvitationJSONRequestBody defines body for CreateHouseholdInvitation for application/json ContentType.
+type CreateHouseholdInvitationJSONRequestBody CreateHouseholdInvitationJSONBody
+
+// SubmitHouseholdRequestJSONRequestBody defines body for SubmitHouseholdRequest for application/json ContentType.
+type SubmitHouseholdRequestJSONRequestBody SubmitHouseholdRequestJSONBody
+
+// ApproveHouseholdRequestJSONRequestBody defines body for ApproveHouseholdRequest for application/json ContentType.
+type ApproveHouseholdRequestJSONRequestBody ApproveHouseholdRequestJSONBody
+
+// DeclineHouseholdRequestJSONRequestBody defines body for DeclineHouseholdRequest for application/json ContentType.
+type DeclineHouseholdRequestJSONRequestBody = DeclineHouseholdRequestJSONBody
+
+// SaveHouseholdRequestNoteJSONRequestBody defines body for SaveHouseholdRequestNote for application/json ContentType.
+type SaveHouseholdRequestNoteJSONRequestBody = SaveHouseholdRequestNoteJSONBody
+
 // ManualImportJSONRequestBody defines body for ManualImport for application/json ContentType.
 type ManualImportJSONRequestBody = ManualImportRequest
+
+// PlanImportJSONRequestBody defines body for PlanImport for application/json ContentType.
+type PlanImportJSONRequestBody = ImportPlanRequest
 
 // QueueRecoveryImportJSONRequestBody defines body for QueueRecoveryImport for application/json ContentType.
 type QueueRecoveryImportJSONRequestBody = RecoveryImportRequest
@@ -4179,6 +6306,24 @@ type StartReplacementFileObservationJSONRequestBody = ReplacementObservationRequ
 // ReportLibraryFileJSONRequestBody defines body for ReportLibraryFile for application/json ContentType.
 type ReportLibraryFileJSONRequestBody = LibraryFileReportRequest
 
+// StartOffloadJSONRequestBody defines body for StartOffload for application/json ContentType.
+type StartOffloadJSONRequestBody = OffloadRequest
+
+// PreviewOffloadJSONRequestBody defines body for PreviewOffload for application/json ContentType.
+type PreviewOffloadJSONRequestBody = OffloadRequest
+
+// ReacquireLibraryItemJSONRequestBody defines body for ReacquireLibraryItem for application/json ContentType.
+type ReacquireLibraryItemJSONRequestBody = OffloadRequest
+
+// RefreshLibraryItemJSONRequestBody defines body for RefreshLibraryItem for application/json ContentType.
+type RefreshLibraryItemJSONRequestBody RefreshLibraryItemJSONBody
+
+// StartRematchJSONRequestBody defines body for StartRematch for application/json ContentType.
+type StartRematchJSONRequestBody = RematchRequest
+
+// PreviewRematchJSONRequestBody defines body for PreviewRematch for application/json ContentType.
+type PreviewRematchJSONRequestBody = RematchRequest
+
 // RepairLibraryFolderJSONRequestBody defines body for RepairLibraryFolder for application/json ContentType.
 type RepairLibraryFolderJSONRequestBody RepairLibraryFolderJSONBody
 
@@ -4190,6 +6335,9 @@ type ResolveLibraryReviewFlagJSONRequestBody ResolveLibraryReviewFlagJSONBody
 
 // SetSeasonMonitoredJSONRequestBody defines body for SetSeasonMonitored for application/json ContentType.
 type SetSeasonMonitoredJSONRequestBody = MonitorRequest
+
+// LookupAvailabilityJSONRequestBody defines body for LookupAvailability for application/json ContentType.
+type LookupAvailabilityJSONRequestBody = LookupAvailabilityJSONBody
 
 // RecommendSeriesJSONRequestBody defines body for RecommendSeries for application/json ContentType.
 type RecommendSeriesJSONRequestBody = RecommendationRequest
@@ -4212,6 +6360,15 @@ type UpdateProfileJSONRequestBody = ProfileInput
 // CancelQueueImportJSONRequestBody defines body for CancelQueueImport for application/json ContentType.
 type CancelQueueImportJSONRequestBody = ImportAttemptIdentity
 
+// ResolveImportReviewJSONRequestBody defines body for ResolveImportReview for application/json ContentType.
+type ResolveImportReviewJSONRequestBody ResolveImportReviewJSONBody
+
+// PlacePublicationFilesJSONRequestBody defines body for PlacePublicationFiles for application/json ContentType.
+type PlacePublicationFilesJSONRequestBody PlacePublicationFilesJSONBody
+
+// ResolvePublicationFileJSONRequestBody defines body for ResolvePublicationFile for application/json ContentType.
+type ResolvePublicationFileJSONRequestBody ResolvePublicationFileJSONBody
+
 // ResolveQueueReservationJSONRequestBody defines body for ResolveQueueReservation for application/json ContentType.
 type ResolveQueueReservationJSONRequestBody ResolveQueueReservationJSONBody
 
@@ -4220,6 +6377,9 @@ type AddRootFolderJSONRequestBody AddRootFolderJSONBody
 
 // UpdateRootFolderJSONRequestBody defines body for UpdateRootFolder for application/json ContentType.
 type UpdateRootFolderJSONRequestBody UpdateRootFolderJSONBody
+
+// ConfirmLibraryVolumeJSONRequestBody defines body for ConfirmLibraryVolume for application/json ContentType.
+type ConfirmLibraryVolumeJSONRequestBody ConfirmLibraryVolumeJSONBody
 
 // UpdateSettingsJSONRequestBody defines body for UpdateSettings for application/json ContentType.
 type UpdateSettingsJSONRequestBody = SettingsUpdate
@@ -4238,12 +6398,72 @@ type PlurxWebhookJSONRequestBody = PlurxWatchedEvent
 
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
+	// ListActivity Unified download and retained import activity
+	// (GET /activity)
+	ListActivity(w http.ResponseWriter, r *http.Request, params ListActivityParams)
+	// CreateActivityAction Persist an idempotent retry, approval or stop-and-delete operation
+	// (POST /activity/actions)
+	CreateActivityAction(w http.ResponseWriter, r *http.Request)
+	// GetActivityJobLog Read the correlated persistent lifecycle summary for one attempt
+	// (GET /activity/jobs/{id}/log)
+	GetActivityJobLog(w http.ResponseWriter, r *http.Request, id int64)
+	// GetActivityOperation Read durable progress and individual action results
+	// (GET /activity/operations/{id})
+	GetActivityOperation(w http.ResponseWriter, r *http.Request, id string)
+	// CreateActivitySelection Freeze matching attention identities across every page
+	// (POST /activity/selections)
+	CreateActivitySelection(w http.ResponseWriter, r *http.Request)
+	// UpdateOwnAccount Update the current local account after password confirmation
+	// (PUT /auth/account)
+	UpdateOwnAccount(w http.ResponseWriter, r *http.Request)
+	// OpenCinemaBrowser Bind a native handoff to its system browser and redirect to consent
+	// (GET /auth/cinema/browser)
+	OpenCinemaBrowser(w http.ResponseWriter, r *http.Request)
+	// CinemaCallback Consume a state- and issuer-bound Cinema callback
+	// (GET /auth/cinema/callback)
+	CinemaCallback(w http.ResponseWriter, r *http.Request)
+	// GetCinemaConnection Read the saved optional Cinema connection without secrets
+	// (GET /auth/cinema/connection)
+	GetCinemaConnection(w http.ResponseWriter, r *http.Request)
+	// SaveCinemaConnection Verify, save or disconnect Cinema login after local owner password proof
+	// (PUT /auth/cinema/connection)
+	SaveCinemaConnection(w http.ResponseWriter, r *http.Request)
+	// UnlinkCinema Unlink Cinema locally and queue remote grant revocation
+	// (DELETE /auth/cinema/link)
+	UnlinkCinema(w http.ResponseWriter, r *http.Request)
+	// GetCinemaLink Read this account’s optional Cinema identity link
+	// (GET /auth/cinema/link)
+	GetCinemaLink(w http.ResponseWriter, r *http.Request)
+	// StartCinemaLink Begin an explicitly consented Cinema link after local password proof
+	// (POST /auth/cinema/link)
+	StartCinemaLink(w http.ResponseWriter, r *http.Request)
+	// StartCinemaNative Start system-browser sign-in with an app S256 challenge
+	// (POST /auth/cinema/native)
+	StartCinemaNative(w http.ResponseWriter, r *http.Request)
+	// FinishCinemaNative Consume a native handoff with the app verifier and consenting-device completion code
+	// (POST /auth/cinema/native/result)
+	FinishCinemaNative(w http.ResponseWriter, r *http.Request)
+	// StartCinemaSignIn Start optional Cinema sign-in for an already linked account
+	// (POST /auth/cinema/start)
+	StartCinemaSignIn(w http.ResponseWriter, r *http.Request)
+	// GetHouseholdSignInInfo Public sign-in requirements and optional integration availability
+	// (GET /auth/info)
+	GetHouseholdSignInInfo(w http.ResponseWriter, r *http.Request)
+	// AcceptHouseholdInvitation Create an independent Curator account with a single-use household invitation
+	// (POST /auth/invitations/accept)
+	AcceptHouseholdInvitation(w http.ResponseWriter, r *http.Request)
 	// Login Session login for the UI (when auth is enabled)
 	// (POST /auth/login)
 	Login(w http.ResponseWriter, r *http.Request)
 	// Logout Clear the session
 	// (POST /auth/logout)
 	Logout(w http.ResponseWriter, r *http.Request)
+	// GetCurrentAccount Current local Curator account and sign-in method
+	// (GET /auth/me)
+	GetCurrentAccount(w http.ResponseWriter, r *http.Request)
+	// CreateAccountSession Sign in locally and issue a separately revocable native device token
+	// (POST /auth/sessions)
+	CreateAccountSession(w http.ResponseWriter, r *http.Request)
 	// ListBlocklist Failed releases that will never be re-grabbed
 	// (GET /blocklist)
 	ListBlocklist(w http.ResponseWriter, r *http.Request)
@@ -4265,6 +6485,12 @@ type ServerInterface interface {
 	// DiscoverItems One page of one Discover row
 	// (GET /discover/items)
 	DiscoverItems(w http.ResponseWriter, r *http.Request, params DiscoverItemsParams)
+	// ListLibraryDiscoverySeeds Page exact library movie and series identities usable as discovery seeds.
+	// (GET /discover/library/seeds)
+	ListLibraryDiscoverySeeds(w http.ResponseWriter, r *http.Request, params ListLibraryDiscoverySeedsParams)
+	// GetLibraryDiscoveryItems Read one bounded kind-aware shelf from an explicitly selected library seed.
+	// (GET /discover/library/{id}/items)
+	GetLibraryDiscoveryItems(w http.ResponseWriter, r *http.Request, id int64, params GetLibraryDiscoveryItemsParams)
 	// ListDiscoverLists The Discover catalogue
 	// (GET /discover/lists)
 	ListDiscoverLists(w http.ResponseWriter, r *http.Request)
@@ -4292,9 +6518,6 @@ type ServerInterface interface {
 	// GetDeliveryLifecycleReceipt Read one durable Runner handoff and cleanup receipt
 	// (GET /downloads/deliveries/{receiptId})
 	GetDeliveryLifecycleReceipt(w http.ResponseWriter, r *http.Request, receiptId int64)
-	// AbandonDeliveryDeleteRequest Cancel remaining work in an exact reviewed deletion request
-	// (POST /downloads/deliveries/{receiptId}/delete-batches/{batchId}/abandon)
-	AbandonDeliveryDeleteRequest(w http.ResponseWriter, r *http.Request, receiptId int64, batchId string)
 	// ResolveDeliveryImport Import an explicitly selected subset of an accepted Runner manifest
 	// (POST /downloads/deliveries/{receiptId}/import)
 	ResolveDeliveryImport(w http.ResponseWriter, r *http.Request, receiptId int64)
@@ -4319,6 +6542,12 @@ type ServerInterface interface {
 	// PreviewCompletedStorageChange Review expected and observed storage and the exact affected custody
 	// (POST /downloads/inventory/storage-change/preview)
 	PreviewCompletedStorageChange(w http.ResponseWriter, r *http.Request)
+	// ApprovePublicationCleanup Approve a review batch of historical publications for per-file cleanup
+	// (POST /downloads/publications/approve-cleanup)
+	ApprovePublicationCleanup(w http.ResponseWriter, r *http.Request)
+	// SetPublicationCleanup Pause or resume a publication's automatic per-file cleanup
+	// (POST /downloads/publications/{publicationId}/cleanup)
+	SetPublicationCleanup(w http.ResponseWriter, r *http.Request, publicationId int64)
 	// StreamEvents Server-sent events
 	// (GET /events)
 	StreamEvents(w http.ResponseWriter, r *http.Request)
@@ -4340,12 +6569,63 @@ type ServerInterface interface {
 	// ListHistory What happened to a release — grab, client outcome, import result
 	// (GET /history)
 	ListHistory(w http.ResponseWriter, r *http.Request, params ListHistoryParams)
+	// ListHouseholdAccounts Local owner account management
+	// (GET /household/accounts)
+	ListHouseholdAccounts(w http.ResponseWriter, r *http.Request)
+	// UpdateHouseholdAccount Confirm a local owner password and update account role, status or credentials
+	// (PATCH /household/accounts/{id})
+	UpdateHouseholdAccount(w http.ResponseWriter, r *http.Request, id int64)
+	// SearchHouseholdCatalogue Member-safe movie or show search
+	// (GET /household/catalogue)
+	SearchHouseholdCatalogue(w http.ResponseWriter, r *http.Request, params SearchHouseholdCatalogueParams)
+	// HouseholdDiscoverySeeds Member-safe library movie and show seeds with fresh availability
+	// (GET /household/discovery/seeds)
+	HouseholdDiscoverySeeds(w http.ResponseWriter, r *http.Request)
+	// HouseholdDiscoveryShelf Recommendations or collection from a current library seed
+	// (GET /household/discovery/shelf)
+	HouseholdDiscoveryShelf(w http.ResponseWriter, r *http.Request)
+	// CreateHouseholdInvitation Local owner confirms password and creates a seven-day member invitation
+	// (POST /household/invitations)
+	CreateHouseholdInvitation(w http.ResponseWriter, r *http.Request)
+	// ListHouseholdRequests Household requests and current user's subscription state
+	// (GET /household/requests)
+	ListHouseholdRequests(w http.ResponseWriter, r *http.Request, params ListHouseholdRequestsParams)
+	// SubmitHouseholdRequest Submit or join a request with a server-frozen known-aired scope
+	// (POST /household/requests)
+	SubmitHouseholdRequest(w http.ResponseWriter, r *http.Request)
+	// GetHouseholdRequest Safe household request detail
+	// (GET /household/requests/{id})
+	GetHouseholdRequest(w http.ResponseWriter, r *http.Request, id int64)
+	// ApproveHouseholdRequest Recheck and approve exactly the reviewed missing scope atomically
+	// (POST /household/requests/{id}/approve)
+	ApproveHouseholdRequest(w http.ResponseWriter, r *http.Request, id int64)
+	// DeclineHouseholdRequest Local owner declines a reviewed request and optionally saves a private note
+	// (POST /household/requests/{id}/decline)
+	DeclineHouseholdRequest(w http.ResponseWriter, r *http.Request, id int64)
+	// JoinHouseholdRequest Follow an existing household request without duplicating work
+	// (POST /household/requests/{id}/join)
+	JoinHouseholdRequest(w http.ResponseWriter, r *http.Request, id int64)
+	// SaveHouseholdRequestNote Save a note visible only to the current local owner
+	// (PUT /household/requests/{id}/note)
+	SaveHouseholdRequestNote(w http.ResponseWriter, r *http.Request, id int64)
+	// ReviewHouseholdRequest Local owner's read-only current filesystem and policy review
+	// (GET /household/requests/{id}/review)
+	ReviewHouseholdRequest(w http.ResponseWriter, r *http.Request, id int64, params ReviewHouseholdRequestParams)
+	// WithdrawHouseholdRequest Withdraw only your own pending interest
+	// (POST /household/requests/{id}/withdraw)
+	WithdrawHouseholdRequest(w http.ResponseWriter, r *http.Request, id int64)
+	// GetHouseholdTitle Safe provider title details and regular aired season choices
+	// (GET /household/titles/{id})
+	GetHouseholdTitle(w http.ResponseWriter, r *http.Request, id int64, params GetHouseholdTitleParams)
 	// GetManualImportDefaultPath Completed-download folder Monarr sees for manual imports
 	// (GET /import/default-path)
 	GetManualImportDefaultPath(w http.ResponseWriter, r *http.Request)
 	// ManualImport Import files from a path into a chosen item/copy
 	// (POST /import/manual)
 	ManualImport(w http.ResponseWriter, r *http.Request)
+	// PlanImport What importing these files into an item would do (moves nothing)
+	// (POST /import/plan)
+	PlanImport(w http.ResponseWriter, r *http.Request)
 
 	// (GET /import/recovery)
 	ListRecoveries(w http.ResponseWriter, r *http.Request)
@@ -4388,6 +6668,9 @@ type ServerInterface interface {
 	// DeleteImportList Remove an import list source
 	// (DELETE /importlists/{id})
 	DeleteImportList(w http.ResponseWriter, r *http.Request, id int64)
+	// ListImportActivity Retained import activity, including worker ownership and publication outcomes
+	// (GET /imports)
+	ListImportActivity(w http.ResponseWriter, r *http.Request, params ListImportActivityParams)
 	// ListIndexers List indexers
 	// (GET /indexers)
 	ListIndexers(w http.ResponseWriter, r *http.Request)
@@ -4493,18 +6776,42 @@ type ServerInterface interface {
 	// ReportLibraryFile Record a review flag for existing library media
 	// (POST /library/{id}/files/{fileId}/report)
 	ReportLibraryFile(w http.ResponseWriter, r *http.Request, id int64, fileId int64)
+	// GetLibraryOffload The open Offload of this title
+	// (GET /library/{id}/offload)
+	GetLibraryOffload(w http.ResponseWriter, r *http.Request, id int64)
+	// StartOffload Queue a previewed Offload (idempotent by requestId)
+	// (POST /library/{id}/offload)
+	StartOffload(w http.ResponseWriter, r *http.Request, id int64)
+	// ListLibraryOffloads List open and recent Offloads of this title
+	// (GET /library/{id}/offload/operations)
+	ListLibraryOffloads(w http.ResponseWriter, r *http.Request, id int64)
+	// PreviewOffload What an Offload would delete (ADR 0028); no side effects
+	// (POST /library/{id}/offload/preview)
+	PreviewOffload(w http.ResponseWriter, r *http.Request, id int64)
 	// GetLibraryPlacementSuggestion Suggest the default root and exact folder for an existing item
 	// (GET /library/{id}/placement-suggestion)
 	GetLibraryPlacementSuggestion(w http.ResponseWriter, r *http.Request, id int64)
 	// ReprobeLibraryItem Re-measure this item's files
 	// (POST /library/{id}/probe)
 	ReprobeLibraryItem(w http.ResponseWriter, r *http.Request, id int64)
+	// ReacquireLibraryItem Get an offloaded title, season or episode back (ADR 0028)
+	// (POST /library/{id}/reacquire)
+	ReacquireLibraryItem(w http.ResponseWriter, r *http.Request, id int64)
 	// RefreshLibraryItem Re-hydrate this item's metadata from its provider
 	// (POST /library/{id}/refresh)
 	RefreshLibraryItem(w http.ResponseWriter, r *http.Request, id int64)
 	// SearchReleases Interactive search for one item target or book edition
 	// (GET /library/{id}/releases)
 	SearchReleases(w http.ResponseWriter, r *http.Request, id int64, params SearchReleasesParams)
+	// GetLibraryRematch The open Re-match moving files out of or into this item
+	// (GET /library/{id}/rematch)
+	GetLibraryRematch(w http.ResponseWriter, r *http.Request, id int64)
+	// StartRematch Execute a previewed Re-match (idempotent by requestId)
+	// (POST /library/{id}/rematch)
+	StartRematch(w http.ResponseWriter, r *http.Request, id int64)
+	// PreviewRematch What a Re-match would do (ADR 0027); no side effects
+	// (POST /library/{id}/rematch/preview)
+	PreviewRematch(w http.ResponseWriter, r *http.Request, id int64)
 	// RepairLibraryFolder Reconnect an item to an existing media folder and scan it
 	// (POST /library/{id}/repair-folder)
 	RepairLibraryFolder(w http.ResponseWriter, r *http.Request, id int64)
@@ -4523,6 +6830,15 @@ type ServerInterface interface {
 	// SetSeasonMonitored Monitor or unmonitor one season (cascades to its episodes)
 	// (PATCH /library/{id}/seasons/{season})
 	SetSeasonMonitored(w http.ResponseWriter, r *http.Request, id int64, season int)
+	// GetLibraryItemStatus Where this item stands, from search to cinema
+	// (GET /library/{id}/status)
+	GetLibraryItemStatus(w http.ResponseWriter, r *http.Request, id int64, params GetLibraryItemStatusParams)
+	// ConfirmLibraryItemInCinema Ask cinema to confirm this item's files
+	// (POST /library/{id}/status/confirm)
+	ConfirmLibraryItemInCinema(w http.ResponseWriter, r *http.Request, id int64, params ConfirmLibraryItemInCinemaParams)
+	// LookupAvailability Read catalogue and observed primary-copy availability for exact identities.
+	// (POST /metadata/availability)
+	LookupAvailability(w http.ResponseWriter, r *http.Request)
 	// PreviewMetadata Read a title before adding, without loading episodes or writing library state
 	// (GET /metadata/preview)
 	PreviewMetadata(w http.ResponseWriter, r *http.Request, params PreviewMetadataParams)
@@ -4568,6 +6884,15 @@ type ServerInterface interface {
 	// TestNotifierByID Send a test notification using the SAVED config
 	// (POST /notifiers/{id}/test)
 	TestNotifierByID(w http.ResponseWriter, r *http.Request, id int64)
+	// GetOffload An Offload's state, files deleted, bytes freed and Cinema confirmation
+	// (GET /offload/{operationId})
+	GetOffload(w http.ResponseWriter, r *http.Request, operationId string)
+	// CancelOffload Stop an Offload; what is already deleted stays deleted
+	// (POST /offload/{operationId}/cancel)
+	CancelOffload(w http.ResponseWriter, r *http.Request, operationId string)
+	// DismissOffload Hide a finished Offload from the item page's status panel
+	// (POST /offload/{operationId}/dismiss)
+	DismissOffload(w http.ResponseWriter, r *http.Request, operationId string)
 	// ListProfiles List quality profiles
 	// (GET /profiles)
 	ListProfiles(w http.ResponseWriter, r *http.Request)
@@ -4595,6 +6920,9 @@ type ServerInterface interface {
 	// RemoveQueueItem Remove a queue row (optionally from the client too)
 	// (DELETE /queue/{id})
 	RemoveQueueItem(w http.ResponseWriter, r *http.Request, id int64, params RemoveQueueItemParams)
+	// GetQueueItem One Activity row, whatever its state
+	// (GET /queue/{id})
+	GetQueueItem(w http.ResponseWriter, r *http.Request, id int64)
 	// BlocklistQueueItem Declare the release bad — blocklist it and search a replacement
 	// (POST /queue/{id}/blocklist)
 	BlocklistQueueItem(w http.ResponseWriter, r *http.Request, id int64)
@@ -4607,15 +6935,30 @@ type ServerInterface interface {
 	// GetImportReview Read retained import custody and publication evidence without storage I/O
 	// (GET /queue/{id}/import-review)
 	GetImportReview(w http.ResponseWriter, r *http.Request, id int64)
-	// ResolveImportReview Record explicit fencing or retained-byte disposition
+	// ResolveImportReview Review custody or explicitly clean selected cancelled empty stages
 	// (POST /queue/{id}/import-review)
 	ResolveImportReview(w http.ResponseWriter, r *http.Request, id int64)
+	// PlacePublicationFiles Place one or more files of a runner delivery into an item, as chosen episodes
+	// (POST /queue/{id}/publications/{publicationId}/files/place)
+	PlacePublicationFiles(w http.ResponseWriter, r *http.Request, id int64, publicationId int64)
+	// ResolvePublicationFile Decide an unresolved publication file - place it, discard it, or keep it for later
+	// (POST /queue/{id}/publications/{publicationId}/files/resolve)
+	ResolvePublicationFile(w http.ResponseWriter, r *http.Request, id int64, publicationId int64)
 	// ResolveQueueReservation Acknowledge duplicate risk and release uncertain or cancelled episode custody
 	// (POST /queue/{id}/resolve-reservation)
 	ResolveQueueReservation(w http.ResponseWriter, r *http.Request, id int64)
 	// ResumeQueueItem Resume the retained Runner job after resource admission
 	// (POST /queue/{id}/resume)
 	ResumeQueueItem(w http.ResponseWriter, r *http.Request, id int64)
+	// GetRematch A Re-match's state, bytes copied, result and Cinema confirmation
+	// (GET /rematch/{operationId})
+	GetRematch(w http.ResponseWriter, r *http.Request, operationId string)
+	// CancelRematch Stop a Re-match that has not committed (a copy's temp file is removed, sources untouched)
+	// (POST /rematch/{operationId}/cancel)
+	CancelRematch(w http.ResponseWriter, r *http.Request, operationId string)
+	// DismissRematch Hide a finished Re-match from the item pages' status panels
+	// (POST /rematch/{operationId}/dismiss)
+	DismissRematch(w http.ResponseWriter, r *http.Request, operationId string)
 	// GetReplacementFileObservation Read a prepared file observation
 	// (GET /replacement-observations/{observationId})
 	GetReplacementFileObservation(w http.ResponseWriter, r *http.Request, observationId string)
@@ -4634,6 +6977,12 @@ type ServerInterface interface {
 	// UpdateRootFolder Retype a root folder (items already in it are untouched)
 	// (PATCH /rootfolders/{id})
 	UpdateRootFolder(w http.ResponseWriter, r *http.Request, id int64)
+	// PreviewLibraryVolume Owner review of the exact library volume binding, without mutations.
+	// (GET /rootfolders/{id}/volume)
+	PreviewLibraryVolume(w http.ResponseWriter, r *http.Request, id int64)
+	// ConfirmLibraryVolume Confirm a freshly observed library volume; never deletes filesystem data.
+	// (POST /rootfolders/{id}/volume)
+	ConfirmLibraryVolume(w http.ResponseWriter, r *http.Request, id int64)
 	// GetSettings Read settings (secrets masked)
 	// (GET /settings)
 	GetSettings(w http.ResponseWriter, r *http.Request)
@@ -4655,9 +7004,15 @@ type ServerInterface interface {
 	// BeginDeploymentDrain Pause new work and drain already admitted operations
 	// (POST /system/deployment-drain)
 	BeginDeploymentDrain(w http.ResponseWriter, r *http.Request)
+	// PipelineSummary How long the pipeline's seams take, and whether anything is overdue
+	// (GET /system/pipeline)
+	PipelineSummary(w http.ResponseWriter, r *http.Request)
 	// GetSystemStatus System status
 	// (GET /system/status)
 	GetSystemStatus(w http.ResponseWriter, r *http.Request)
+	// GetStorageObservations Read cached capacity and cleanup facts from each storage owner
+	// (GET /system/storage-observations)
+	GetStorageObservations(w http.ResponseWriter, r *http.Request)
 	// ListTasks Scheduler task states
 	// (GET /system/tasks)
 	ListTasks(w http.ResponseWriter, r *http.Request)
@@ -4670,6 +7025,9 @@ type ServerInterface interface {
 	// ListWanted Everything still wanted (missing or below cutoff)
 	// (GET /wanted)
 	ListWanted(w http.ResponseWriter, r *http.Request)
+	// ListWantedSearches List active and recently finished Wanted searches
+	// (GET /wanted/searches)
+	ListWantedSearches(w http.ResponseWriter, r *http.Request)
 	// CreateWantedSearch Search an exact server-owned Wanted scope in the durable queue
 	// (POST /wanted/searches)
 	CreateWantedSearch(w http.ResponseWriter, r *http.Request)
@@ -4696,6 +7054,353 @@ type ServerInterfaceWrapper struct {
 
 type MiddlewareFunc func(http.Handler) http.Handler
 
+// ListActivity operation middleware
+func (siw *ServerInterfaceWrapper) ListActivity(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListActivityParams
+
+	// ------------- Optional query parameter "view" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "view", r.URL.Query(), &params.View, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "view"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "view", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "scope" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "scope", r.URL.Query(), &params.Scope, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "scope"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "scope", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "q" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "q", r.URL.Query(), &params.Q, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "q"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "q", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "limit", r.URL.Query(), &params.Limit, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "limit"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "limit", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "offset" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "offset", r.URL.Query(), &params.Offset, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "offset"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "offset", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListActivity(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreateActivityAction operation middleware
+func (siw *ServerInterfaceWrapper) CreateActivityAction(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateActivityAction(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetActivityJobLog operation middleware
+func (siw *ServerInterfaceWrapper) GetActivityJobLog(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetActivityJobLog(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetActivityOperation operation middleware
+func (siw *ServerInterfaceWrapper) GetActivityOperation(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetActivityOperation(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreateActivitySelection operation middleware
+func (siw *ServerInterfaceWrapper) CreateActivitySelection(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateActivitySelection(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// UpdateOwnAccount operation middleware
+func (siw *ServerInterfaceWrapper) UpdateOwnAccount(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.UpdateOwnAccount(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// OpenCinemaBrowser operation middleware
+func (siw *ServerInterfaceWrapper) OpenCinemaBrowser(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.OpenCinemaBrowser(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CinemaCallback operation middleware
+func (siw *ServerInterfaceWrapper) CinemaCallback(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CinemaCallback(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetCinemaConnection operation middleware
+func (siw *ServerInterfaceWrapper) GetCinemaConnection(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetCinemaConnection(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// SaveCinemaConnection operation middleware
+func (siw *ServerInterfaceWrapper) SaveCinemaConnection(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.SaveCinemaConnection(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// UnlinkCinema operation middleware
+func (siw *ServerInterfaceWrapper) UnlinkCinema(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.UnlinkCinema(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetCinemaLink operation middleware
+func (siw *ServerInterfaceWrapper) GetCinemaLink(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetCinemaLink(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// StartCinemaLink operation middleware
+func (siw *ServerInterfaceWrapper) StartCinemaLink(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.StartCinemaLink(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// StartCinemaNative operation middleware
+func (siw *ServerInterfaceWrapper) StartCinemaNative(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.StartCinemaNative(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// FinishCinemaNative operation middleware
+func (siw *ServerInterfaceWrapper) FinishCinemaNative(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.FinishCinemaNative(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// StartCinemaSignIn operation middleware
+func (siw *ServerInterfaceWrapper) StartCinemaSignIn(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.StartCinemaSignIn(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetHouseholdSignInInfo operation middleware
+func (siw *ServerInterfaceWrapper) GetHouseholdSignInInfo(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetHouseholdSignInInfo(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// AcceptHouseholdInvitation operation middleware
+func (siw *ServerInterfaceWrapper) AcceptHouseholdInvitation(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.AcceptHouseholdInvitation(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // Login operation middleware
 func (siw *ServerInterfaceWrapper) Login(w http.ResponseWriter, r *http.Request) {
 
@@ -4715,6 +7420,34 @@ func (siw *ServerInterfaceWrapper) Logout(w http.ResponseWriter, r *http.Request
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.Logout(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetCurrentAccount operation middleware
+func (siw *ServerInterfaceWrapper) GetCurrentAccount(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetCurrentAccount(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreateAccountSession operation middleware
+func (siw *ServerInterfaceWrapper) CreateAccountSession(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateAccountSession(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -4901,6 +7634,120 @@ func (siw *ServerInterfaceWrapper) DiscoverItems(w http.ResponseWriter, r *http.
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.DiscoverItems(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListLibraryDiscoverySeeds operation middleware
+func (siw *ServerInterfaceWrapper) ListLibraryDiscoverySeeds(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListLibraryDiscoverySeedsParams
+
+	// ------------- Optional query parameter "q" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "q", r.URL.Query(), &params.Q, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "q"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "q", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "offset" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "offset", r.URL.Query(), &params.Offset, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "offset"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "offset", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListLibraryDiscoverySeeds(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetLibraryDiscoveryItems operation middleware
+func (siw *ServerInterfaceWrapper) GetLibraryDiscoveryItems(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetLibraryDiscoveryItemsParams
+
+	// ------------- Required query parameter "kind" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "kind", r.URL.Query(), &params.Kind, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "kind"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "kind", Err: err})
+		}
+		return
+	}
+
+	// ------------- Required query parameter "tmdbId" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "tmdbId", r.URL.Query(), &params.TmdbId, runtime.BindQueryParameterOptions{Type: "integer", Format: "int64"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "tmdbId"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "tmdbId", Err: err})
+		}
+		return
+	}
+
+	// ------------- Required query parameter "shelf" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "shelf", r.URL.Query(), &params.Shelf, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "shelf"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "shelf", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetLibraryDiscoveryItems(w, r, id, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -5129,41 +7976,6 @@ func (siw *ServerInterfaceWrapper) GetDeliveryLifecycleReceipt(w http.ResponseWr
 	handler.ServeHTTP(w, r)
 }
 
-// AbandonDeliveryDeleteRequest operation middleware
-func (siw *ServerInterfaceWrapper) AbandonDeliveryDeleteRequest(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "receiptId" -------------
-	var receiptId int64
-
-	err = runtime.BindStyledParameterWithOptions("simple", "receiptId", r.PathValue("receiptId"), &receiptId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "receiptId", Err: err})
-		return
-	}
-
-	// ------------- Path parameter "batchId" -------------
-	var batchId string
-
-	err = runtime.BindStyledParameterWithOptions("simple", "batchId", r.PathValue("batchId"), &batchId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "batchId", Err: err})
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.AbandonDeliveryDeleteRequest(w, r, receiptId, batchId)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
 // ResolveDeliveryImport operation middleware
 func (siw *ServerInterfaceWrapper) ResolveDeliveryImport(w http.ResponseWriter, r *http.Request) {
 
@@ -5315,6 +8127,46 @@ func (siw *ServerInterfaceWrapper) PreviewCompletedStorageChange(w http.Response
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.PreviewCompletedStorageChange(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ApprovePublicationCleanup operation middleware
+func (siw *ServerInterfaceWrapper) ApprovePublicationCleanup(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ApprovePublicationCleanup(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// SetPublicationCleanup operation middleware
+func (siw *ServerInterfaceWrapper) SetPublicationCleanup(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "publicationId" -------------
+	var publicationId int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "publicationId", r.PathValue("publicationId"), &publicationId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "publicationId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.SetPublicationCleanup(w, r, publicationId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -5486,6 +8338,434 @@ func (siw *ServerInterfaceWrapper) ListHistory(w http.ResponseWriter, r *http.Re
 	handler.ServeHTTP(w, r)
 }
 
+// ListHouseholdAccounts operation middleware
+func (siw *ServerInterfaceWrapper) ListHouseholdAccounts(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListHouseholdAccounts(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// UpdateHouseholdAccount operation middleware
+func (siw *ServerInterfaceWrapper) UpdateHouseholdAccount(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.UpdateHouseholdAccount(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// SearchHouseholdCatalogue operation middleware
+func (siw *ServerInterfaceWrapper) SearchHouseholdCatalogue(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params SearchHouseholdCatalogueParams
+
+	// ------------- Required query parameter "kind" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "kind", r.URL.Query(), &params.Kind, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "kind"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "kind", Err: err})
+		}
+		return
+	}
+
+	// ------------- Required query parameter "q" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "q", r.URL.Query(), &params.Q, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "q"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "q", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.SearchHouseholdCatalogue(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// HouseholdDiscoverySeeds operation middleware
+func (siw *ServerInterfaceWrapper) HouseholdDiscoverySeeds(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.HouseholdDiscoverySeeds(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// HouseholdDiscoveryShelf operation middleware
+func (siw *ServerInterfaceWrapper) HouseholdDiscoveryShelf(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.HouseholdDiscoveryShelf(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreateHouseholdInvitation operation middleware
+func (siw *ServerInterfaceWrapper) CreateHouseholdInvitation(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateHouseholdInvitation(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListHouseholdRequests operation middleware
+func (siw *ServerInterfaceWrapper) ListHouseholdRequests(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListHouseholdRequestsParams
+
+	// ------------- Optional query parameter "before" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "before", r.URL.Query(), &params.Before, runtime.BindQueryParameterOptions{Type: "integer", Format: "int64"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "before"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "before", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListHouseholdRequests(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// SubmitHouseholdRequest operation middleware
+func (siw *ServerInterfaceWrapper) SubmitHouseholdRequest(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.SubmitHouseholdRequest(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetHouseholdRequest operation middleware
+func (siw *ServerInterfaceWrapper) GetHouseholdRequest(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetHouseholdRequest(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ApproveHouseholdRequest operation middleware
+func (siw *ServerInterfaceWrapper) ApproveHouseholdRequest(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ApproveHouseholdRequest(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeclineHouseholdRequest operation middleware
+func (siw *ServerInterfaceWrapper) DeclineHouseholdRequest(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeclineHouseholdRequest(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// JoinHouseholdRequest operation middleware
+func (siw *ServerInterfaceWrapper) JoinHouseholdRequest(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.JoinHouseholdRequest(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// SaveHouseholdRequestNote operation middleware
+func (siw *ServerInterfaceWrapper) SaveHouseholdRequestNote(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.SaveHouseholdRequestNote(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ReviewHouseholdRequest operation middleware
+func (siw *ServerInterfaceWrapper) ReviewHouseholdRequest(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ReviewHouseholdRequestParams
+
+	// ------------- Optional query parameter "rootId" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "rootId", r.URL.Query(), &params.RootId, runtime.BindQueryParameterOptions{Type: "integer", Format: "int64"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "rootId"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "rootId", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "profileId" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "profileId", r.URL.Query(), &params.ProfileId, runtime.BindQueryParameterOptions{Type: "integer", Format: "int64"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "profileId"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "profileId", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ReviewHouseholdRequest(w, r, id, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// WithdrawHouseholdRequest operation middleware
+func (siw *ServerInterfaceWrapper) WithdrawHouseholdRequest(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.WithdrawHouseholdRequest(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetHouseholdTitle operation middleware
+func (siw *ServerInterfaceWrapper) GetHouseholdTitle(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetHouseholdTitleParams
+
+	// ------------- Required query parameter "kind" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "kind", r.URL.Query(), &params.Kind, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "kind"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "kind", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetHouseholdTitle(w, r, id, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // GetManualImportDefaultPath operation middleware
 func (siw *ServerInterfaceWrapper) GetManualImportDefaultPath(w http.ResponseWriter, r *http.Request) {
 
@@ -5505,6 +8785,20 @@ func (siw *ServerInterfaceWrapper) ManualImport(w http.ResponseWriter, r *http.R
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.ManualImport(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PlanImport operation middleware
+func (siw *ServerInterfaceWrapper) PlanImport(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PlanImport(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -5712,6 +9006,19 @@ func (siw *ServerInterfaceWrapper) ScanImportPath(w http.ResponseWriter, r *http
 		return
 	}
 
+	// ------------- Optional query parameter "depth" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "depth", r.URL.Query(), &params.Depth, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "depth"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "depth", Err: err})
+		}
+		return
+	}
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.ScanImportPath(w, r, params)
 	}))
@@ -5768,6 +9075,78 @@ func (siw *ServerInterfaceWrapper) DeleteImportList(w http.ResponseWriter, r *ht
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.DeleteImportList(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListImportActivity operation middleware
+func (siw *ServerInterfaceWrapper) ListImportActivity(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListImportActivityParams
+
+	// ------------- Optional query parameter "filter" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "filter", r.URL.Query(), &params.Filter, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "filter"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "filter", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "q" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "q", r.URL.Query(), &params.Q, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "q"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "q", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "limit", r.URL.Query(), &params.Limit, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "limit"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "limit", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "offset" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "offset", r.URL.Query(), &params.Offset, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "offset"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "offset", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListImportActivity(w, r, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -6679,6 +10058,110 @@ func (siw *ServerInterfaceWrapper) ReportLibraryFile(w http.ResponseWriter, r *h
 	handler.ServeHTTP(w, r)
 }
 
+// GetLibraryOffload operation middleware
+func (siw *ServerInterfaceWrapper) GetLibraryOffload(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetLibraryOffload(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// StartOffload operation middleware
+func (siw *ServerInterfaceWrapper) StartOffload(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.StartOffload(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListLibraryOffloads operation middleware
+func (siw *ServerInterfaceWrapper) ListLibraryOffloads(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListLibraryOffloads(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PreviewOffload operation middleware
+func (siw *ServerInterfaceWrapper) PreviewOffload(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PreviewOffload(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // GetLibraryPlacementSuggestion operation middleware
 func (siw *ServerInterfaceWrapper) GetLibraryPlacementSuggestion(w http.ResponseWriter, r *http.Request) {
 
@@ -6722,6 +10205,32 @@ func (siw *ServerInterfaceWrapper) ReprobeLibraryItem(w http.ResponseWriter, r *
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.ReprobeLibraryItem(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ReacquireLibraryItem operation middleware
+func (siw *ServerInterfaceWrapper) ReacquireLibraryItem(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ReacquireLibraryItem(w, r, id)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -6816,6 +10325,84 @@ func (siw *ServerInterfaceWrapper) SearchReleases(w http.ResponseWriter, r *http
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.SearchReleases(w, r, id, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetLibraryRematch operation middleware
+func (siw *ServerInterfaceWrapper) GetLibraryRematch(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetLibraryRematch(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// StartRematch operation middleware
+func (siw *ServerInterfaceWrapper) StartRematch(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.StartRematch(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PreviewRematch operation middleware
+func (siw *ServerInterfaceWrapper) PreviewRematch(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PreviewRematch(w, r, id)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -6990,6 +10577,104 @@ func (siw *ServerInterfaceWrapper) SetSeasonMonitored(w http.ResponseWriter, r *
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.SetSeasonMonitored(w, r, id, season)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetLibraryItemStatus operation middleware
+func (siw *ServerInterfaceWrapper) GetLibraryItemStatus(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetLibraryItemStatusParams
+
+	// ------------- Optional query parameter "season" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "season", r.URL.Query(), &params.Season, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "season"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "season", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetLibraryItemStatus(w, r, id, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ConfirmLibraryItemInCinema operation middleware
+func (siw *ServerInterfaceWrapper) ConfirmLibraryItemInCinema(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ConfirmLibraryItemInCinemaParams
+
+	// ------------- Optional query parameter "episode" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "episode", r.URL.Query(), &params.Episode, runtime.BindQueryParameterOptions{Type: "integer", Format: "int64"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "episode"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "episode", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ConfirmLibraryItemInCinema(w, r, id, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// LookupAvailability operation middleware
+func (siw *ServerInterfaceWrapper) LookupAvailability(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.LookupAvailability(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -7380,6 +11065,84 @@ func (siw *ServerInterfaceWrapper) TestNotifierByID(w http.ResponseWriter, r *ht
 	handler.ServeHTTP(w, r)
 }
 
+// GetOffload operation middleware
+func (siw *ServerInterfaceWrapper) GetOffload(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "operationId" -------------
+	var operationId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "operationId", r.PathValue("operationId"), &operationId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "operationId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetOffload(w, r, operationId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CancelOffload operation middleware
+func (siw *ServerInterfaceWrapper) CancelOffload(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "operationId" -------------
+	var operationId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "operationId", r.PathValue("operationId"), &operationId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "operationId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CancelOffload(w, r, operationId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DismissOffload operation middleware
+func (siw *ServerInterfaceWrapper) DismissOffload(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "operationId" -------------
+	var operationId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "operationId", r.PathValue("operationId"), &operationId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "operationId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DismissOffload(w, r, operationId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // ListProfiles operation middleware
 func (siw *ServerInterfaceWrapper) ListProfiles(w http.ResponseWriter, r *http.Request) {
 
@@ -7605,8 +11368,47 @@ func (siw *ServerInterfaceWrapper) RemoveQueueItem(w http.ResponseWriter, r *htt
 		return
 	}
 
+	// ------------- Optional query parameter "blocklist" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "blocklist", r.URL.Query(), &params.Blocklist, runtime.BindQueryParameterOptions{Type: "boolean", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "blocklist"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "blocklist", Err: err})
+		}
+		return
+	}
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.RemoveQueueItem(w, r, id, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetQueueItem operation middleware
+func (siw *ServerInterfaceWrapper) GetQueueItem(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetQueueItem(w, r, id)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -7746,6 +11548,76 @@ func (siw *ServerInterfaceWrapper) ResolveImportReview(w http.ResponseWriter, r 
 	handler.ServeHTTP(w, r)
 }
 
+// PlacePublicationFiles operation middleware
+func (siw *ServerInterfaceWrapper) PlacePublicationFiles(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "publicationId" -------------
+	var publicationId int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "publicationId", r.PathValue("publicationId"), &publicationId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "publicationId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PlacePublicationFiles(w, r, id, publicationId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ResolvePublicationFile operation middleware
+func (siw *ServerInterfaceWrapper) ResolvePublicationFile(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "publicationId" -------------
+	var publicationId int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "publicationId", r.PathValue("publicationId"), &publicationId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "publicationId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ResolvePublicationFile(w, r, id, publicationId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // ResolveQueueReservation operation middleware
 func (siw *ServerInterfaceWrapper) ResolveQueueReservation(w http.ResponseWriter, r *http.Request) {
 
@@ -7789,6 +11661,84 @@ func (siw *ServerInterfaceWrapper) ResumeQueueItem(w http.ResponseWriter, r *htt
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.ResumeQueueItem(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetRematch operation middleware
+func (siw *ServerInterfaceWrapper) GetRematch(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "operationId" -------------
+	var operationId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "operationId", r.PathValue("operationId"), &operationId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "operationId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetRematch(w, r, operationId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CancelRematch operation middleware
+func (siw *ServerInterfaceWrapper) CancelRematch(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "operationId" -------------
+	var operationId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "operationId", r.PathValue("operationId"), &operationId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "operationId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CancelRematch(w, r, operationId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DismissRematch operation middleware
+func (siw *ServerInterfaceWrapper) DismissRematch(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "operationId" -------------
+	var operationId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "operationId", r.PathValue("operationId"), &operationId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "operationId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DismissRematch(w, r, operationId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -7930,6 +11880,58 @@ func (siw *ServerInterfaceWrapper) UpdateRootFolder(w http.ResponseWriter, r *ht
 	handler.ServeHTTP(w, r)
 }
 
+// PreviewLibraryVolume operation middleware
+func (siw *ServerInterfaceWrapper) PreviewLibraryVolume(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PreviewLibraryVolume(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ConfirmLibraryVolume operation middleware
+func (siw *ServerInterfaceWrapper) ConfirmLibraryVolume(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ConfirmLibraryVolume(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // GetSettings operation middleware
 func (siw *ServerInterfaceWrapper) GetSettings(w http.ResponseWriter, r *http.Request) {
 
@@ -8028,11 +12030,39 @@ func (siw *ServerInterfaceWrapper) BeginDeploymentDrain(w http.ResponseWriter, r
 	handler.ServeHTTP(w, r)
 }
 
+// PipelineSummary operation middleware
+func (siw *ServerInterfaceWrapper) PipelineSummary(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PipelineSummary(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // GetSystemStatus operation middleware
 func (siw *ServerInterfaceWrapper) GetSystemStatus(w http.ResponseWriter, r *http.Request) {
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetSystemStatus(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetStorageObservations operation middleware
+func (siw *ServerInterfaceWrapper) GetStorageObservations(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetStorageObservations(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -8101,6 +12131,20 @@ func (siw *ServerInterfaceWrapper) ListWanted(w http.ResponseWriter, r *http.Req
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.ListWanted(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListWantedSearches operation middleware
+func (siw *ServerInterfaceWrapper) ListWantedSearches(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListWantedSearches(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -8371,7 +12415,8 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/downloads/deliveries/{receiptId}/retry-handoff", wrapper.RetryDeliveryHandoff)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/downloads/deliveries/{receiptId}/retry-runner-cleanup", wrapper.RetryRunnerDeliveryCleanup)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/downloads/deliveries/{receiptId}/retry-curator-cleanup", wrapper.RetryCuratorDeliveryCleanup)
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/downloads/deliveries/{receiptId}/delete-batches/{batchId}/abandon", wrapper.AbandonDeliveryDeleteRequest)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/downloads/publications/{publicationId}/cleanup", wrapper.SetPublicationCleanup)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/downloads/publications/approve-cleanup", wrapper.ApprovePublicationCleanup)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/downloads/inventory/storage-change/preview", wrapper.PreviewCompletedStorageChange)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/downloads/inventory/storage-change/accept", wrapper.AcceptCompletedStorageChange)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/downloads/inventory/entry", wrapper.DeleteCompletedEntry)
@@ -8412,8 +12457,13 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/metadata/recommendations/status", wrapper.RecommendationStatus)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/metadata/recommendations/model/install", wrapper.InstallRecommendationModel)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/metadata/recommendations/model", wrapper.RemoveRecommendationModel)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/metadata/availability", wrapper.LookupAvailability)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/discover/library/seeds", wrapper.ListLibraryDiscoverySeeds)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/discover/library/{id}/items", wrapper.GetLibraryDiscoveryItems)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/discover/lists", wrapper.ListDiscoverLists)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/discover/items", wrapper.DiscoverItems)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/rootfolders/{id}/volume", wrapper.PreviewLibraryVolume)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/rootfolders/{id}/volume", wrapper.ConfirmLibraryVolume)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/rootfolders", wrapper.ListRootFolders)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/rootfolders", wrapper.AddRootFolder)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/rootfolders/{id}", wrapper.DeleteRootFolder)
@@ -8446,15 +12496,26 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/queue/finished", wrapper.ClearFinishedQueue)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/queue/failed", wrapper.ClearFailedQueue)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/history", wrapper.ListHistory)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/activity", wrapper.ListActivity)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/system/storage-observations", wrapper.GetStorageObservations)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/activity/selections", wrapper.CreateActivitySelection)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/activity/actions", wrapper.CreateActivityAction)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/activity/operations/{id}", wrapper.GetActivityOperation)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/activity/jobs/{id}/log", wrapper.GetActivityJobLog)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/imports", wrapper.ListImportActivity)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/queue/{id}", wrapper.RemoveQueueItem)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/queue/{id}", wrapper.GetQueueItem)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/queue/{id}/resolve-reservation", wrapper.ResolveQueueReservation)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/queue/{id}/resume", wrapper.ResumeQueueItem)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/queue/{id}/import", wrapper.ImportQueueItem)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/queue/{id}/publications/{publicationId}/files/resolve", wrapper.ResolvePublicationFile)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/queue/{id}/publications/{publicationId}/files/place", wrapper.PlacePublicationFiles)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/queue/{id}/cancel-import", wrapper.CancelQueueImport)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/queue/{id}/import-review", wrapper.GetImportReview)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/queue/{id}/import-review", wrapper.ResolveImportReview)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/queue/{id}/blocklist", wrapper.BlocklistQueueItem)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/import/scan", wrapper.ScanImportPath)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/import/plan", wrapper.PlanImport)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/import/default-path", wrapper.GetManualImportDefaultPath)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/import/recovery/settings", wrapper.GetRecoverySettings)
 	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/import/recovery/settings", wrapper.PutRecoverySettings)
@@ -8474,6 +12535,8 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/importlists", wrapper.AddImportList)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/importlists/{id}", wrapper.DeleteImportList)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/library/{id}/autosearch", wrapper.AutoSearchLibraryItem)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/library/{id}/status", wrapper.GetLibraryItemStatus)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/library/{id}/status/confirm", wrapper.ConfirmLibraryItemInCinema)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/library/{id}/copies", wrapper.AddMediaCopy)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/library/{id}/copies/{copyId}", wrapper.DeleteMediaCopy)
 	m.HandleFunc(http.MethodPatch+" "+options.BaseURL+"/library/{id}/copies/{copyId}", wrapper.UpdateMediaCopy)
@@ -8486,11 +12549,56 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/library/{id}/replacement-operations", wrapper.GetLibraryLifecycleReview)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/library/{id}/replacement-operations", wrapper.CreateReplacementOperation)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/replacement-operations/{operationId}", wrapper.GetReplacementOperation)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/library/{id}/rematch/preview", wrapper.PreviewRematch)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/library/{id}/rematch", wrapper.GetLibraryRematch)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/library/{id}/rematch", wrapper.StartRematch)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/rematch/{operationId}", wrapper.GetRematch)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/rematch/{operationId}/cancel", wrapper.CancelRematch)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/rematch/{operationId}/dismiss", wrapper.DismissRematch)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/library/{id}/offload/preview", wrapper.PreviewOffload)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/library/{id}/offload", wrapper.GetLibraryOffload)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/library/{id}/offload", wrapper.StartOffload)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/library/{id}/offload/operations", wrapper.ListLibraryOffloads)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/library/{id}/reacquire", wrapper.ReacquireLibraryItem)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/offload/{operationId}", wrapper.GetOffload)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/offload/{operationId}/cancel", wrapper.CancelOffload)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/offload/{operationId}/dismiss", wrapper.DismissOffload)
 	m.HandleFunc(http.MethodPatch+" "+options.BaseURL+"/library/{id}/seasons/{season}", wrapper.SetSeasonMonitored)
 	m.HandleFunc(http.MethodPatch+" "+options.BaseURL+"/library/{id}/episodes/{episodeId}", wrapper.SetEpisodeMonitored)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/library/{id}/refresh", wrapper.RefreshLibraryItem)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/library/bulk", wrapper.BulkEditLibrary)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/auth/login", wrapper.Login)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/auth/cinema/connection", wrapper.GetCinemaConnection)
+	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/auth/cinema/connection", wrapper.SaveCinemaConnection)
+	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/auth/cinema/link", wrapper.UnlinkCinema)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/auth/cinema/link", wrapper.GetCinemaLink)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/auth/cinema/link", wrapper.StartCinemaLink)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/auth/cinema/start", wrapper.StartCinemaSignIn)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/auth/cinema/native", wrapper.StartCinemaNative)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/auth/cinema/native/result", wrapper.FinishCinemaNative)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/auth/cinema/browser", wrapper.OpenCinemaBrowser)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/auth/cinema/callback", wrapper.CinemaCallback)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/auth/me", wrapper.GetCurrentAccount)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/auth/info", wrapper.GetHouseholdSignInInfo)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/auth/sessions", wrapper.CreateAccountSession)
+	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/auth/account", wrapper.UpdateOwnAccount)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/auth/invitations/accept", wrapper.AcceptHouseholdInvitation)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/household/accounts", wrapper.ListHouseholdAccounts)
+	m.HandleFunc(http.MethodPatch+" "+options.BaseURL+"/household/accounts/{id}", wrapper.UpdateHouseholdAccount)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/household/invitations", wrapper.CreateHouseholdInvitation)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/household/catalogue", wrapper.SearchHouseholdCatalogue)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/household/titles/{id}", wrapper.GetHouseholdTitle)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/household/discovery/seeds", wrapper.HouseholdDiscoverySeeds)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/household/discovery/shelf", wrapper.HouseholdDiscoveryShelf)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/household/requests", wrapper.ListHouseholdRequests)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/household/requests", wrapper.SubmitHouseholdRequest)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/household/requests/{id}", wrapper.GetHouseholdRequest)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/household/requests/{id}/join", wrapper.JoinHouseholdRequest)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/household/requests/{id}/withdraw", wrapper.WithdrawHouseholdRequest)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/household/requests/{id}/decline", wrapper.DeclineHouseholdRequest)
+	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/household/requests/{id}/note", wrapper.SaveHouseholdRequestNote)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/household/requests/{id}/review", wrapper.ReviewHouseholdRequest)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/household/requests/{id}/approve", wrapper.ApproveHouseholdRequest)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/auth/logout", wrapper.Logout)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/notifiers", wrapper.ListNotifiers)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/notifiers", wrapper.AddNotifier)
@@ -8503,10 +12611,12 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/notifiers/{id}/deliveries/{deliveryId}/retry", wrapper.RetryDelivery)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/webhooks/plurx", wrapper.PlurxWebhook)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/system/transfers", wrapper.ListTransfers)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/system/pipeline", wrapper.PipelineSummary)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/system/connections", wrapper.GetConnections)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/system/backups", wrapper.ListBackups)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/calendar", wrapper.GetCalendar)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/wanted", wrapper.ListWanted)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/wanted/searches", wrapper.ListWantedSearches)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/wanted/searches", wrapper.CreateWantedSearch)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/wanted/searches/{runId}", wrapper.GetWantedSearch)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/wanted/searches/{runId}/results", wrapper.ListWantedSearchResults)

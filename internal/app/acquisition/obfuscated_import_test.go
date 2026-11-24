@@ -80,6 +80,33 @@ func TestObfuscatedEpisodeFileImportsUnderTheGrabbedRelease(t *testing.T) {
 	}
 }
 
+// Field data 2026-11-11: an obfuscated single-episode grab whose release
+// title names no episode, with a release sample beside the media, imports by
+// the grab record instead of failing "cannot determine episodes".
+func TestObfuscatedSingleEpisodeGrabImportsByTheGrabRecord(t *testing.T) {
+	client := &fakeClient{}
+	svc, db, itemID := setup(t, nil, client)
+	ctx := context.Background()
+
+	id := grabAndComplete(t, svc, client, itemID, "a8f3c1d2e5b7.obfuscated-post",
+		"321d9664e6a50c195e7e830b3f78b487.mkv", "sample-321d9664.mkv")
+
+	dl, err := db.GetDownload(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dl.State != "imported" {
+		t.Fatalf("download state = %s (%s); the grab record names the episode", dl.State, dl.Error)
+	}
+	item, err := db.GetMediaItemFull(ctx, itemID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(item.Files) != 1 || !strings.Contains(item.Files[0].Path, filepath.Join("Season 1", "Test Show - S01E01 - Pilot")) {
+		t.Fatalf("files = %+v, want the one file in the S01E01 slot", item.Files)
+	}
+}
+
 // Two anonymous files: nothing says which is which, so nothing is guessed.
 func TestObfuscatedFilesAreNotGuessedWhenThePayloadHasSeveral(t *testing.T) {
 	client := &fakeClient{}
@@ -111,10 +138,13 @@ func TestReleaseEpisodeIdentityOnlyFillsAnAnonymousSoleFile(t *testing.T) {
 	}{
 		{"sole anonymous file, episode release", anon, obfuscatedRelease, 1, 1, []int{1}, true, 1, []int{1}},
 		{"multi-episode release covering the grab", anon, "Test.Show.S01E01E02.1080p.WEB-DL-GRP", 1, 1, []int{1}, true, 1, []int{1, 2}},
-		{"season pack release", anon, "Test.Show.S01.1080p.WEB-DL-GRP", 1, 1, []int{1}, false, 0, nil},
+		{"season pack release, single-episode grab: the grab record names it", anon, "Test.Show.S01.1080p.WEB-DL-GRP", 1, 1, []int{1}, true, 1, []int{1}},
+		{"season pack release, multi-episode grab", anon, "Test.Show.S01.1080p.WEB-DL-GRP", 1, 1, []int{1, 2}, false, 0, nil},
+		{"unparseable release, single-episode grab", anon, "some.obfuscated.post-GRP", 1, 1, []int{1}, true, 1, []int{1}},
+		{"unparseable release, multi-episode grab", anon, "some.obfuscated.post-GRP", 1, 1, []int{1, 2}, false, 0, nil},
 		{"several media files in the payload", anon, obfuscatedRelease, 2, 1, []int{1}, false, 0, nil},
 		{"file names its own episode", "Test.Show.S01E02.mkv", obfuscatedRelease, 1, 1, []int{1}, false, 0, nil},
-		{"no release title", anon, "", 1, 1, []int{1}, false, 0, nil},
+		{"no release title, single-episode grab", anon, "", 1, 1, []int{1}, true, 1, []int{1}},
 		{"no recorded episode target", anon, obfuscatedRelease, 1, -1, nil, false, 0, nil},
 		{"release disagrees with the grabbed episode", anon, obfuscatedRelease, 1, 1, []int{2}, false, 0, nil},
 		{"release disagrees with the grabbed season", anon, obfuscatedRelease, 1, 2, []int{1}, false, 0, nil},
@@ -183,49 +213,6 @@ func TestManualImportOfOneAnonymousFileAmongSeveralIsNotGuessed(t *testing.T) {
 	}
 	if len(item.Files) != 0 {
 		t.Fatalf("a guessed placement landed: %+v", item.Files)
-	}
-}
-
-// The field path: a Runner delivery whose only media file is a hash.
-func TestRunnerDeliveryOfAnObfuscatedEpisodeImports(t *testing.T) {
-	ctx := context.Background()
-	protocol := &deliveryImportClient{}
-	svc, db, dl, cfg, _ := deliveryImportFixtureNamed(t, protocol, "321d9664e6a50c195e7e830b3f78b487.mkv", []byte("video"), nil)
-	if err := svc.runDeliveryImport(ctx, dl, cfg, receiptIDFor(t, db, dl.ID)); err != nil {
-		t.Fatalf("obfuscated Runner delivery: %v", err)
-	}
-	files, err := db.ListFilesForItem(ctx, dl.MediaItemID)
-	if err != nil || len(files) != 1 {
-		t.Fatalf("placed files = %+v err=%v", files, err)
-	}
-	if !strings.Contains(files[0].Path, "S01E01") {
-		t.Errorf("placed at %q, want the S01E01 slot", files[0].Path)
-	}
-}
-
-// The loop on the field path: two anonymous files cannot be assigned, the
-// import fails, the delivery retries in place — and automation must pass the
-// release over while that payload is here.
-func TestRunnerDeliveryAwaitingImportIsPassedOver(t *testing.T) {
-	ctx := context.Background()
-	protocol := &deliveryImportClient{}
-	svc, db, dl, cfg, publication := deliveryImportFixtureNamed(t, protocol, "321d9664e6a50c195e7e830b3f78b487.mkv", []byte("video"),
-		map[string][]byte{"15713ef716b33f8a63def50814ec76d0.mkv": []byte("other")})
-	if err := svc.runDeliveryImport(ctx, dl, cfg, receiptIDFor(t, db, dl.ID)); err == nil {
-		t.Fatal("two anonymous files must not import")
-	}
-	row, err := db.GetDownload(ctx, dl.ID)
-	if err != nil || row.State != "failed" {
-		t.Fatalf("row = %+v err=%v, want failed", row, err)
-	}
-	if !svc.skipCandidate(ctx, epRelease, "idx") {
-		t.Fatal("a release whose Runner payload is awaiting import is still offered to automation")
-	}
-	if err := os.RemoveAll(publication); err != nil {
-		t.Fatal(err)
-	}
-	if svc.skipCandidate(ctx, epRelease, "idx") {
-		t.Error("a release whose payload is gone must be eligible again")
 	}
 }
 

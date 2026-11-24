@@ -1,7 +1,7 @@
 # Smart Media Discovery M0c: first real-model ranking probe
 
 **Status:** tuning evidence only; held-out corpus and workload gate pending.
-This follows the [R3 retrieval contract](plan-smart-media-discovery.md#5-retrieval--build-a-relevant-bounded-candidate-pool)
+This follows the [R3 retrieval contract](plan-smart-media-discovery.md#5-retrieval--build-a-relevant-bounded-candidate-pool-first)
 frozen at `f758242`. It tests whether the standalone MiniLM encoder changes
 the order of previously inspected R3 theme and Looking seed candidates. It
 does not implement the API, a full cold search, or a release-quality evidence

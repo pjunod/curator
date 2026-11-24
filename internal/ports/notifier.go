@@ -3,6 +3,7 @@ package ports
 import (
 	"context"
 	"errors"
+	"time"
 )
 
 // ErrNotifyPermanent marks a delivery failure that retrying cannot fix: a
@@ -25,12 +26,37 @@ type NotifierConfig struct {
 	OnFailed bool
 	OnHealth bool
 	Enabled  bool
+	// Features is what the far side's connection test said it supports
+	// (Cinema: "removed_paths", contract amendment 5.3). Stored at Test.
+	Features []string
+	// FeaturesAt is when Features were last read (Unix ms; 0 = never).
+	FeaturesAt int64
+}
+
+// FeatureOffload is Cinema's support for a scan request naming offloaded
+// paths (contract amendment 4.5, ADR 0028): it removes the file records, keeps
+// the item and its watch history, and marks it offloaded. Curator sends
+// offloaded paths only to a Cinema that advertises it.
+const FeatureOffload = "offload"
+
+// FeatureRemovedPaths is Cinema's support for a scan request naming the
+// paths that left a folder (contract amendment 4.2).
+const FeatureRemovedPaths = "removed_paths"
+
+// HasFeature reports whether the notifier said it supports f.
+func (c NotifierConfig) HasFeature(f string) bool {
+	for _, x := range c.Features {
+		if x == f {
+			return true
+		}
+	}
+	return false
 }
 
 // Notification is one event rendered for the outside world. The JSON shape
 // is the webhook wire format — lowercase, stable.
 type Notification struct {
-	Event string `json:"event"` // grab | import | failed | health | test
+	Event string `json:"event"` // grab | import | moved | offload | failed | health | test
 	Title string `json:"title"`
 	Body  string `json:"body"`
 	// Fields carries structured extras (release, quality, item title…).
@@ -44,6 +70,11 @@ type Notification struct {
 	// difference between one folder indexed correctly and a whole library
 	// swept and then matched by guessing at a filename.
 	Import *ImportInfo `json:"import,omitempty"`
+	// IdempotencyKey is "<sub-delivery key>/<attempt>" (contract section 4.2),
+	// set by the delivery worker on each attempt and never stored in the
+	// payload: Cinema returns the same request for a repeated key, so a lost
+	// response does not create a second scan.
+	IdempotencyKey string `json:"-"`
 }
 
 // ImportInfo is the structured detail behind an import notification.
@@ -70,6 +101,44 @@ type ImportInfo struct {
 	ImdbID string `json:"imdbId,omitempty"`
 	// Transfer names this transfer end to end, across applications.
 	Transfer string `json:"transfer,omitempty"`
+	// PublicationID is the publication this import came from (0 for an
+	// import that did not come from one).
+	PublicationID int64 `json:"publicationId,omitempty"`
+	// ExpectedFiles are the media files the import placed, keyed by their
+	// directory (one of Dirs), with the size and nanosecond mtime they had
+	// once placed. Cinema re-probes exactly these and reports each back; a
+	// sub-delivery is visible only when every one comes back placed with
+	// matching bytes and mtime_ns (contract section 4.2).
+	ExpectedFiles map[string][]ExpectedFile `json:"expectedFiles,omitempty"`
+	// RemovedPaths are the files a Re-match moved out of this directory
+	// (event `moved`, ADR 0027). Cinema answers each gone, unknown or
+	// present; FromItemID is the item they left. The rest of the struct
+	// describes the target.
+	RemovedPaths []string `json:"removedPaths,omitempty"`
+	FromItemID   int64    `json:"fromItemId,omitempty"`
+	// OffloadedPaths are the files an Offload deleted from this directory
+	// (event `offload`, ADR 0028). Cinema keeps the item and answers each
+	// path offloaded, gone, unknown or present.
+	OffloadedPaths []string `json:"offloadedPaths,omitempty"`
+}
+
+// Cinema's limits on a request's expected files (plurx
+// scan_request_v2.rs: MAX_EXPECTED_FILES, and the 16 KiB the stored list
+// may take). A request over either is refused with a 400, which retrying
+// cannot fix — so a directory with more files than that sends the largest,
+// newest ones and says how many of the total it verified.
+const (
+	MaxExpectedFiles     = 64
+	MaxExpectedFileBytes = 16384
+	// MaxRequestKeyBytes is the longest request_key Cinema accepts.
+	MaxRequestKeyBytes = 256
+)
+
+// ExpectedFile is one media file an import placed, as it stood once placed.
+type ExpectedFile struct {
+	Path    string `json:"path"`
+	Bytes   int64  `json:"bytes"`
+	MtimeNs int64  `json:"mtime_ns"`
 }
 
 // BookImportInfo is the additive Curator → Cinema book handoff contract.
@@ -104,4 +173,139 @@ type DeliveryReporter interface {
 	// Delivery summarizes the last Send in one line, or "" if there is
 	// nothing to add.
 	Delivery() string
+}
+
+// QueuedNotifier reports whether a notifier's deliveries go through the
+// durable outbox rather than being attempted inline: the ones whose message
+// IS the work (a media server told what to index). A chat notifier's late
+// retry is worse than none.
+func QueuedNotifier(cfg NotifierConfig) bool { return cfg.Type == "plurx" }
+
+// ScanSender is the capability of a notifier that is told one directory at a
+// time and answers with what it made of it (Cinema, contract section 4.2).
+// The delivery worker drives one sub-delivery per call.
+type ScanSender interface {
+	// SendScan posts the notification's single directory with
+	// n.IdempotencyKey, the directory's expected files and a short wait. An
+	// error is a *NotifyError saying whether trying again can help and
+	// whether the next try needs a fresh attempt.
+	SendScan(ctx context.Context, n Notification) (NotifyResult, error)
+}
+
+// ResultReader polls a request the far side queued (Cinema's
+// GET /api/v1/scan/requests/{id}).
+type ResultReader interface {
+	ReadResult(ctx context.Context, remoteRequestID string) (NotifyResult, error)
+}
+
+// PathTester is the capability of a notifier that can check, at setup, that
+// it sees the library roots Curator places files under (contract section
+// 4.3). Note is a pass that still has something to say ("path checking needs
+// a newer cinema").
+type PathTester interface {
+	TestPaths(ctx context.Context, roots []string) (note string, err error)
+}
+
+// NotifyResult is what the far side said about one request.
+type NotifyResult struct {
+	State     string // queued | running | done | failed
+	RequestID string
+	WaitingOn string
+	// Files is the per-file report; FilesReported is false when the far
+	// side sent no per-file report at all (an older Cinema), which is a
+	// different answer from an empty one.
+	Files         []PlacedReport
+	FilesReported bool
+	ItemIDs       []int64
+	Err           string
+	ErrCode       string
+	// RemovedPathsSent says the request carried removed_paths; false for a
+	// moved event sent to a Cinema without the feature (its new folder only).
+	RemovedPathsSent bool
+	// NotTold is a lasting reason Cinema was deliberately not told (an
+	// Offload sent to a Cinema that supports neither offload nor removed
+	// paths): settled as a warning, never as visible in Cinema.
+	NotTold string
+}
+
+// PlacedReport is Cinema's word on one expected file.
+type PlacedReport struct {
+	Path  string `json:"path"`
+	State string `json:"state"` // placed | skipped | missing; gone | unknown | present | retained for a removed path; offloaded for an offloaded one
+	// Code is a retained removed path's machine reason (Retained*); Reason is
+	// a present one's (Reason*) or a skipped file's text.
+	Code    string `json:"code,omitempty"`
+	Bytes   int64  `json:"bytes,omitempty"`
+	MtimeNs int64  `json:"mtime_ns,omitempty"`
+	ItemID  int64  `json:"item_id,omitempty"`
+	Reason  string `json:"reason,omitempty"`
+	// Retryable is a retained path's own word on whether waiting helps.
+	Retryable bool `json:"retryable,omitempty"`
+}
+
+// Why Cinema retained a removed path (PlacedReport.Code, contract 4.4).
+const (
+	RetainedRootIdentityUnset    = "root_identity_unset"
+	RetainedRootIdentityMismatch = "root_identity_mismatch"
+	RetainedPruneBound           = "prune_bound"
+	RetainedConversionHold       = "conversion_hold"
+	RetainedExpectedNotPlaced    = "expected_not_placed"
+	RetainedRecordKept           = "record_kept"
+)
+
+// Why Cinema says a removed path is still present (PlacedReport.Reason).
+const (
+	ReasonExists        = "exists"
+	ReasonSymlinkInPath = "symlink_in_chain"
+	ReasonCaseVariant   = "case_variant"
+	ReasonReappeared    = "reappeared_before_removal"
+)
+
+// FeatureProber re-reads what the far side supports (Cinema's connection
+// test answer, contract amendment 5.3) without starting any work.
+type FeatureProber interface {
+	ProbeFeatures(ctx context.Context) ([]string, error)
+}
+
+// FeatureReporter is a notifier that learned its far side's features during
+// its last Test.
+type FeatureReporter interface {
+	LearnedFeatures() []string
+}
+
+// NotifyRetry says what a failed request means for the next one.
+type NotifyRetry int
+
+const (
+	// RetrySameAttempt: the outcome is ambiguous or the request was refused
+	// before it was recorded (a timeout, a connection error, 429, 5xx); the
+	// next try reuses the same key, so a request that did land is replayed,
+	// not duplicated.
+	RetrySameAttempt NotifyRetry = iota
+	// RetryNewAttempt: a confirmed retryable result (503 path_unreadable, a
+	// failed or vanished request); the next try needs a fresh scan.
+	RetryNewAttempt
+	// RetryNever: retrying cannot help (401/403, 400, 422 path_outside_roots).
+	RetryNever
+	// RetryUnsupported: the far side does not report results (an older
+	// Cinema refused the status read); the request itself was accepted.
+	RetryUnsupported
+)
+
+// NotifyError is a classified delivery failure.
+type NotifyError struct {
+	Retry  NotifyRetry
+	Status int    // HTTP status, 0 when there was no response
+	Code   string // the far side's error code, when it sent one
+	Msg    string
+	// RetryAfter is how long the far side asked to be left alone (a 503's
+	// Retry-After); 0 when it did not say. The next try is no sooner.
+	RetryAfter time.Duration
+}
+
+func (e *NotifyError) Error() string { return e.Msg }
+
+// Is makes errors.Is(err, ErrNotifyPermanent) true for a RetryNever error.
+func (e *NotifyError) Is(target error) bool {
+	return target == ErrNotifyPermanent && e.Retry == RetryNever
 }

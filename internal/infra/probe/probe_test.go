@@ -325,7 +325,7 @@ func TestTailParseFFprobeRejectsUnusableOutput(t *testing.T) {
 	}
 }
 
-// The two probers must not drift (ADR 0026 §2). For each Dolby Vision and
+// The two probers must not drift (ADR 0031 §2). For each Dolby Vision and
 // HDR10+ fixture, the committed ffprobe output (captured with -show_streams
 // -show_format -show_frames -read_intervals %+#1, ffprobe 9.0.2) mapped by
 // ParseFFprobe has to agree with the native walker on everything ffprobe

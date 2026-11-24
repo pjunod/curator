@@ -245,7 +245,7 @@ flowchart LR
   |---|---|---|
   | `MediaAdded` | `media.added` | An item is added to the library |
   | `ReleaseGrabbed` | `release.grabbed` | A grab is accepted by a download client |
-  | `ImportCompleted` | `import.completed` | Files have landed in the library. Carries the paths, the unique parent dirs, the item's TMDB/IMDb ids, its kind, and the transfer id — everything a media server needs to index exactly what appeared (plan §5.4) |
+  | `ImportCompleted` | `import.completed` | Files have landed in the library. Carries the paths, the unique parent dirs, the expected files per dir, the item's TMDB/IMDb ids, its kind, and the transfer id. A live signal for the SSE stream only: since pipeline contract v2 M5 no notifier is told from the bus — every import notification is a `notifier_deliveries` row written in the import's own transaction (one sub-delivery per directory for Cinema), because the bus drops an event for a subscriber whose buffer is full |
   | `ImportFailed` | `import.failed` | A completed download could not be imported |
   | `FileProbed` | `library.file.probed` | ffprobe has measured a file |
   | `ScanCompleted` | `library.scan.completed` | A library scan finished |

@@ -79,7 +79,7 @@ func applyFrameFacts(v *VideoInfo, cfg *dovi.Config, f frameFacts) {
 // ApplyDolbyVision records the Dolby Vision configuration record, the first
 // RPU and whether HDR10+ metadata was seen, from whichever prober found them.
 // It is the one merge step both the native walkers and the ffprobe mapping
-// use, so the two cannot describe the same file differently (ADR 0026 §2).
+// use, so the two cannot describe the same file differently (ADR 0031 §2).
 func (v *VideoInfo) ApplyDolbyVision(cfg *dovi.Config, rpu *dovi.RPU, hdr10Plus bool) {
 	if v == nil {
 		return

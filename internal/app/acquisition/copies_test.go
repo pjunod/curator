@@ -12,6 +12,7 @@ import (
 	"github.com/pjunod/monarr/internal/domain/quality"
 	"github.com/pjunod/monarr/internal/infra/bus"
 	"github.com/pjunod/monarr/internal/infra/sqlite"
+	"github.com/pjunod/monarr/internal/infra/sqlite/sqlitetest"
 	"github.com/pjunod/monarr/internal/ports"
 )
 
@@ -22,7 +23,7 @@ import (
 // its own folder, and upgrade without ever touching the primary's file.
 func TestCopiesWantGrabImportIndependently(t *testing.T) {
 	client := &fakeClient{}
-	db, err := sqlite.Open(t.TempDir())
+	db, err := sqlite.Open(sqlitetest.Dir(t))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -117,8 +117,8 @@ func TestLegacyReviewCohortBlocksAutomaticCleanupPaths(t *testing.T) {
 	if dl.GenerationKey == "" {
 		t.Fatal("InsertDownload did not persist a generation key")
 	}
-	if _, err := db.W.ExecContext(ctx, `INSERT INTO legacy_cleanup_review
-		(generation_key, path) VALUES(?, ?)`, dl.GenerationKey, dl.ImportPath); err != nil {
+	if _, err := db.W.ExecContext(ctx, `INSERT INTO storage_change_review_paths
+		(review_token, path) VALUES(?, ?)`, dl.GenerationKey, dl.ImportPath); err != nil {
 		t.Fatal(err)
 	}
 	updatedPayload := payload + "-updated"
@@ -166,7 +166,7 @@ func TestLegacyReviewCohortBlocksAutomaticCleanupPaths(t *testing.T) {
 		t.Fatal(err)
 	}
 	var retained int
-	if err := db.R.QueryRowContext(ctx, `SELECT count(*) FROM legacy_cleanup_review WHERE generation_key=?`, dl.GenerationKey).Scan(&retained); err != nil || retained != 1 {
+	if err := db.R.QueryRowContext(ctx, `SELECT count(*) FROM storage_change_review_paths WHERE review_token=?`, dl.GenerationKey).Scan(&retained); err != nil || retained != 1 {
 		t.Fatalf("Activity removal erased review custody: rows=%d err=%v", retained, err)
 	}
 	// Reuse the same integer ID, timestamp, and title for a distinct generation
@@ -208,8 +208,8 @@ func TestLegacyReviewPathAncestorBlocksNewGenerationCleanup(t *testing.T) {
 	}
 	legacyPath := filepath.Join(root, "legacy-container")
 	legacy := insertImportable(t, db, item, legacyPath)
-	if _, err := db.W.ExecContext(ctx, `INSERT INTO legacy_cleanup_review
-		(generation_key, path) VALUES(?, ?)`, legacy.GenerationKey, legacyPath); err != nil {
+	if _, err := db.W.ExecContext(ctx, `INSERT INTO storage_change_review_paths
+		(review_token, path) VALUES(?, ?)`, legacy.GenerationKey, legacyPath); err != nil {
 		t.Fatal(err)
 	}
 

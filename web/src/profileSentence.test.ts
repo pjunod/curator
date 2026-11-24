@@ -34,7 +34,7 @@ describe('buildProfileSentence', () => {
       ),
     ).toBe('hunts the best release up to Bluray 2160p, then stops; English or French audio required')
   })
-  it('names the HDR order and refusals where the server does (ADR 0026)', () => {
+  it('names the HDR order and refusals where the server does (ADR 0031)', () => {
     expect(
       buildProfileSentence({
         target: 'Remux 2160p',

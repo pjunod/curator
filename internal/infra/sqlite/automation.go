@@ -127,12 +127,35 @@ func (d *DB) AddNotifier(ctx context.Context, n ports.NotifierConfig) (int64, er
 func notifierToPort(r sqlitegen.Notifier) ports.NotifierConfig {
 	var settings map[string]string
 	_ = json.Unmarshal([]byte(r.Settings), &settings)
+	var features []string
+	_ = json.Unmarshal([]byte(r.Features), &features)
 	return ports.NotifierConfig{
 		ID: r.ID, Type: r.Type, Name: r.Name, Settings: settings,
 		OnGrab: r.OnGrab != 0, OnImport: r.OnImport != 0,
 		OnFailed: r.OnFailed != 0, OnHealth: r.OnHealth != 0,
-		Enabled: r.Enabled != 0,
+		Enabled: r.Enabled != 0, Features: features, FeaturesAt: r.FeaturesAt,
 	}
+}
+
+// SetDeliveryRemovedSent records whether a moved request's POST carried
+// removed_paths, so a later read of the request is judged by what was sent.
+func (d *DB) SetDeliveryRemovedSent(ctx context.Context, id int64, sent bool) error {
+	_, err := d.W.ExecContext(ctx, `UPDATE notifier_deliveries SET removed_sent=? WHERE id=?`, boolInt(sent), id)
+	return err
+}
+
+// SetNotifierFeatures stores what the notifier's far side said it supports
+// (contract amendment 5.3).
+func (d *DB) SetNotifierFeatures(ctx context.Context, id int64, features []string) error {
+	if features == nil {
+		features = []string{}
+	}
+	raw, err := json.Marshal(features)
+	if err != nil {
+		return err
+	}
+	_, err = d.W.ExecContext(ctx, `UPDATE notifiers SET features=?, features_at=? WHERE id=?`, string(raw), time.Now().UnixMilli(), id)
+	return err
 }
 
 // ListNotifiers returns every stored notifier.
@@ -189,7 +212,9 @@ func (d *DB) DeleteNotifier(ctx context.Context, id int64) error {
 
 // ---- notification deliveries (plan §5.5) ----
 
-// Delivery is one attempt-tracked notification.
+// Delivery is one attempt-tracked notification. A row with an
+// IdempotencyKey is a sub-delivery: one directory of one publication for one
+// notifier (contract section 4.1).
 type Delivery struct {
 	ID         int64  `json:"id"`
 	NotifierID int64  `json:"notifierId"`
@@ -203,34 +228,170 @@ type Delivery struct {
 	NextAt     int64  `json:"nextAt,omitempty"`
 	CreatedAt  int64  `json:"createdAt"`
 	UpdatedAt  int64  `json:"updatedAt"`
+
+	PublicationID   int64                `json:"publicationId,omitempty"`
+	Directory       string               `json:"directory,omitempty"`
+	IdempotencyKey  string               `json:"idempotencyKey,omitempty"`
+	Attempt         int64                `json:"attempt"`
+	ExpectedFiles   []ports.ExpectedFile `json:"expectedFiles,omitempty"`
+	RemoteRequestID string               `json:"remoteRequestId,omitempty"`
+	RemoteState     string               `json:"remoteState,omitempty"`
+	WaitingOn       string               `json:"waitingOn,omitempty"`
+	VisibleAt       int64                `json:"visibleAt,omitempty"`
+	ItemIDs         []int64              `json:"itemIds,omitempty"`
+	OperationID     string               `json:"operationId,omitempty"`
+	// RemovedSent: the last POST of this moved request carried removed_paths.
+	RemovedSent bool  `json:"removedSent,omitempty"`
+	MediaItemID int64 `json:"mediaItemId,omitempty"`
+	// FileResults is Cinema's answer for each expected file at the last
+	// read-back, so an episode of a season pack has its own in-cinema state.
+	FileResults []DeliveryFileResult `json:"fileResults,omitempty"`
+}
+
+// DeliveryFileResult is Cinema's read-back for one expected file:
+// placed{item_id, bytes, mtime_ns}, skipped{reason} or missing. Matched is
+// set when a placed file has the bytes and mtime_ns the import left it with.
+type DeliveryFileResult struct {
+	Path    string `json:"path"`
+	State   string `json:"state"` // placed | skipped | missing
+	ItemID  int64  `json:"itemId,omitempty"`
+	Bytes   int64  `json:"bytes,omitempty"`
+	MtimeNs int64  `json:"mtimeNs,omitempty"`
+	Reason  string `json:"reason,omitempty"`
+	Matched bool   `json:"matched"`
+	// Code and Warning are set on the entry of a removed path (State
+	// present or retained) that cinema answered with a lasting warning: the
+	// panel and the delivery log read the verdict from here, not from text.
+	Code    string `json:"code,omitempty"`
+	Warning string `json:"warning,omitempty"`
+}
+
+// RequestKey is the key Cinema sees for this attempt: "<key>/<attempt>".
+func (d Delivery) RequestKey() string {
+	if d.IdempotencyKey == "" {
+		return ""
+	}
+	return fmt.Sprintf("%s/%d", d.IdempotencyKey, d.Attempt)
 }
 
 func deliveryFrom(r sqlitegen.NotifierDelivery) Delivery {
-	return Delivery{
+	d := Delivery{
 		ID: r.ID, NotifierID: r.NotifierID, DownloadID: r.DownloadID,
 		Event: r.Event, Payload: r.Payload, Attempts: r.Attempts,
 		LastError: r.LastError, Result: r.Result, Status: r.Status,
 		NextAt: r.NextAt, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
+		PublicationID: r.PublicationID, Directory: r.Directory, IdempotencyKey: r.IdempotencyKey,
+		Attempt: r.Attempt, RemoteRequestID: r.RemoteRequestID, RemoteState: r.RemoteState,
+		WaitingOn: r.WaitingOn, VisibleAt: r.VisibleAt, OperationID: r.OperationID, RemovedSent: r.RemovedSent != 0, MediaItemID: r.MediaItemID,
 	}
+	_ = json.Unmarshal([]byte(r.ExpectedFilesJson), &d.ExpectedFiles)
+	_ = json.Unmarshal([]byte(r.ItemIdsJson), &d.ItemIDs)
+	_ = json.Unmarshal([]byte(r.FileResultsJson), &d.FileResults)
+	return d
 }
 
-// EnqueueDelivery records a notification to deliver, due now.
-func (d *DB) EnqueueDelivery(ctx context.Context, notifierID, downloadID int64, event, payload string) (Delivery, error) {
-	now := time.Now().UnixMilli()
-	r, err := d.Write.EnqueueDelivery(ctx, sqlitegen.EnqueueDeliveryParams{
-		NotifierID: notifierID, DownloadID: downloadID, Event: event,
-		Payload: payload, NextAt: now, CreatedAt: now, UpdatedAt: now,
-	})
-	if err != nil {
-		return Delivery{}, err
+// OutboxWrite is one notifier_deliveries row written with the import that
+// implies it. A row with an IdempotencyKey is a sub-delivery; writing the
+// same (notifier, key) again — the same directory of the same publication
+// imported again — refreshes it with the new expected files and advances its
+// attempt, so Cinema scans afresh.
+type OutboxWrite struct {
+	NotifierID     int64
+	DownloadID     int64
+	MediaItemID    int64
+	PublicationID  int64
+	Directory      string
+	IdempotencyKey string
+	ExpectedFiles  []ports.ExpectedFile
+	Event          string
+	Payload        string
+	// OperationID keys a Re-match's sub-delivery (op/<id>/<dir-hash>).
+	OperationID string
+	// Hold writes the row not due: it is released when the operation that
+	// wrote it says so (an Offload's request waits until the files are gone).
+	Hold bool
+}
+
+// holdUntil is next_at of a held sub-delivery: far enough that the dispatcher
+// never finds it due until ReleaseOffloadDeliveries sets a real time.
+const holdUntil = int64(1) << 60
+
+// insertOutboxTx writes outbox rows inside the caller's transaction.
+func insertOutboxTx(ctx context.Context, tx *sql.Tx, rows []OutboxWrite, now int64) error {
+	for _, o := range rows {
+		expected := "[]"
+		if len(o.ExpectedFiles) > 0 {
+			raw, err := json.Marshal(o.ExpectedFiles)
+			if err != nil {
+				return err
+			}
+			expected = string(raw)
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO notifier_deliveries
+			(notifier_id, download_id, media_item_id, publication_id, directory, idempotency_key, expected_files_json, event, payload, next_at, created_at, updated_at, operation_id)
+			VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+			ON CONFLICT (notifier_id, idempotency_key) WHERE idempotency_key != '' DO UPDATE SET
+				expected_files_json=excluded.expected_files_json, payload=excluded.payload, status='pending', attempts=0,
+				attempt=attempt+1, last_error='', result='', remote_request_id='', remote_state='', waiting_on='',
+				visible_at=0, item_ids_json='[]', file_results_json='[]', next_at=excluded.next_at, created_at=excluded.created_at, updated_at=excluded.updated_at`,
+			o.NotifierID, o.DownloadID, o.MediaItemID, o.PublicationID, o.Directory, o.IdempotencyKey, expected, o.Event, o.Payload, nextAt(o, now), now, now, o.OperationID); err != nil {
+			return err
+		}
 	}
-	return deliveryFrom(r), nil
+	return nil
+}
+
+// EnqueueDeliveries writes outbox rows, due now, in one transaction.
+func (d *DB) EnqueueDeliveries(ctx context.Context, rows []OutboxWrite) error {
+	tx, err := d.W.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if err := insertOutboxTx(ctx, tx, rows, time.Now().UnixMilli()); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// RecordImported records an import that did not come from a publication (a
+// legacy client's payload, a manual import): its history row, its outbox rows
+// and the start of its import_to_cinema_visible timing, in one transaction.
+func (d *DB) RecordImported(ctx context.Context, h HistoryWrite, outbox []OutboxWrite, starts []TimingStart) error {
+	tx, err := d.W.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	now := time.Now().UnixMilli()
+	if err := insertHistoryTx(ctx, d.Write.WithTx(tx), h, now); err != nil {
+		return err
+	}
+	if err := insertOutboxTx(ctx, tx, outbox, now); err != nil {
+		return err
+	}
+	if err := startTimingsTx(ctx, tx, starts, now); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// startTimingsTx opens pipeline_timings rows inside the caller's transaction
+// (first start wins).
+func startTimingsTx(ctx context.Context, tx *sql.Tx, starts []TimingStart, now int64) error {
+	for _, t := range starts {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO pipeline_timings (transfer, download_id, kind, started_at) VALUES (?,?,?,?) ON CONFLICT (kind, transfer) DO NOTHING`,
+			t.Transfer, t.DownloadID, t.Kind, now); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // DueDeliveries returns pending deliveries whose time has come.
-func (d *DB) DueDeliveries(ctx context.Context, limit int64) ([]Delivery, error) {
+func (d *DB) DueDeliveries(ctx context.Context, nowMs, limit int64) ([]Delivery, error) {
 	rows, err := d.Read.DueDeliveries(ctx, sqlitegen.DueDeliveriesParams{
-		NextAt: time.Now().UnixMilli(), Limit: limit,
+		NextAt: nowMs, Limit: limit,
 	})
 	if err != nil {
 		return nil, err
@@ -242,13 +403,72 @@ func (d *DB) DueDeliveries(ctx context.Context, limit int64) ([]Delivery, error)
 	return out, nil
 }
 
-// SettleDelivery writes the outcome of one attempt.
-func (d *DB) SettleDelivery(ctx context.Context, del Delivery) error {
-	return d.Write.SettleDelivery(ctx, sqlitegen.SettleDeliveryParams{
+// DeliveryTiming says what settling a sub-delivery does to its transfer's
+// import_to_cinema_visible timing.
+type DeliveryTiming struct {
+	Transfer string // the timing's key; "" touches nothing
+	// Discard drops the open timing: the far side does not report results,
+	// so the seam cannot be measured for this import.
+	Discard bool
+}
+
+// SettleDelivery writes the outcome of one attempt. A sub-delivery that has
+// just become visible closes its transfer's import_to_cinema_visible timing
+// when no other sub-delivery of the same import is still pending.
+func (d *DB) SettleDelivery(ctx context.Context, del Delivery, timing DeliveryTiming) error {
+	items := "[]"
+	if len(del.ItemIDs) > 0 {
+		raw, err := json.Marshal(del.ItemIDs)
+		if err != nil {
+			return err
+		}
+		items = string(raw)
+	}
+	results := "[]"
+	if len(del.FileResults) > 0 {
+		raw, err := json.Marshal(del.FileResults)
+		if err != nil {
+			return err
+		}
+		results = string(raw)
+	}
+	tx, err := d.W.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	now := time.Now().UnixMilli()
+	if err := d.Write.WithTx(tx).SettleDelivery(ctx, sqlitegen.SettleDeliveryParams{
 		Attempts: del.Attempts, LastError: del.LastError, Result: del.Result,
-		Status: del.Status, NextAt: del.NextAt,
-		UpdatedAt: time.Now().UnixMilli(), ID: del.ID,
-	})
+		Status: del.Status, NextAt: del.NextAt, Attempt: del.Attempt,
+		RemoteRequestID: del.RemoteRequestID, RemoteState: del.RemoteState,
+		WaitingOn: del.WaitingOn, VisibleAt: del.VisibleAt, ItemIdsJson: items,
+		FileResultsJson: results, UpdatedAt: now, ID: del.ID,
+	}); err != nil {
+		return err
+	}
+	switch {
+	case timing.Transfer == "":
+	case timing.Discard:
+		if _, err := tx.ExecContext(ctx, `DELETE FROM pipeline_timings WHERE kind=? AND transfer=? AND ended_at=0`,
+			TimingImportToCinemaVisible, timing.Transfer); err != nil {
+			return err
+		}
+	case del.VisibleAt > 0:
+		var pending int
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM notifier_deliveries
+			WHERE download_id=? AND publication_id=? AND idempotency_key!='' AND status='pending' AND id!=?`,
+			del.DownloadID, del.PublicationID, del.ID).Scan(&pending); err != nil {
+			return err
+		}
+		if pending == 0 {
+			if _, err := tx.ExecContext(ctx, `UPDATE pipeline_timings SET ended_at=MAX(?,started_at) WHERE kind=? AND transfer=? AND ended_at=0`,
+				del.VisibleAt, TimingImportToCinemaVisible, timing.Transfer); err != nil {
+				return err
+			}
+		}
+	}
+	return tx.Commit()
 }
 
 // RetryDelivery puts one failed delivery back on the queue, due now, with a
@@ -286,6 +506,19 @@ func (d *DB) ListDeliveries(ctx context.Context, notifierID, limit int64) ([]Del
 	rows, err := d.Read.ListDeliveries(ctx, sqlitegen.ListDeliveriesParams{
 		NotifierID: notifierID, Limit: limit,
 	})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]Delivery, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, deliveryFrom(r))
+	}
+	return out, nil
+}
+
+// ListItemDeliveries returns an item's sub-deliveries, newest first.
+func (d *DB) ListItemDeliveries(ctx context.Context, itemID, limit int64) ([]Delivery, error) {
+	rows, err := d.Read.ListItemDeliveries(ctx, sqlitegen.ListItemDeliveriesParams{MediaItemID: itemID, Limit: limit})
 	if err != nil {
 		return nil, err
 	}
@@ -510,4 +743,11 @@ func (d *DB) BulkUpdateItem(ctx context.Context, id int64, monitored *bool, prof
 		return ErrNotFound
 	}
 	return nil
+}
+
+func nextAt(o OutboxWrite, now int64) int64 {
+	if o.Hold {
+		return holdUntil
+	}
+	return now
 }

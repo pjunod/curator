@@ -113,6 +113,31 @@ func (d *DB) UpdatePreparedPlacement(ctx context.Context, p Placement) error {
 	return nil
 }
 
+// UpdateObservedPlacement can reopen a retained journal only after the
+// coordinator proved its already-installed object. It grants no new writer.
+func (d *DB) UpdateObservedPlacement(ctx context.Context, p Placement) error {
+	if p.ID == "" || p.PublishedFileGeneration == "" || (p.State != "prepared" && p.State != "retained") {
+		return ErrPlacementGenerationChanged
+	}
+	p.State = "prepared"
+	raw, e := json.Marshal(p)
+	if e != nil {
+		return e
+	}
+	result, e := d.W.ExecContext(ctx, `UPDATE import_placements SET state='prepared',data=?,updated_at=? WHERE id=? AND state IN ('prepared','retained') AND json_extract(data,'$.source_generation')=? AND target=? AND COALESCE(json_extract(data,'$.import_attempt_epoch'),-1)=?`, string(raw), time.Now().UnixMilli(), p.ID, p.SourceGeneration, p.Target, placementEpoch(p))
+	if e != nil {
+		return e
+	}
+	n, e := result.RowsAffected()
+	if e != nil {
+		return e
+	}
+	if n != 1 {
+		return ErrPlacementGenerationChanged
+	}
+	return nil
+}
+
 func (d *DB) GetPlacement(ctx context.Context, id string) (Placement, error) {
 	var raw string
 	err := d.R.QueryRowContext(ctx, `SELECT data FROM import_placements WHERE id=?`, id).Scan(&raw)
@@ -123,6 +148,34 @@ func (d *DB) GetPlacement(ctx context.Context, id string) (Placement, error) {
 	err = json.Unmarshal([]byte(raw), &p)
 	return p, err
 }
+
+// CommittedPlacementForTarget returns the newest committed (or cleaned)
+// placement that published target with digest sha256 (any digest when it
+// is ""): the record publication cleanup decides a library copy by, instead
+// of reading it. ok is false when no placement recorded it (a historical or
+// v1 import).
+func (d *DB) CommittedPlacementForTarget(ctx context.Context, target, sha256 string) (Placement, bool, error) {
+	rows, err := d.R.QueryContext(ctx, `SELECT data FROM import_placements WHERE target=? AND state IN ('committed','cleaned') ORDER BY updated_at DESC`, target)
+	if err != nil {
+		return Placement{}, false, err
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var raw string
+		if err = rows.Scan(&raw); err != nil {
+			return Placement{}, false, err
+		}
+		var p Placement
+		if err = json.Unmarshal([]byte(raw), &p); err != nil {
+			return Placement{}, false, err
+		}
+		if sha256 == "" || p.SHA256 == sha256 {
+			return p, true, nil
+		}
+	}
+	return Placement{}, false, rows.Err()
+}
+
 func (d *DB) PendingPlacements(ctx context.Context) ([]Placement, error) {
 	return d.unresolvedPlacements(ctx, true)
 }
@@ -133,7 +186,7 @@ func (d *DB) UnresolvedPlacementReferences(ctx context.Context) ([]Placement, er
 	return d.unresolvedPlacements(ctx, false)
 }
 func (d *DB) unresolvedPlacements(ctx context.Context, batch bool) ([]Placement, error) {
-	query := `SELECT data FROM import_placements WHERE state IN ('prepared','committed','retained') ORDER BY updated_at`
+	query := `SELECT data FROM import_placements WHERE state IN ('prepared','committed','retained','detached') ORDER BY updated_at`
 	if batch {
 		query = `SELECT data FROM import_placements WHERE state IN ('prepared','committed') ORDER BY updated_at`
 	}
@@ -196,6 +249,16 @@ func (d *DB) CommitPlacement(ctx context.Context, p Placement) (int64, error) {
 	}
 	if placementEpoch(prepared) != placementEpoch(p) || (state != "prepared" && state != "committed" && state != "cleaned") {
 		return 0, ErrPlacementGenerationChanged
+	}
+	if state == "prepared" {
+		if err = validateHouseholdPlacementTx(ctx, tx, p); err != nil {
+			return 0, err
+		}
+	}
+	if observed, ok := ctx.Value(observedPlacementCommit{}).(observedPlacementCommit); ok {
+		if observed.ID != p.ID || observed.Generation != p.PublishedFileGeneration || prepared.PublishedFileGeneration != observed.Generation {
+			return 0, ErrPlacementGenerationChanged
+		}
 	}
 	if p.ImportEpoch != nil {
 		publication, e := placementPublication(p)
@@ -434,6 +497,26 @@ func (d *DB) CommitPlacement(ctx context.Context, p Placement) (int64, error) {
 	return fid, tx.Commit()
 }
 
+type observedPlacementCommit struct{ ID, Generation string }
+
+// CommitObservedPlacement records bytes already published under the original
+// grant. It grants no writer permission and cannot publish an old intention.
+// The placement coordinator proves and pins the installed object immediately
+// before this call while holding the download, title and storage authority.
+func (d *DB) CommitObservedPlacement(ctx context.Context, p Placement) (int64, error) {
+	if p.ID == "" || p.PublishedFileGeneration == "" || p.ImportEpoch == nil {
+		return 0, ErrPlacementGenerationChanged
+	}
+	recorded, e := d.GetPlacement(ctx, p.ID)
+	if e != nil {
+		return 0, e
+	}
+	if recorded.PublishedFileGeneration != p.PublishedFileGeneration || recorded.SourceGeneration != p.SourceGeneration || recorded.Target != p.Target {
+		return 0, ErrPlacementGenerationChanged
+	}
+	return d.CommitPlacement(context.WithValue(ctx, observedPlacementCommit{}, observedPlacementCommit{ID: p.ID, Generation: p.PublishedFileGeneration}), p)
+}
+
 func (d *DB) LibraryRevision(ctx context.Context) (int64, error) {
 	var revision int64
 	err := d.R.QueryRowContext(ctx, `SELECT revision FROM lifecycle_library_revision WHERE id=1`).Scan(&revision)
@@ -503,4 +586,62 @@ func (d *DB) DeleteRecoverySuperseded(ctx context.Context, fileID int64, importI
 		return err
 	}
 	return tx.Commit()
+}
+
+// supersededStageWhere selects a prepared stage no import will ever use
+// again: a download's placement from an attempt epoch below the attempt's
+// current one, of an attempt that has completed, or of a cancelled attempt
+// whose entire publication was removed as superseded. No publication
+// authorization may name the stage. Placement ids carry their epoch, so a later attempt
+// writes its own stage and never adopts this one; reconciliation would keep
+// it prepared for ever (download 1196, 2026-11-12).
+const supersededStageWhere = `p.state='prepared' AND COALESCE(json_extract(p.data,'$.recovery_import'),'')=''
+	AND COALESCE(json_extract(p.data,'$.download_id'),0)!=0
+	AND EXISTS(SELECT 1 FROM import_attempt_controls c WHERE c.download_id=json_extract(p.data,'$.download_id') AND c.generation_key=json_extract(p.data,'$.source_generation')
+		AND (c.outcome='completed' OR (c.outcome='cancelled' AND EXISTS(SELECT 1 FROM publications q WHERE q.download_id=c.download_id AND q.kind='completed' AND q.state='removed')
+            AND EXISTS(SELECT 1 FROM publications q JOIN publication_files f ON f.publication_id=q.id WHERE q.download_id=c.download_id)
+            AND NOT EXISTS(SELECT 1 FROM publications q WHERE q.download_id=c.download_id AND q.state!='removed')
+            AND NOT EXISTS(SELECT 1 FROM publications q JOIN publication_files f ON f.publication_id=q.id WHERE q.download_id=c.download_id AND (f.outcome!='discarded' OR f.discard_reason!='superseded' OR f.removed_at=0))) OR (json_extract(p.data,'$.import_attempt_epoch') IS NOT NULL AND json_extract(p.data,'$.import_attempt_epoch')<c.attempt_epoch)))
+	AND NOT EXISTS(SELECT 1 FROM import_publication_authorizations a WHERE a.placement_id=p.id)`
+
+// SupersededStages lists one download's superseded stages (every download's
+// for 0).
+func (d *DB) SupersededStages(ctx context.Context, downloadID int64) ([]Placement, error) {
+	rows, err := d.R.QueryContext(ctx, `SELECT p.data FROM import_placements p WHERE (?=0 OR json_extract(p.data,'$.download_id')=?) AND `+supersededStageWhere+` ORDER BY p.updated_at`, downloadID, downloadID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var out []Placement
+	for rows.Next() {
+		var raw string
+		if err = rows.Scan(&raw); err != nil {
+			return nil, err
+		}
+		var p Placement
+		if err = json.Unmarshal([]byte(raw), &p); err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+// IsSupersededStage reports whether placement id is a superseded stage.
+func (d *DB) IsSupersededStage(ctx context.Context, id string) (bool, error) {
+	var ok bool
+	err := d.R.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM import_placements p WHERE p.id=? AND `+supersededStageWhere+`)`, id).Scan(&ok)
+	return ok, err
+}
+
+// RollBackSupersededStage marks a superseded stage rolled back, only while it
+// still is one. The caller has removed its temporary file.
+func (d *DB) RollBackSupersededStage(ctx context.Context, id string) (bool, error) {
+	res, err := d.W.ExecContext(ctx, `UPDATE import_placements SET state='rolled_back',data=json_set(data,'$.state','rolled_back'),updated_at=?
+		WHERE id IN (SELECT p.id FROM import_placements p WHERE p.id=? AND `+supersededStageWhere+`)`, time.Now().UnixMilli(), id)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n == 1, err
 }

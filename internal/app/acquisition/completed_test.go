@@ -123,7 +123,7 @@ func TestLegacyReviewInventoryShowsReadOnlyPerFileProposal(t *testing.T) {
 	if err := db.UpdateDownloadHandoff(ctx, dl); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.W.ExecContext(ctx, `INSERT INTO legacy_cleanup_review(generation_key,path) VALUES(?,?)`, dl.GenerationKey, payload); err != nil {
+	if _, err := db.W.ExecContext(ctx, `INSERT INTO storage_change_review_paths(review_token,path) VALUES(?,?)`, dl.GenerationKey, payload); err != nil {
 		t.Fatal(err)
 	}
 	if err := svc.ScanCompleted(ctx); err != nil {
@@ -158,7 +158,7 @@ func TestLegacyReviewCanDeleteOnlyExplicitlySelectedCurrentFiles(t *testing.T) {
 	writeCompleted(t, selectedPath, 17)
 	writeCompleted(t, keepPath, 23)
 	dl := insertImportable(t, db, item, payload)
-	if _, err := db.W.ExecContext(ctx, `INSERT INTO legacy_cleanup_review(generation_key,path) VALUES(?,?)`, dl.GenerationKey, payload); err != nil {
+	if _, err := db.W.ExecContext(ctx, `INSERT INTO storage_change_review_paths(review_token,path) VALUES(?,?)`, dl.GenerationKey, payload); err != nil {
 		t.Fatal(err)
 	}
 	if err := svc.ScanCompleted(ctx); err != nil {
@@ -197,7 +197,7 @@ func TestLegacyReviewDeleteProtectsLibraryPathButAllowsSeparateDuplicate(t *test
 	writeCompleted(t, protectedPath, 17)
 	writeCompleted(t, duplicatePath, 17)
 	dl := insertImportable(t, db, item, payload)
-	if _, err := db.W.ExecContext(ctx, `INSERT INTO legacy_cleanup_review(generation_key,path) VALUES(?,?)`, dl.GenerationKey, payload); err != nil {
+	if _, err := db.W.ExecContext(ctx, `INSERT INTO storage_change_review_paths(review_token,path) VALUES(?,?)`, dl.GenerationKey, payload); err != nil {
 		t.Fatal(err)
 	}
 	if err := svc.ScanCompleted(ctx); err != nil {
@@ -241,7 +241,7 @@ func TestLegacyReviewDeleteRejectsStaleSnapshotAfterPathSubstitution(t *testing.
 	path := filepath.Join(payload, "episode.mkv")
 	writeCompleted(t, path, 17)
 	dl := insertImportable(t, db, item, payload)
-	if _, err := db.W.ExecContext(ctx, `INSERT INTO legacy_cleanup_review(generation_key,path) VALUES(?,?)`, dl.GenerationKey, payload); err != nil {
+	if _, err := db.W.ExecContext(ctx, `INSERT INTO storage_change_review_paths(review_token,path) VALUES(?,?)`, dl.GenerationKey, payload); err != nil {
 		t.Fatal(err)
 	}
 	if err := svc.ScanCompleted(ctx); err != nil {
@@ -516,7 +516,7 @@ func TestReviewedStorageDeletionRechecksNewLegacyCohortAgainstCachedEntry(t *tes
 	if entry.LegacyReview {
 		t.Fatal("fixture unexpectedly started in the legacy review cohort")
 	}
-	if _, err := db.W.ExecContext(ctx, `INSERT INTO legacy_cleanup_review(generation_key,path) VALUES('',?)`, entry.Path); err != nil {
+	if _, err := db.W.ExecContext(ctx, `INSERT INTO storage_change_review_paths(review_token,path) VALUES('',?)`, entry.Path); err != nil {
 		t.Fatal(err)
 	}
 	if err := svc.DeleteCompletedEntry(ctx, entry.Path, entry.Fingerprint); err == nil {
@@ -949,4 +949,95 @@ func TestCompletedSelectedScanHonorsCancellation(t *testing.T) {
 	if _, _, err := scanCompletedSelection(ctx, root, filepath.Dir(path), nil, nil); err != context.Canceled {
 		t.Fatalf("canceled scan returned %v", err)
 	}
+}
+
+// Review finding: an inventory entry is a top-level folder that can hold a
+// fenced historical payload beside an ordinary download. The fence decides
+// each selected file, so the ordinary sibling is never deletable through the
+// legacy path even when its download has finished or failed.
+func TestLegacyReviewDeleteRefusesAnOrdinarySiblingDownload(t *testing.T) {
+	for _, state := range []string{"imported", "failed"} {
+		t.Run(state, func(t *testing.T) {
+			svc, db, item, root := completedFixture(t)
+			ctx := context.Background()
+			legacyPayload := filepath.Join(root, "category", "legacy")
+			freshPayload := filepath.Join(root, "category", "fresh")
+			legacyFile := filepath.Join(legacyPayload, "old.mkv")
+			freshFile := filepath.Join(freshPayload, "new.mkv")
+			writeCompleted(t, legacyFile, 17)
+			writeCompleted(t, freshFile, 17)
+			legacy := insertImportable(t, db, item, legacyPayload)
+			if _, err := db.W.ExecContext(ctx, `INSERT INTO storage_change_review_paths(review_token,path) VALUES(?,?)`, legacy.GenerationKey, legacyPayload); err != nil {
+				t.Fatal(err)
+			}
+			fresh := insertImportable(t, db, item, freshPayload)
+			if _, err := db.W.ExecContext(ctx, `UPDATE downloads SET state=? WHERE id=?`, state, fresh.ID); err != nil {
+				t.Fatal(err)
+			}
+			if err := svc.ScanCompleted(ctx); err != nil {
+				t.Fatal(err)
+			}
+			entry := inventoryRoot(t, svc, root).Entries[0]
+			pick := func(path string) []CompletedFileSelection {
+				for _, file := range entry.ReviewFiles {
+					if canonicalCompletedPath(file.Path) == canonicalCompletedPath(path) {
+						return []CompletedFileSelection{{Path: file.Path, SnapshotIdentity: file.SnapshotIdentity}}
+					}
+				}
+				return nil
+			}
+			if selection := pick(freshFile); selection != nil {
+				if err := svc.DeleteSelectedLegacyFiles(ctx, entry.Path, entry.Fingerprint, selection); err == nil {
+					t.Fatal("an ordinary sibling download was deleted through the legacy fence")
+				}
+			}
+			if _, err := os.Stat(freshFile); err != nil {
+				t.Fatalf("ordinary sibling download was removed: %v", err)
+			}
+			selection := pick(legacyFile)
+			if selection == nil {
+				t.Fatalf("legacy file missing from review inventory: %+v", entry.ReviewFiles)
+			}
+			if err := svc.DeleteSelectedLegacyFiles(ctx, entry.Path, entry.Fingerprint, selection); err != nil {
+				t.Fatalf("fenced legacy file was refused: %v", err)
+			}
+		})
+	}
+}
+
+func TestArchivedPublicationKeepsMeasuredBytesInInventory(t *testing.T) {
+	svc, db, item, root := completedFixture(t)
+	ctx := context.Background()
+	path := filepath.Join(root, "episode")
+	writeCompleted(t, filepath.Join(path, "episode.mkv"), 15)
+	dl := insertImportable(t, db, item, path)
+	dl.State = "downloaded"
+	if err := db.UpdateDownloadHandoff(ctx, dl); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.InsertPublication(ctx, sqlite.PublicationWrite{DownloadID: dl.ID, Kind: "completed", Path: path, Generation: "delivery"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.W.ExecContext(ctx, "INSERT INTO download_dispositions(download_id,generation_key,requested_at,state) SELECT id,generation_key,1,'archived' FROM downloads WHERE id=?", dl.ID); err != nil {
+		t.Fatal(err)
+	}
+	check := func(status string, attention int) {
+		t.Helper()
+		if err := svc.ScanCompleted(ctx); err != nil {
+			t.Fatal(err)
+		}
+		inv, err := svc.CompletedInventory(ctx)
+		if err != nil || inv.Attention != attention {
+			t.Fatalf("inventory %+v, %v", inv, err)
+		}
+		entry := inventoryRoot(t, svc, root).Entries[0]
+		if entry.Bytes != 15 || entry.Status != status || !entry.DeliveryManaged || entry.WholeDeletable || !entry.Receipts[0].Archived {
+			t.Fatalf("entry %+v", entry)
+		}
+	}
+	check("retained", 0)
+	if err := os.Symlink("episode.mkv", filepath.Join(path, "link")); err != nil {
+		t.Fatal(err)
+	}
+	check("symlink", 1)
 }

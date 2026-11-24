@@ -9,21 +9,27 @@ import (
 	"time"
 
 	"github.com/pjunod/monarr/internal/domain"
+	"github.com/pjunod/monarr/internal/domain/backoff"
 	"github.com/pjunod/monarr/internal/ports"
 )
 
+// ErrAcquisitionSnapshotChanged means discovery lost an optimistic concurrency race.
+// The caller must compare fresh state before admitting anything.
+var ErrAcquisitionSnapshotChanged = errors.New("acquisition snapshot changed")
+
 // AcquisitionPlan has public bounded decision facts, never transport URLs.
 type AcquisitionPlan struct {
-	ID                  int64           `json:"id"`
-	MediaItemID         int64           `json:"mediaItemId"`
-	CopyID              int64           `json:"copyId"`
-	Season              int             `json:"season"`
-	State               string          `json:"state"`
-	Revision            int64           `json:"revision"`
-	PolicyVersion       int             `json:"policyVersion"`
-	SnapshotFingerprint string          `json:"snapshotFingerprint"`
-	Decision            json.RawMessage `json:"decision"`
-	AddedAt             time.Time       `json:"addedAt"`
+	ID                  int64                    `json:"id"`
+	MediaItemID         int64                    `json:"mediaItemId"`
+	CopyID              int64                    `json:"copyId"`
+	Season              int                      `json:"season"`
+	State               string                   `json:"state"`
+	Revision            int64                    `json:"revision"`
+	PolicyVersion       int                      `json:"policyVersion"`
+	SnapshotFingerprint string                   `json:"snapshotFingerprint"`
+	Decision            json.RawMessage          `json:"decision"`
+	AddedAt             time.Time                `json:"addedAt"`
+	ReplacementOrigin   *SeasonReplacementOrigin `json:"-"`
 }
 
 // Admission requires a library/configuration revision read before discovery.
@@ -34,15 +40,23 @@ func (d *DB) AdmitAcquisitionPlan(ctx context.Context, p AcquisitionPlan, revisi
 		return 0, err
 	}
 	defer func() { _ = tx.Rollback() }()
+	if err = checkSeasonReplacementOrigin(ctx, tx, p.ReplacementOrigin); err != nil {
+		return 0, err
+	}
 	var current int64
 	if err = tx.QueryRowContext(ctx, `SELECT revision FROM lifecycle_library_revision WHERE id=1`).Scan(&current); err != nil {
 		return 0, err
 	}
 	if current != revision {
-		return 0, fmt.Errorf("acquisition snapshot changed")
+		return 0, ErrAcquisitionSnapshotChanged
 	}
 	now := time.Now().UnixMilli()
-	res, err := tx.ExecContext(ctx, `INSERT INTO acquisition_plans(media_item_id,copy_id,season,state,snapshot_fingerprint,decision,added_at,updated_at) VALUES(?,?,?,'admitted',?,?,?,?)`, p.MediaItemID, p.CopyID, p.Season, p.SnapshotFingerprint, string(p.Decision), now, now)
+	var origin SeasonReplacementOrigin
+	if p.ReplacementOrigin != nil {
+		origin = *p.ReplacementOrigin
+	}
+	res, err := tx.ExecContext(ctx, `INSERT INTO acquisition_plans(media_item_id,copy_id,season,state,snapshot_fingerprint,decision,added_at,updated_at,replacement_origin_id,replacement_origin_generation)
+		VALUES(?,?,?,'admitted',?,?,?,?,?,?)`, p.MediaItemID, p.CopyID, p.Season, p.SnapshotFingerprint, string(p.Decision), now, now, origin.DownloadID, origin.GenerationKey)
 	if err != nil {
 		return 0, err
 	}
@@ -55,22 +69,22 @@ func (d *DB) AdmitAcquisitionPlan(ctx context.Context, p AcquisitionPlan, revisi
 		// from reserving protected siblings. Legacy season rows remain conservative.
 		for _, want := range dl.WantableIDs {
 			var n int
-			err = tx.QueryRowContext(ctx, `SELECT count(*) FROM downloads WHERE media_item_id=? AND COALESCE(copy_id,0)=? AND superseded=0 AND (state IN ('planned','grabbed','downloading','downloaded','awaiting_import','importing') OR submission_phase IN ('submitting','uncertain') OR parked_at>0) AND EXISTS(SELECT 1 FROM json_each(wantables) WHERE value=? OR value=?)`, dl.MediaItemID, dl.CopyID, want, seasonIdentity(dl.MediaItemID, dl.CopyID, dl.Season)).Scan(&n)
+			err = tx.QueryRowContext(ctx, `SELECT count(*) FROM downloads WHERE media_item_id=? AND COALESCE(copy_id,0)=? AND superseded=0 AND (state IN ('planned','grabbed','submitting','downloading','held','downloaded','awaiting_import','importing') OR submission_phase IN ('submitting','uncertain') OR parked_at>0) AND EXISTS(SELECT 1 FROM json_each(wantables) WHERE value=? OR value=?)`, dl.MediaItemID, dl.CopyID, want, seasonIdentity(dl.MediaItemID, dl.CopyID, dl.Season)).Scan(&n)
 			if err != nil {
 				return 0, err
 			}
 			if n > 0 {
-				return 0, fmt.Errorf("episode custody changed")
+				return 0, fmt.Errorf("%w: episode custody changed", ErrAcquisitionSnapshotChanged)
 			}
 		}
 		for _, ep := range dl.ReservedEpisodes {
 			var n int
-			err = tx.QueryRowContext(ctx, `SELECT count(*) FROM downloads WHERE media_item_id=? AND COALESCE(copy_id,0)=? AND superseded=0 AND (state IN ('planned','grabbed','downloading','downloaded','awaiting_import','importing') OR submission_phase IN ('submitting','uncertain') OR parked_at>0) AND EXISTS(SELECT 1 FROM json_each(reserved_episodes) WHERE value=?)`, dl.MediaItemID, dl.CopyID, ep).Scan(&n)
+			err = tx.QueryRowContext(ctx, `SELECT count(*) FROM downloads WHERE media_item_id=? AND COALESCE(copy_id,0)=? AND superseded=0 AND (state IN ('planned','grabbed','submitting','downloading','held','downloaded','awaiting_import','importing') OR submission_phase IN ('submitting','uncertain') OR parked_at>0) AND EXISTS(SELECT 1 FROM json_each(reserved_episodes) WHERE value=?)`, dl.MediaItemID, dl.CopyID, ep).Scan(&n)
 			if err != nil {
 				return 0, err
 			}
 			if n > 0 {
-				return 0, fmt.Errorf("episode custody changed")
+				return 0, fmt.Errorf("%w: episode custody changed", ErrAcquisitionSnapshotChanged)
 			}
 		}
 		wants, _ := json.Marshal(dl.WantableIDs)
@@ -116,7 +130,12 @@ func (d *DB) GetAcquisitionPlan(ctx context.Context, id int64) (AcquisitionPlan,
 	var p AcquisitionPlan
 	var raw string
 	var added int64
-	err := d.R.QueryRowContext(ctx, `SELECT id,media_item_id,copy_id,season,state,revision,policy_version,snapshot_fingerprint,decision,added_at FROM acquisition_plans WHERE id=?`, id).Scan(&p.ID, &p.MediaItemID, &p.CopyID, &p.Season, &p.State, &p.Revision, &p.PolicyVersion, &p.SnapshotFingerprint, &raw, &added)
+	var origin SeasonReplacementOrigin
+	err := d.R.QueryRowContext(ctx, `SELECT id,media_item_id,copy_id,season,state,revision,policy_version,snapshot_fingerprint,decision,added_at,replacement_origin_id,replacement_origin_generation FROM acquisition_plans WHERE id=?`, id).
+		Scan(&p.ID, &p.MediaItemID, &p.CopyID, &p.Season, &p.State, &p.Revision, &p.PolicyVersion, &p.SnapshotFingerprint, &raw, &added, &origin.DownloadID, &origin.GenerationKey)
+	if origin.DownloadID != 0 {
+		p.ReplacementOrigin = &origin
+	}
 	p.Decision = json.RawMessage(raw)
 	p.AddedAt = time.UnixMilli(added)
 	return p, err
@@ -171,12 +190,29 @@ func (d *DB) RecentFailedDownloads(ctx context.Context, since time.Time) ([]Down
 	return out, nil
 }
 func (d *DB) ClaimPlannedSubmission(ctx context.Context, id int64) (bool, error) {
-	res, err := d.W.ExecContext(ctx, `UPDATE downloads SET state='grabbed',submission_phase='submitting',updated_at=? WHERE id=? AND state='planned' AND submission_phase='pending' AND superseded=0 AND EXISTS(SELECT 1 FROM acquisition_plans WHERE id=downloads.plan_id AND state IN ('admitted','dispatching','active'))`, time.Now().UnixMilli(), id)
+	tx, err := d.W.BeginTx(ctx, nil)
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	now := time.Now().UnixMilli()
+	ready, err := claimReplacementPlanSubmission(ctx, tx, id, now)
+	if err != nil {
+		return false, err
+	}
+	if !ready {
+		return false, tx.Commit()
+	}
+	res, err := tx.ExecContext(ctx, `UPDATE downloads SET state='grabbed',submission_phase='submitting',updated_at=?
+		WHERE id=? AND state='planned' AND submission_phase='pending' AND superseded=0`, now, id)
 	if err != nil {
 		return false, err
 	}
 	n, err := res.RowsAffected()
-	return n == 1, err
+	if err != nil || n != 1 {
+		return false, err
+	}
+	return true, tx.Commit()
 }
 
 // SetPlannedSubmissionCapabilities pins the negotiated correlation semantics
@@ -246,9 +282,7 @@ func (d *DB) ScheduleManualAdmissionRetry(ctx context.Context, id int64, now tim
 	if err := d.R.QueryRowContext(ctx, `SELECT manual_retry_attempts FROM downloads WHERE id=? AND intent='manual_additional'`, id).Scan(&attempts); err != nil {
 		return err
 	}
-	backoff := []time.Duration{30 * time.Second, time.Minute, 2 * time.Minute, 5 * time.Minute}
-	delay := backoff[min(attempts, len(backoff)-1)]
-	next := now.Add(delay)
+	next := now.Add(backoff.Retry.After(attempts))
 	providerAt := int64(0)
 	if len(providerDeadline) > 0 && providerDeadline[0].After(now) {
 		providerAt = providerDeadline[0].UnixMilli()
@@ -310,11 +344,15 @@ func (d *DB) UpdateJobCheckpoint(ctx context.Context, id int64, owner, payload s
 	res, err := d.W.ExecContext(ctx, `
         WITH incoming(payload,manual_spent,background_priority,ts) AS (VALUES(?,?,?,?))
         UPDATE jobs SET
-          payload=CASE WHEN COALESCE(json_extract(jobs.payload,'$.manualGeneration'),0)
+          payload=json_set(CASE WHEN COALESCE(json_extract(jobs.payload,'$.manualGeneration'),0)
                               > COALESCE(json_extract(incoming.payload,'$.manualGeneration'),0)
             THEN json_set(incoming.payload,'$.manual',json('true'),
                           '$.manualGeneration',json_extract(jobs.payload,'$.manualGeneration'))
             ELSE incoming.payload END,
+            -- A failed grab may ask for a fresh comparison while this one
+            -- runs; the checkpoint must not erase that request.
+            '$.replanGeneration',max(COALESCE(json_extract(jobs.payload,'$.replanGeneration'),0),
+                                     COALESCE(json_extract(incoming.payload,'$.replanGeneration'),0))),
           priority=CASE WHEN COALESCE(json_extract(jobs.payload,'$.manualGeneration'),0)
                                > COALESCE(json_extract(incoming.payload,'$.manualGeneration'),0)
                             OR COALESCE(json_extract(incoming.payload,'$.manual'),0)=1

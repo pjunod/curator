@@ -50,7 +50,11 @@ func TestAcquisitionMigrationPreservesLegacyQueueAndRefusesCustodyDowngrade(t *t
 		if e != nil {
 			t.Fatal(e)
 		}
-		if dl.Transfer != "trace" || dl.RunnerControl == "" || dl.ImportPath != "/local/partial" || len(dl.Handoff) != 1 || dl.SubmissionPhase != "submitted" {
+		// Only the still-held transfer retains its live control after upgrading.
+		if (dl.RunnerControl != "") != (dl.State == "held") {
+			t.Fatalf("wrong live control for %s: %q", dl.State, dl.RunnerControl)
+		}
+		if dl.Transfer != "trace" || dl.ImportPath != "/local/partial" || len(dl.Handoff) != 1 || dl.SubmissionPhase != "submitted" {
 			t.Fatalf("custody lost: %+v", dl)
 		}
 	}

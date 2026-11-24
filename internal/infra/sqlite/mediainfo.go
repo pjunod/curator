@@ -94,12 +94,12 @@ type CopyDiskState struct {
 	// (ADR 0022). The zero value when Best is nil or the file was never
 	// probed, which never makes an item wanted.
 	Audio quality.Audio
-	// HDR is the measured HDR tier of the file behind Best (ADR 0026);
+	// HDR is the measured HDR tier of the file behind Best (ADR 0031);
 	// unknown when Best is nil or the file was never probed.
 	HDR hdr.Tier
 }
 
-// HDROf reads the ADR 0026 HDR tier out of a file record. A file that was
+// HDROf reads the ADR 0031 HDR tier out of a file record. A file that was
 // never probed, or whose probe failed, is unknown — never SDR.
 func (f FileQuality) HDROf() hdr.Tier {
 	if !f.Probed || f.Provenance == mediainfo.ProvenanceFailed {
@@ -290,7 +290,7 @@ func (d *DB) SetFileMediaInfo(ctx context.Context, fileID int64, info mediainfo.
 }
 
 // discEnhancementLayer is what a measurement says about the title's disc
-// master (migration 0071, ADR 0026 §6): "fel" or "mel" for a profile 7
+// master (migration 0093, ADR 0031 §6): "fel" or "mel" for a profile 7
 // stream whose first RPU was read, empty otherwise. Only profile 7 is a disc
 // master: an encode re-made the picture and carries no enhancement layer.
 func discEnhancementLayer(info mediainfo.Info, prov mediainfo.Provenance) string {
@@ -317,7 +317,7 @@ func (d *DB) RecordDiscEnhancementLayer(ctx context.Context, itemID int64, el st
 	return d.Write.RecordDiscEnhancementLayer(ctx, sqlitegen.RecordDiscEnhancementLayerParams{DiscEl: el, ID: itemID})
 }
 
-// hdrTierColumn is media_files.hdr_tier (migration 0071): the measured HDR
+// hdrTierColumn is media_files.hdr_tier (migration 0093): the measured HDR
 // tier, empty for a failed probe — the same rule as FileQuality.HDROf.
 func hdrTierColumn(info mediainfo.Info, prov mediainfo.Provenance) string {
 	if prov == mediainfo.ProvenanceFailed {

@@ -1,6 +1,6 @@
 # Bad media reports and replacement operations
 
-Companion to [DOWNLOAD_LIFECYCLE_PROPOSAL.md](DOWNLOAD_LIFECYCLE_PROPOSAL.md);
+Companion to [DOWNLOAD_LIFECYCLE_PROPOSAL.md](archive/DOWNLOAD_LIFECYCLE_PROPOSAL.md);
 this page records the implemented HTTP contract for library reports and
 explicit replacements.
 

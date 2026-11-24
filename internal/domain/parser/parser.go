@@ -44,7 +44,7 @@ type Parsed struct {
 	// read as language.Multi. Subtitle tags (VOSTFR, SUBBED) say nothing
 	// about the audio and are ignored.
 	Languages []string
-	// HDR is what the name claims about HDR and Dolby Vision (ADR 0026 §3).
+	// HDR is what the name claims about HDR and Dolby Vision (ADR 0031 §3).
 	// It is a claim: a measurement, when one exists, outranks it.
 	HDR    hdr.Claim
 	Proper bool

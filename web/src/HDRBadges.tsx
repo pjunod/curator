@@ -1,4 +1,4 @@
-// HDR and Dolby Vision badges and the pre-flight evidence panel (ADR 0026).
+// HDR and Dolby Vision badges and the pre-flight evidence panel (ADR 0031).
 //
 // Two badge styles carry the one distinction that matters: a dashed badge
 // with a "?" is what a release NAME claims; a solid badge is what the bytes

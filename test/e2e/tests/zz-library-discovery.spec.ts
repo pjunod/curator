@@ -1,0 +1,55 @@
+import {test,expect} from '@playwright/test'
+test.describe.configure({mode:'serial'})
+let seedId:number
+
+test.beforeAll(async({request})=>{
+ const roots=await(await request.get('/api/v1/rootfolders')).json()
+ const library=await(await request.get('/api/v1/library')).json()
+ const existing=library.find((item:any)=>item.tmdbId===7600||item.ids?.tmdb===7600)
+ if(existing){seedId=existing.id;return}
+ const response=await request.post('/api/v1/library',{data:{kind:'movie',tmdbId:7600,rootFolderId:roots[0].id,monitored:false,searchNow:false}})
+ expect(response.ok()).toBeTruthy();seedId=(await response.json()).id
+})
+for(const width of [1280,390]){
+ test(`library shelves and guarded volume review at ${width}px`,async({page},info)=>{
+  await page.setViewportSize({width,height:900})
+  await page.goto('/discover')
+  await expect(page.getByRole('button',{name:'For your library',exact:true})).toHaveAttribute('aria-pressed','true')
+  await page.getByLabel('Find a library title').fill('Library Discovery Seed')
+  await page.getByLabel('Base suggestions on').selectOption('movie:7600')
+  await expect(page.getByRole('heading',{name:'More like Library Discovery Seed'})).toBeVisible()
+  const related=page.getByRole('region',{name:'Related library titles'})
+  await expect(related.locator('.discover-card')).toHaveCount(8)
+  await expect(page.getByRole('heading',{name:'Complete Library Pair'})).toBeVisible()
+  await expect(page.getByText('Library Collection Missing', {exact:true})).toBeVisible()
+  await expect(page.getByText('In Curator · availability unknown',{exact:true}).first()).toBeVisible()
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBeTruthy()
+  await page.screenshot({path:info.outputPath(`discovery-${width}.png`),fullPage:true})
+  await related.locator('.discover-card').first().click()
+  const dialog=page.getByRole('dialog')
+  await expect(dialog).toBeVisible()
+  const box=await dialog.boundingBox();expect(box!.x).toBeGreaterThanOrEqual(0);expect(box!.x+box!.width).toBeLessThanOrEqual(width+1);expect(box!.y).toBeGreaterThanOrEqual(0);expect(box!.y+box!.height).toBeLessThanOrEqual(901)
+  await page.keyboard.press('Escape')
+  await expect(dialog).toHaveCount(0)
+  await page.goto('/settings')
+  const trigger=page.getByRole('button',{name:'Review volume',exact:true}).first()
+  await trigger.click()
+  const review=page.getByRole('dialog')
+  await expect(review.getByRole('button',{name:'Use current volume',exact:true})).toBeDisabled()
+  const confirm=review.getByRole('button',{name:'Use current volume',exact:true})
+  const confirmBox=await confirm.boundingBox();expect(confirmBox!.y).toBeGreaterThanOrEqual(0);expect(confirmBox!.y+confirmBox!.height).toBeLessThanOrEqual(901)
+  await review.getByRole('checkbox').check()
+  await expect(confirm).toBeEnabled()
+  await page.keyboard.press('Escape')
+  await expect(trigger).toBeFocused()
+ })
+}
+test('local availability refreshes independently of provider metadata',async({request})=>{
+ const lookup=async()=>await(await request.post('/api/v1/metadata/availability',{data:[{kind:'movie',tmdbId:7600}]})).json()
+ const first=await lookup();expect(first[0].catalog).toBe('present');expect(first[0].libraryItemId).toBe(seedId)
+ const shelf=await(await request.get(`/api/v1/discover/library/${seedId}/items?kind=movie&tmdbId=7600&shelf=collection`)).json()
+ expect(shelf.items.find((item:any)=>item.tmdbId===7600).availability.catalog).toBe('present')
+ expect(shelf.items.find((item:any)=>item.tmdbId===7620).availability.catalog).toBe('absent')
+ const changed=await request.get(`/api/v1/discover/library/${seedId}/items?kind=series&tmdbId=7600&shelf=related`)
+ expect(changed.status()).toBe(409)
+})

@@ -46,7 +46,7 @@ describe('mobile formatting', () => {
   })
 
   it('describes movie and series completeness from API counts', () => {
-    expect(completeness(base)).toEqual({ label: 'Missing', tone: 'warning' })
+    expect(completeness(base)).toEqual({ label: 'No file records', tone: 'warning' })
     expect(completeness({ ...base, fileCount: 1, quality: 'WEB-DL 1080p' })).toEqual({
       label: 'WEB-DL 1080p',
       tone: 'ok',

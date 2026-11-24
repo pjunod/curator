@@ -26,23 +26,27 @@ import (
 // Hard mounts froze everything that touched the storage, Curator and Runner
 // alike, six times in one day.
 //
-// Two things keep verification a background citizen:
+// Imports no longer verify by reading (hash once: the copy stream proves the
+// bytes against the manifest digest, and every later decision is made from
+// recorded identities). What still reads whole files is background proof
+// work — redundancy proofs of duplicates, inventory and retained-payload
+// verification — and the rare fallback where a record is missing. Two things
+// keep that a background citizen:
 //
-//   - one shared read budget for every verification read in the process,
-//     so their sum leaves headroom for placement writes, Runner and playback;
+//   - one shared read budget for background verification reads in the
+//     process, so their sum leaves headroom for imports, Runner and playback;
 //   - concurrent digests of the same unchanged file share one read.
 //
 // The budget is MONARR_VERIFY_READ_MBPS megabytes per second (default 100,
-// about a third of a 2.5 GbE link; 0 = unlimited). It paces verification
-// only. Placement copies run at full speed: they are the import itself.
+// about a third of a 2.5 GbE link; 0 = unlimited). It paces background
+// verification only.
 //
 // Reads made while holding a title's import target, or on behalf of an
-// operator's request, are foreground: they hold up other work (an import
-// lock, an HTTP response) and draw from their own budget. While any
-// foreground read is active, background reads — redundancy proofs and
-// verification outside the lock — slow to a tenth of the budget instead of
-// competing, so the lock holder is never starved by work that is not
-// waiting on anything.
+// operator's request, are foreground: an import, a lock holder or an HTTP
+// response is waiting on them, so they are not paced at all. While any
+// foreground read is active, background reads slow to a tenth of the budget
+// instead of competing, so the waiting work is never starved by work that is
+// not waiting on anything.
 
 const defaultVerifyReadMBps = 100
 
@@ -52,14 +56,14 @@ const verifyReadBurst = 4 << 20
 
 var verifyReads = newVerifyBudget(os.Getenv("MONARR_VERIFY_READ_MBPS"))
 
-// verifyBudget is the process's verification read budget: a foreground
-// limiter for reads something is waiting on, a background limiter for the
-// rest, and a much smaller yield limiter background reads also draw from
-// while foreground reads are in progress (one seen within foregroundWindow).
-// A nil budget is unlimited.
+// verifyBudget is the process's background verification read budget: a
+// limiter for background reads and a much smaller yield limiter they also
+// draw from while foreground reads are in progress (one seen within
+// foregroundWindow). Foreground reads are not limited; they only mark that
+// they are in progress. A nil budget is unlimited.
 type verifyBudget struct {
-	foreground, background, yield *rate.Limiter
-	lastForeground                atomic.Int64 // unix nanoseconds
+	background, yield *rate.Limiter
+	lastForeground    atomic.Int64 // unix nanoseconds
 }
 
 // foregroundWindow is how recently a foreground read must have happened for
@@ -74,7 +78,6 @@ func newVerifyBudget(raw string) *verifyBudget {
 	}
 	limit := rate.Limit(float64(mbps) * 1e6)
 	return &verifyBudget{
-		foreground: rate.NewLimiter(limit, verifyReadBurst),
 		background: rate.NewLimiter(limit, verifyReadBurst),
 		yield:      rate.NewLimiter(limit/10, verifyReadBurst),
 	}
@@ -116,8 +119,9 @@ func foregroundVerification(ctx context.Context) bool {
 func (b *verifyBudget) wait(ctx context.Context, foreground bool, n int) error {
 	var err error
 	if foreground {
+		// Something is waiting on this read: it is not paced, it only makes
+		// background reads yield.
 		b.lastForeground.Store(time.Now().UnixNano())
-		err = b.foreground.WaitN(ctx, n)
 	} else {
 		err = b.background.WaitN(ctx, n)
 		if err == nil && time.Since(time.Unix(0, b.lastForeground.Load())) < foregroundWindow {

@@ -27,7 +27,7 @@ func TestLegacyManualImportConsentExpiresWhenCopyTargetChanges(t *testing.T) {
 	payload := filepath.Join(root, "legacy-copy-payload")
 	selected := filepath.Join(payload, "Reviewed.Show.S01E01.1080p.WEB-DL.mkv")
 	writeCompleted(t, selected, 28)
-	if _, err := db.W.ExecContext(ctx, `INSERT INTO legacy_cleanup_review(generation_key,path) VALUES('',?)`, payload); err != nil {
+	if _, err := db.W.ExecContext(ctx, `INSERT INTO storage_change_review_paths(review_token,path) VALUES('',?)`, payload); err != nil {
 		t.Fatal(err)
 	}
 	if err := svc.ScanCompleted(ctx); err != nil {
@@ -73,7 +73,7 @@ func TestLegacyManualImportConsentExpiresWhenCopyTargetChanges(t *testing.T) {
 		t.Fatal(err)
 	}
 	err = svc.runImport(ctx, dl)
-	if err == nil || !strings.Contains(err.Error(), "legacy payload review") {
+	if err == nil || !strings.Contains(err.Error(), "storage under this payload changed") {
 		t.Fatalf("queued legacy approval followed a moved copy target: %v", err)
 	}
 	if got, err := os.ReadFile(selected); err != nil || len(got) != 28 {
@@ -173,7 +173,7 @@ func TestQueueManualImportRejectsStaleLegacyConsentBeforeAdmission(t *testing.T)
 	payload := filepath.Join(root, "legacy-approved")
 	selected := filepath.Join(payload, "Reviewed.Show.S01E01.1080p.WEB-DL.mkv")
 	writeCompleted(t, selected, 32)
-	if _, err := db.W.ExecContext(ctx, `INSERT INTO legacy_cleanup_review(generation_key,path) VALUES('',?)`, payload); err != nil {
+	if _, err := db.W.ExecContext(ctx, `INSERT INTO storage_change_review_paths(review_token,path) VALUES('',?)`, payload); err != nil {
 		t.Fatal(err)
 	}
 	if err := svc.ScanCompleted(ctx); err != nil {
@@ -234,7 +234,7 @@ func TestSelectedLegacyDeleteReadFailurePreservesAllFilesAndCanRetry(t *testing.
 	writeCompleted(t, first, 21)
 	writeCompleted(t, second, 22)
 	dl := insertImportable(t, db, itemID, payload)
-	if _, err := db.W.ExecContext(ctx, `INSERT INTO legacy_cleanup_review(generation_key,path) VALUES(?,?)`, dl.GenerationKey, payload); err != nil {
+	if _, err := db.W.ExecContext(ctx, `INSERT INTO storage_change_review_paths(review_token,path) VALUES(?,?)`, dl.GenerationKey, payload); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.UpdateDownloadState(ctx, dl.ID, "failed", 0, "held for review"); err != nil {
@@ -286,7 +286,7 @@ func TestQueueManualImportDatabaseReadFailureDoesNotReserveLegacyImport(t *testi
 	payload := filepath.Join(root, "legacy-read-outage")
 	selected := filepath.Join(payload, "Reviewed.Show.S01E01.1080p.WEB-DL.mkv")
 	writeCompleted(t, selected, 24)
-	if _, err := db.W.ExecContext(ctx, `INSERT INTO legacy_cleanup_review(generation_key,path) VALUES('',?)`, payload); err != nil {
+	if _, err := db.W.ExecContext(ctx, `INSERT INTO storage_change_review_paths(review_token,path) VALUES('',?)`, payload); err != nil {
 		t.Fatal(err)
 	}
 	if err := svc.ScanCompleted(ctx); err != nil {
@@ -305,7 +305,7 @@ func TestQueueManualImportDatabaseReadFailureDoesNotReserveLegacyImport(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.W.ExecContext(ctx, `ALTER TABLE legacy_cleanup_review RENAME TO legacy_cleanup_review_temporarily_unavailable`); err != nil {
+	if _, err := db.W.ExecContext(ctx, `ALTER TABLE storage_change_review_paths RENAME TO storage_change_review_paths_temporarily_unavailable`); err != nil {
 		t.Fatal(err)
 	}
 	_, admissionErr := svc.QueueManualImport(ctx, ManualImportRequest{
@@ -315,7 +315,7 @@ func TestQueueManualImportDatabaseReadFailureDoesNotReserveLegacyImport(t *testi
 	if admissionErr == nil {
 		t.Fatal("legacy import was admitted while its durable review fence was unreadable")
 	}
-	if _, err := db.W.ExecContext(ctx, `ALTER TABLE legacy_cleanup_review_temporarily_unavailable RENAME TO legacy_cleanup_review`); err != nil {
+	if _, err := db.W.ExecContext(ctx, `ALTER TABLE storage_change_review_paths_temporarily_unavailable RENAME TO storage_change_review_paths`); err != nil {
 		t.Fatal(err)
 	}
 	after, err := db.ListRecentDownloads(ctx)

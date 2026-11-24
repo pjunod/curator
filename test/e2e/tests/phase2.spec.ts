@@ -156,12 +156,8 @@ test('automatic RSS fills monitored primary copies beside explicit additions', a
 
 test('activity page shows the imported downloads', async ({ page }) => {
   await page.goto('/activity')
-  // The counts are always on, even with everything collapsed: the page has
-  // to answer "how much is there" before it answers "what is it".
-  await expect(page.getByTestId('activity-counts')).toContainText('finished')
-  // Finished is history and starts collapsed - that is the whole point of
-  // the section. Open it to see the receipts.
-  await page.getByTestId('toggle-imported').click()
-  await expect(page.getByText('The.Test.Movie.2024.1080p.WEB-DL.x264-E2E')).toBeVisible()
-  await expect(page.locator('.pill-ok', { hasText: 'imported' }).first()).toBeVisible()
+  await page.getByRole('button', { name: /^History / }).click()
+  const attempt = page.locator('.activity-attempt').filter({hasText:'The.Test.Movie.2024.1080p.WEB-DL.x264-E2E'}).first()
+  await expect(attempt).toBeVisible()
+  await expect(attempt).toContainText('imported')
 })

@@ -4,6 +4,66 @@ A walkthrough of the UI, in the order you'll meet it. Setup reference for
 every knob lives in [settings.md](settings.md); deployment and storage
 guidance in [deployment.md](deployment.md).
 
+## Household discovery and requests
+
+Sign in with your own Curator account. Members see **Discover**, **Requests** and
+**Account**. Search the catalogue or choose a library movie/show for related
+titles and movie collections. Library facts are refreshed independently of
+provider metadata. “Unknown” means a library check is needed; it never proves
+that a file is missing. Recommendations use library membership, not watch
+history. Primary-copy presence and acquisition remain separate facts.
+
+Movie requests freeze a title identity. Show requests freeze known aired regular
+episodes from the selected seasons; specials, future episodes and unknown dates
+are excluded. Joining a matching active request follows the same work. You can
+withdraw your own pending interest; other subscribers' interest remains.
+After approval, withdrawing interest preserves work already authorized by the
+owner. Offloaded scope stays excluded from ordinary monitoring until verified
+primary files return. Notes
+written by an owner are private to that owner. Members never receive owner paths,
+credentials, download controls or administrative/event endpoints.
+
+Local owners open **Requests** to review. A new title needs a destination/profile
+and stays unmonitored. Existing titles keep those settings. The review rechecks
+primary files and shows present, missing and offloaded counts. Already-present
+scope fulfills without a search. Re-acquiring offloaded leaves requires explicit
+acknowledgement of the current review. Changed facts, missing volume evidence or
+overlapping approvals require another review. Approval does not monitor future
+or unrequested episodes.
+
+Approved missing leaves use the existing acquisition/import services and Activity
+queue. Admission persists before client submission and resumes after restart.
+Uncertain client submissions retain the existing capability-aware retry rules.
+Imports reject extra/mixed episodes outside approval and preserve primary files
+that arrive after approval. Fulfillment requires verified primary files, never
+only a queue completion. Decline/reapproval cannot abandon outstanding transfer
+custody. Native owners reach these controls from **More → Household requests**.
+
+Optional Cinema sign-in is configured and linked as described in
+[settings.md](settings.md#household-accounts-and-optional-cinema-login). Both apps
+keep their own accounts. A Cinema administrator never becomes a Curator owner
+through this integration. Use local sign-in for owner work or during a Cinema
+outage. The native account page opens the web Account page for explicit linking.
+
+## Recover a local owner password
+
+The host operator can reset an active local owner's password using the existing
+data directory. Stop the service first, preserve your normal database backup,
+and run the matching Curator binary with the same data directory. Credentials
+arrive only on stdin; do not put a password in command arguments or shell history.
+For example, using your host's installed Python and Curator binary:
+
+```bash
+python3 -c 'import getpass,json; print(json.dumps({"username":getpass.getpass("Owner username: "),"password":getpass.getpass("New password: ")}))' | MONARR_DATA_DIR=/srv/curator monarr accounts reset-password
+```
+
+A successful result preserves the account ID and request history, changes the
+local password, invalidates that account's sessions and pending invitation
+proofs, and queues its Cinema-grant revocations. It never disables household
+authentication or turns a member into an owner. Start the service and sign in
+locally with the new password. Existing machine API keys are separate credentials;
+rotate them in **Access** if a privileged device also needs to be revoked.
+
 ## Install & run
 
 With compose (recommended — your customized compose file is gitignored,
@@ -185,6 +245,36 @@ nothing on disk is moved, and the `library-folders` warning under
 
 ## Discover
 
+Discover opens **For your library** on web and native. Choose a movie or show
+with a TMDB identity. Search and page through library titles, then see related
+TMDB titles, verified movie collection entries, or the selected show's regular
+seasons still to review. These suggestions use catalogue metadata, not viewing
+history. **Browse all** retains the existing provider lists.
+
+Availability separates **in Curator** from **available in the primary copy**.
+The shared status appears in search, discovery, recommendations and title
+details. Available means a successful manifest check at the shown time; it does
+not promise playback. Show counts cover known aired regular episodes only.
+Specials and future episodes are excluded. Missing episode dates or unlinked
+files leave coverage unknown. Additional copies do not silently complete the
+primary copy. Offload intent and active acquisition remain separate facts.
+
+Library checks expire after 13 hours against the normal 12-hour scan schedule.
+After an import, metadata edit, failed check or volume change, status may be
+unknown until **Settings → Library → Scan disk** succeeds. Unknown status blocks
+a duplicate Add; refresh the check or open the existing title. An untracked
+provider title says **Not in Curator**, rather than claiming files are missing.
+**Still to get** includes partial, offloaded and unknown entries; **Available in
+library** requires verified primary presence.
+
+**Review Season N** opens that season's existing controls on web. Native opens
+the show in the library. Review monitoring and searches there; opening a shelf
+or following a review link never starts acquisition. Related shelves show up to
+30 titles from the first TMDB recommendation page. Collection shelves verify
+membership and omit available primary copies. Each provider shelf reports its
+own refresh failure; a provider outage does not prove library absence.
+
+
 **Discover** (sidebar) is for the other half of the problem: adding
 something when you do not already know its name. It is rows of posters —
 *Trending this week*, *In theaters now*, *Coming soon*, *Popular*, *Top
@@ -341,7 +431,8 @@ The **All** tab shows everything, grouped into Movies / TV / Ebooks /
 Audiobooks (never interleaved); those tabs show flat grids. **Each
 section carries its own controls** in its header bar: a title/author
 text filter, a state filter (monitored, unmonitored, missing,
-incomplete, complete), and a sort (title, year, recently added, rating —
+incomplete, complete), **On disk · Offloaded · Everything** (default
+Everything; see [Offload](#offload-free-the-space-keep-the-title)), and a sort (title, year, recently added, rating —
 books also sort by author) with an ascending/descending toggle. The same
 per-section settings drive that section's flat tab, and everything but the
 text filter is remembered per browser. Every card carries the rating star,
@@ -369,7 +460,7 @@ existing collection and run **Scan disk** (Library page):
   records resolution, codec, bit depth, HDR format, audio tracks and
   bitrate. For HEVC it also reads the first frame, which is where Dolby
   Vision's profile and enhancement-layer type and HDR10+ metadata live
-  (ADR 0026). A file called `A Good Day to Die Hard.mkv` gets a real quality,
+  (ADR 0031). A file called `A Good Day to Die Hard.mkv` gets a real quality,
   because the bytes were always there to answer the question (ADR 0013).
   Measuring is queued per file, so a large library fills in over the
   minutes after the scan rather than blocking it.
@@ -529,6 +620,63 @@ usual questions at a glance:
 - **Links** — IMDb / TMDB / TVDB / Open Library pages, opening in a new
   tab.
 
+### Where it stands — the status panel
+
+Directly under the title block, above Identity, every item shows where it
+stands from search to cinema, in six stages left to right (stacked on a
+phone): **Searched**, **Downloading**, **Processed**, **Moved**, **Cinema
+notified**, **In cinema**. Each stage has its state (✓ done, ● in progress,
+◷ waiting, ✕ failed, ○ not yet), when it happened, and one line of detail.
+
+- **Searched** names the last search and who ran it — `manual` (you pressed
+  a button), `automatic` (the backlog, auto search on add), `wanted` (a Wanted
+  run), `replacement` (a re-grab after a failure), `rss`, `interactive` (you
+  picked a release) or a season comparison — with what it saw: `11 seen, 0
+  accepted`, and the reason most releases were refused, or why it did not
+  search at all (`downloading`, `unmonitored`, `indexers unavailable`).
+  Curator keeps the newest 20 searches per movie or episode.
+- **Downloading** shows the percentage and Runner's own speed and time left;
+  Curator does not average or guess. Before Runner starts it the stage says
+  `queued in Runner` — Runner has no queue position to report.
+- **Processed** is Runner's post-processing stage (`verifying`,
+  `repairing`, `unpacking`) and since when, or the failure Runner reported.
+- **Moved** counts the files placed into the library, or says the import is
+  waiting or failed.
+- **Cinema notified** and **In cinema** come from the cinema read-back:
+  `scan accepted`, then `confirmed` at the time cinema confirmed every file
+  with matching size and modification time, or what cinema says it is
+  waiting on (a full scan, its queue). Each episode of a season pack gets
+  its own answer.
+
+The headline says the current stage in a sentence. Below it are the live
+download numbers, any earlier attempts (a failed grab, a cancelled one), and
+the actions that apply: **Search now**, **Interactive search**, **Open in
+Activity**, **Cancel download** (asks first, then cancels in Runner and
+blocklists that release so the next automatic search does not grab it straight
+back. You can still pick the release yourself from interactive search),
+**Retry import**, **Send to cinema again**, and **Ask cinema to confirm**,
+which sends a scan request naming the item's current files so cinema's
+answer confirms them — the way to check an item imported before this record
+existed; asking again refreshes the same request rather than adding one.
+Every action shows its result in the panel. Once something is on disk, a later
+search that finds nothing (or is skipped) shows as detail on **Searched**, not
+as a step backwards, and a failed upgrade grab is listed under earlier attempts
+while the panel keeps showing the file you have.
+
+The panel refreshes every 2 seconds while a download is moving and every 30
+seconds otherwise, without moving your scroll position or focus. It never
+hides: once everything is done it collapses to one line (`In cinema,
+confirmed Sep 4`) that opens again on a click. A series shows one line per
+season (`2 of 6 in cinema · 4 in one season pack`), with a season pack's
+download shown once on the season (the counts cover monitored episodes that
+have aired, plus any with a file); open a season for a six-segment strip per
+episode, and click an episode for its full track and its own actions —
+**Search now** searches that episode only, and **Retry import**, **Send to
+cinema again** and **Ask cinema to confirm** act on that episode's download and
+files. The panel follows the primary copy; additional quality copies and book
+editions have their own rows in Activity. The phone app shows the
+same panel from the same endpoint (`GET /library/{id}/status`).
+
 **Seasons** and **Files** start collapsed and show their totals in the section
 header. Expand Seasons to use the existing season/episode monitoring and search
 controls. Each section keeps your choice while the item refreshes; visiting
@@ -543,6 +691,13 @@ Actions up top:
 - **Re-measure files** — read the files again and record what is actually in
   them. Use it after fixing a permission or a mount that made a probe fail;
   a routine scan skips files it has already measured at the same size.
+- **Import file…** — put a file you already have into this item without
+  going through Activity. See [Import file… from the item page](#import-file-from-the-item-page).
+- **Re-match…** — the item was matched to the wrong title (a folder adopted
+  as *Dune (1984)* that is *Dune (2021)*): move its files to the right one.
+  **Move to…** on a file in the Files panel does the same for one file, for
+  example an episode filed under the wrong episode. See
+  [Re-match and Move to…](#re-match-and-move-to).
 - **Edit** — change monitoring, quality profile, download priority, root
   folder, or the folder path itself. Choose **Profile default** to inherit,
   or one of six explicit levels from Very low through Force. Changing the
@@ -566,6 +721,199 @@ provider recovers.
 The same completeness pill, rating, and ↓ badge appear on every library
 card, so the grid shows at a glance what's complete, what's partial, and
 what's moving right now.
+
+### Import file… from the item page
+
+The target is already known on an item page, so importing a file you have
+is: **Import file…**, browse, pick, confirm. The same button is on the
+item screen of the iOS and Android app.
+
+**1 · Choose files.** The browser opens at the completed-download folder.
+Shortcuts take you to this item's own folder and to each library root; the
+path box opens any other folder. Folders come from the server's filesystem
+browser; the files listed are the media directly in the current folder (not
+in its sub-folders), each with its size, the episode its name says (or *no
+episode in name*), its quality, how many subtitles travel with it, and
+*runner delivery* when it is part of a Runner publication. An entry Curator
+cannot import (a symlink, an unreadable file) is listed with the reason
+instead of being left out. A folder Curator
+cannot read says so by path and names the fix: when the download client
+sees that folder under a different path, add a remote path mapping to the
+client in Settings → Acquisition.
+
+**2 · Confirm.** One line per file:
+
+- **Episode** (series) — prefilled from the name. A file whose name has no
+  episode (an obfuscated `a7f3c91e.mkv`) must be given one before Import
+  is offered. Your choice is stored with the import's file selection, by
+  path, so a retry places the file as the same episode whatever its name.
+- **Copy / Edition** — shown when the item has quality copies or book
+  editions.
+- **Destination** — the exact library path from the naming template.
+- **What happens to what is there** — *new file*; *replaces …* when the new
+  file ranks higher in the item's profile (the old one is removed once the
+  new one is placed); or *kept beside …* when it does not.
+- **How it gets there** — for a runner delivery: placed through an approved import, and
+  Curator cleans up the delivery folder under its usual rules (there is no
+  delete option). All the files you pick from one delivery are placed
+  together, in one import. A delivery grabbed for another title is moved to
+  this item when you place it — the confirm step says so — but only while
+  none of it is in the library yet; once any file of it has been placed
+  there, the confirm step refuses the move. Your choice holds for every
+  later attempt of that delivery, after a failure or a restart too. For loose files: hardlinked (your copy stays) on the same
+  volume, copied across volumes. Tick **Remove original** (off by default)
+  to rename instead on the same volume, or copy, verify and remove the
+  original across volumes. Remove original is refused for runner
+  deliveries, for files the library tracks, and for anything inside a
+  library item's folder. An original is removed only while it is still the
+  file you chose (same file, size and modification time) and its library
+  copy is the same file (a hard link) or the same bytes (a copy); otherwise
+  it is kept and the dialog and the Activity trace say why. The removal is
+  recorded before the import completes, so a restart finishes it.
+
+Subtitles beside a video, in a `Subs/` folder, or in `Subs/<video name>/`
+travel with it, named after the library file
+(`<name>.<lang>[.forced][.sdh].srt`) by the same rules as a runner
+delivery's subtitles. Beside the video, only a subtitle whose name starts
+with the video's name travels (a downloads folder holds other releases'
+subtitles too). A subtitle never overwrites a file Curator did not place;
+it takes the next free name. Subtitles placed by an Import file… of loose
+files are not removed when that video is later upgraded or replaced
+(runner deliveries' subtitles are); delete them by hand if they no longer
+fit.
+
+**Started.** The dialog lists each job it started with its Activity row,
+followed until it finishes: its state, why it failed if it did, and what
+Remove original removed or kept. A long copy shows **Stop** (the import's
+own cancellation: the source stays where it was, and the row can be
+retried from Activity).
+
+### Re-match and Move to…
+
+Two shapes of a wrong match, one operation: **move these files to the right
+item or episode**, adding that item to the library if it is not there
+(ADR 0027).
+
+- **Re-match…** (item page, beside Import file…) moves all of the item's
+  files. Search for the right title: titles already in your library are
+  listed first (that is how you reach a manual entry), then the provider's,
+  which are added to the library (default profile, a root of that kind) when
+  you move. For a series every file keeps its episode numbers in the new
+  series; a file whose episode the new series lacks needs a pick.
+- **Move to…** (a file's row in the Files panel) moves one file: on a series,
+  *Same show, different episode* or *A different show*. On the phone app the
+  Re-match sheet does both: *All files* or one file.
+
+While a move runs, **Where it stands** on both items (the one the files
+leave and the one they go to) shows a **Moving files** block: the direction
+("Files moving here from Dune (1984)"), state, files and bytes done, each
+`from → to`, what cinema said (including files it still has or kept) and
+**Stop** until the files are committed. It refreshes every 2 s without
+moving the page; Stop's answer appears beside the button. A move that ends
+badly (failed, or complete with files that could not move) stays there for
+24 hours with its reason and the files that did not move, until you press
+**Dismiss**.
+
+Nothing moves until you have read the preview. It lists:
+
+- every rename, `from → to`, with the target's naming rules. A folder the
+  move chooses (a title with no folder on disk yet) always carries the
+  provider hint, `Dune (2021) {tmdb-438631}`, so the next scan and cinema
+  keep the new match. Subtitles and other files with the video's stem
+  travel with it.
+- how the bytes get there: a **rename** on one volume; across volumes a
+  **copy**, verified (size and SHA-256) and published, then the original
+  removed. A file already at a destination is never overwritten: that file
+  needs a choice, with a picker on a series.
+- files that do not fit, with an episode picker, or *Leave it out*. Until
+  every such file is picked or left out, **Move** waits and nothing moves.
+  Only a file you leave out leaves the library (it stays on disk). A file
+  covering two episodes maps to two episodes, never split.
+- what happens to the item the files leave: it **stays** (wanted) if you
+  added it or it still has files or downloads; it is **removed** only when
+  folder adoption created it and it is now empty, along with its emptied
+  folder (anything else in it is left and listed).
+- the release that produced each moved file, **blocklisted** for the item it
+  left (checkbox, on by default), so automatic search does not grab it for
+  that wantable again. Files adopted from disk have no release to blocklist.
+- what happens to a file the target already has, by the rule import uses:
+  the moved file **replaces** it when it ranks higher in the target's
+  profile (and its language is acceptable) — the old file is removed once
+  the move is committed — and is **kept beside** it otherwise, with the
+  reason.
+- what cinema will do: scan the new folder and drop the old entry, or — a
+  cinema without removed-path support — scan the new folder only; the old
+  entry then stays in cinema until its next reconcile scan.
+
+The preview refuses while either title has a download in flight, an import
+running, a replacement open or another move running, and names which;
+**Wait for it** previews again (another move offers *Show its progress*
+instead). A replacement waiting for a release can hold a title for a long
+time and cannot be cancelled; the message says so. A preview that the library has since moved
+past is refused when you press Move: preview again.
+
+After **Move**, the dialog shows bytes copied and **Stop**; close it and
+reopen **Re-match…** to follow the move again. Stop before the
+files are committed puts every moved file back (a copy's partial file is
+removed, the original never touched). A restart mid-move resumes from the
+journal; a file that changed on disk since the preview is not moved and is
+listed for review. A move is finished only when the copied originals and
+replaced files are gone; anything that could not be removed (or, after
+Stop, put back) is named in the dialog and retried every 30 seconds. A
+library scan leaves both titles alone while a move runs. Both items' history show a `rematched` entry with every
+path that moved, and the dialog shows *Moved, cinema confirming* until
+cinema reports the new files placed and the old paths gone.
+
+## Offload: free the space, keep the title
+
+**Offload…** deletes the files of a movie, a show, one season or one
+episode and **keeps the title**: its identity, profile, quality copies,
+history and blocklist stay, and so does Cinema's watch history. The scope is
+marked **Offloaded**, its own state rather than just *unmonitored*: automatic
+search, RSS, upgrades and season discovery never grab it, and ticking
+*Monitored* is refused (the box is disabled; **Re-acquire** is offered
+instead). Find it on the item page (beside Re-match…), on a season row and on
+an episode row (the phone app has the same buttons; its episodes sit under
+each season's **Episodes**).
+
+The dialog says exactly what happens before anything is deleted:
+
+- every file, with its sidecars and any untracked subtitle, and what each
+  frees. A file another hard link keeps (a seeding copy) frees nothing until
+  that link goes too, and says so.
+- **bytes freed**, and the library volume's free space before and after.
+- a file that covers several episodes takes them all: offloading `S01E02`
+  of an `S01E01-E02` file offloads both, and the dialog says it.
+- what Cinema will do: keep the title greyed out with **Get it back**, or, if
+  its Cinema does not advertise `offload` yet, **drop the title and its watch
+  history** (said before, never a gate; upgrade Cinema first to keep them).
+- what blocks it: a download, import, re-match or replacement in flight for
+  that scope, with **Wait for it**.
+
+**Offload** enables once you tick that the files are deleted, not moved to a
+trash. After it the dialog shows files deleted and **Stop**; close it and the
+item's **Where it stands** shows an **Offloading files** block (files done,
+Stop, Cinema's answer) that ends as *Offloaded 12 Nov 2026 · 38.2 GB freed*
+until you **Dismiss** it. A restart mid-way resumes. A share that is not
+mounted makes the operation **wait** with that reason and nothing is deleted
+until the folder is back; a file that cannot be unlinked is named with its
+reason and **retried** every 30 seconds. **Stop** ends the remaining deletes:
+what is gone stays gone, and a title that still has a file stops being
+offloaded. The item folder is kept so its path stays stable. History records
+`offloaded` with the files and bytes.
+
+**Re-acquire** (the item, season or episode, or **Get it back** in Cinema)
+clears Offloaded inside that scope, monitors it and searches at its current
+profile, a season as a pack first; the answer shows at once and the status
+panel follows the grab through to Cinema. A file that lands on an offloaded
+season or episode by any route also clears it, and an episode that appears in
+an offloaded season arrives offloaded. A season that appears on a show you
+offloaded whole arrives **unmonitored**, not offloaded.
+
+The Library's **On disk · Offloaded · Everything** control is remembered per
+browser (and per phone), defaults to Everything, and an offloaded card carries
+an *offloaded* pill. Cinema's own search always includes offloaded titles. Settings → Connections shows each Cinema notifier’s advertised `offload`
+support beside its Test button, including when it was read. This is advisory.
 
 ## The Files table, and getting rid of a bad file
 
@@ -637,107 +985,52 @@ clients default on; torrent clients default off because they may still be
 seeding. Curator verifies guarded local removal when a client no longer has
 the job. This setting never grants deletion authority inside a library root.
 
-Native Runner deliveries use a durable receipt and per-file cleanup ledger.
-Curator validates the accepted manifest, imports the selected files, and
-removes only files whose import, same-copy redundancy, or completed replacement
-scope has been recorded and rechecked. It does not treat the completed payload
-as one disposable directory: unresolved or recoverable siblings remain
-available in **Resolve**. Runner acceptance and Curator file cleanup retry
-independently. The legacy cleanup switch does not disable verified cleanup for
-new Runner deliveries.
+Curator cleans up native Runner publications per file. A placed file can be
+removed when its Library copy matches the manifest digest. A discarded file
+also requires current source and storage proof. Curator retains files when
+the proof is missing or the recorded Library copy changed. Cleanup runs after
+import and hourly. **Clean up after import** is a setting for ordinary
+download clients. Runner publication cleanup follows its own file ledger.
+
+Historical publications keep their approval fence. Explicit Activity
+**Delete** can authorize the exact job generation after Curator verifies its
+manifest and original storage. Foreign siblings and files without reliable
+ownership evidence stay in place.
+
+When you retry a held job in Runner, Curator clears its cached hold only after
+Runner supplies a newer control revision from the same instance, with the same
+cause and stage. This applies to post-processing, storage and missing-tool holds
+as well as capacity and quota. A missed release event is recovered from the
+current queue or terminal history; an old snapshot or bare SUCCESS never clears
+the hold. The existing delivery manifest still controls import and acceptance.
+Runner queue and history polls stream status metadata and discard large recovery
+records and internal file proofs. A large job record does not truncate the poll;
+transport truncation or invalid status metadata remains an explicit error.
+Final source checks appear as **Verifying publication**, separately from filename
+restoration, so whole-file verification is not reported as rename time.
 
 Older Runner history rows are not adopted or cleaned merely because Runner now
-supports delivery receipts. They remain in the legacy review cohort until
-explicitly resolved, so a newly observed history row cannot silently authorize
-import or deletion for a current library copy.
+supports delivery receipts: their folders are historical publications, so a
+newly observed history row cannot silently authorize deletion.
 
 ### Completed folders — accounting survives an empty queue
 
-Activity → **Download storage** inventories configured Curator-owned working
-trees independently of the queue. The deployed `/working/monarr` root contains
-`completed`, also mounted at `/downloads`; both names refer to the same files.
-The `completed` container is omitted as a row, while its payloads are listed
-individually. Hidden entries, loose files, archives, and nested files count;
-symbolic-link targets are not followed. Sizes are **logical bytes**, not
-allocated space or a promise of how many bytes deletion would reclaim.
+System → Storage shows the last observed capacity and accessibility of Library
+and download folders. Capacity comes from an observation of the root volume and is unavailable
+when there is no valid measurement. A hard-linked file can remain on the volume
+after its download path is removed, so job cleanup does not promise that a
+given number of bytes will become free.
 
-| Explanation | What to do |
-|---|---|
-| Active | A download or import still owns this path; let it finish |
-| Awaiting import | Check Activity for approval, cancellation, or a stalled handoff |
-| Failed | Review the failure and use **Resolve files** to choose a destination |
-| Cleanup pending | A cleanup obligation remains; its owning worker retries it |
-| Retained | Files remain accounted for and are not eligible for automatic cleanup |
-| Untracked / ambiguous | No current record, or multiple associations; review the files and historical receipts |
-| Symlink | Target bytes are excluded; check the link separately |
+The automatic cleanup panel shows whether cleanup is running and the last
+recorded run or error. Follow **Jobs needing attention** for blocked work or
+**Job history** for job outcomes. **Manage storage folders** opens Settings.
+If a download mount has changed, use **Review replacement storage** only for
+an intentional change. See [storage replacement](#review-intentional-replacement-of-download-storage).
 
-**Scan download storage** queues another scan. **Resolve files** opens the
-shared Resolve panel with that location prefilled; opening it does not import
-or delete anything. Untracked entries and legacy history-only associations
-are not automatically adopted. Clearing or aging out an Activity row does not
-cancel durable receipt, acknowledgement, or cleanup work. The inventory keeps
-showing files until a later complete scan confirms their state. Cleanup uses
-recorded file identities and current ownership checks; unknown siblings remain
-protected. A configured storage root alone does not identify every child as
-belonging to one download.
-
-A full download progress bar does not prove a complete payload. PAR repair,
-archive extraction, or a disk write can fail after most bytes arrive. A failed
-season may contain usable episodes alongside missing or unfinished ones.
-Monarr preserves any payload path reported with the failure so these files
-remain associated with the failed download and available for manual review.
-Native Runner failure details also include its `Failure:Files` explanation
-when available, such as a failed move into failed-download storage. These
-failures still use the existing blocklist and bounded replacement search;
-retained media is not automatically declared complete or imported.
-
-The **Storage entries** list starts collapsed; click its heading to expand or
-collapse it. The heading shows the total entry count. Storage totals, scan
-status, and deletion progress remain visible while the list is closed. Closing
-and reopening the list preserves its filters, page, and selection.
-
-The expanded list defaults to **25 entries per page**. Search paths or download titles,
-filter by status, and sort by name or largest first. Names and parent paths wrap
-within each row so size, explanation, and actions remain visible on narrow screens.
-**Select page** selects eligible entries on the current page; **Select all**
-selects all matching eligible entries across pages. Changing the search or status
-filter clears selection. Changing pages preserves it.
-
-**Delete selected…** reviews the selected paths, file count, and logical size
-before permanent deletion. Each entry is checked independently; the result
-reports successful deletions and individual failures. Progress and results survive
-navigation within the app and changes between desktop and mobile layouts; keep
-the browser tab open until the batch finishes. Confirmation opens in a focused
-dialog, including when you select an entry near the bottom of the list.
-Entries that change after
-selection must be selected again. Active downloads, awaiting imports, storage
-containers, and entries from incomplete scans cannot be selected for deletion.
-**Resolve files** remains an individual action because each payload needs a
-library destination.
-
-**Delete files…** shows a confirmation for the selected entry. This is an
-explicit operator action. Curator rechecks ownership, active work, and the
-selected file identities before unlinking through a directory handle. Library
-and recovery paths, storage roots, and active download/import paths cannot be
-deleted through this action. Removing a symlink removes the link, never its
-target.
-
-A scan error retains the last complete inventory and shows the error and its
-last successful timestamp. The health check warns on entries needing review,
-failed scans, or a snapshot older than 15 minutes. Each root scan is limited
-to 100,000 entries; hitting that limit is reported as incomplete, not an empty
-folder. Background scans have no fixed 30-second timeout, allowing slow network
-storage to finish. They respect shutdown cancellation between filesystem calls;
-an unresponsive mount can still delay a call. Scans are serialized so they cannot
-accumulate workers. Deletion rechecks only the selected payload under its own
-30-second deadline.
-
-A successful client delete response alone does not prove local files
-disappeared. Curator checks the recorded path and keeps retry/error state when
-the result is uncertain. Runner-owned processing and recovery trees remain
-outside Curator's cleanup authority. A reused path is not treated as the old
-payload merely because its name matches; accepted generation and file identity
-must still match before cleanup.
+The inventory still scans configured download roots independently of Activity.
+The cached inventory and file receipts support internal audit and cleanup
+checks. A failed scan keeps its last complete snapshot. Unknown files and
+siblings remain protected by the file identity and ownership checks.
 
 ## The same release, twice
 
@@ -760,10 +1053,17 @@ may complete it. A manual grab is never refused for this.
 
 Replacement is bounded too. When a download fails, Monarr searches for a
 replacement immediately — that is what you want the first time and the second
-time. After **three failed grabs for the same want inside twelve hours** it
-stops, records `regrab_capped`, and leaves the item wanted. Five releases of
-one movie in ten hours is not persistence; it is a loop with your bandwidth
-as its budget. The cap applies to every automatic search — the RSS sync,
+time. After **three releases' worth of bytes spent on failed grabs for the
+same want inside twelve hours** it stops, records `regrab_capped`, and leaves
+the item wanted. Five releases of one movie in ten hours is not persistence;
+it is a loop with your bandwidth as its budget. The budget counts what was
+actually downloaded, not attempts: a post that fails health before any of it
+arrives (typically one taken down) costs nothing, so the next post is tried
+straight away. A failure whose download size is unknown counts as a whole
+release, and so does one whose fetched share nothing measured. "Bytes" means
+the share of each release fetched, whatever its size. Failures that cost no
+bytes still spend an indexer grab each, so twenty of them inside the window
+also stop automatic re-grabs. The cap applies to every automatic search — the RSS sync,
 Auto search, the backlog pass and the re-search after a failure. A manual
 grab is never capped.
 
@@ -816,6 +1116,7 @@ checkboxes; **Keep selections** leaves them alone. Specials start unselected.
 | Latest and future seasons | The latest known season when applied, plus later seasons. Older selected seasons are not cleared by subsequent refreshes. |
 | Future episodes | Episodes airing today or later, using the UTC date when the mode is applied. Newly discovered older episodes remain unselected. |
 | New seasons | Seasons after the last season that began before today, plus later seasons. |
+| First season only | Selects the first season (the lowest above 0, or season 1 until one exists). Later seasons arrive unmonitored; each offers **Monitor and search** when you get there. |
 | Manual selection | Clears existing selections; new seasons remain unselected. Use season and episode checkboxes to choose what to acquire. |
 
 Refresh preserves existing checkboxes. New episodes inherit the season's
@@ -833,10 +1134,10 @@ on its configured schedule and backlog search catches up older releases.
 
 ## When an import doesn't import
 
-The manual import panel (Activity → Manual import) validates the selected
+The manual import panel (Activity → Import files…) validates the selected
 files, queues an Activity job, and closes immediately. The copy continues in
 the background, so an 18 GB file never turns the panel into a progress modal.
-Expand the Activity row for the per-file result and the exact reason anything
+Check Activity for its result and the reason anything
 was declined — "no files imported from `<path>`" on its own is true and
 useless.
 
@@ -856,7 +1157,7 @@ Common reasons, and what they mean:
 |---|---|
 | `… does not improve on the … already here (profile "X")` | Only automation is gated by the profile. A manual import is the override and goes ahead anyway. |
 | `no known episodes for S20 [18 19 20]` | monarr has no episode records for those numbers — refresh the series metadata first. |
-| `cannot determine episodes from "<name>"` | Neither the filename nor the grabbed release identifies the episode. An obfuscated file (a hash such as `321d96….mkv`) imports under its grabbed release automatically when it is the only media file in the payload and the release names the episode it was grabbed for (History records `episode_from_release`). Further copies whose bytes are identical to an episode imported this way are recognised as redundant and cleaned up; a copy with different bytes is kept for review, because its episode is only the indexer's word. A season pack or a payload of several anonymous files cannot be assigned safely: rename each file to carry its `S00E00`, then use **Manual import**. |
+| `cannot determine episodes from "<name>"` | Neither the filename nor the grabbed release identifies the episode. An obfuscated file (a hash such as `321d96….mkv`) imports automatically when it is the only media file in the payload (release samples do not count): a single-episode grab names the episode itself, whatever the release title says; a multi-episode grab needs the release to name episodes covering the grab (History records `episode_from_release`). A release title that names a different episode than the grab maps nothing. Further copies whose bytes are identical to an episode imported this way are recognised as redundant and cleaned up; a copy with different bytes is kept for review, because its episode is only the indexer's word. A season pack or a payload of several anonymous files cannot be assigned safely: rename each file to carry its `S00E00`, then use **Manual import**. |
 | `item has no library folder assigned` | This can remain on older rows created before the add/grab guard. Press **Assign folder**: the form opens with Monarr's default root and exact folder name filled in. Saving queues every affected failed import automatically. New search/add and grab requests are refused before downloading when no destination exists. |
 
 A **manual** import is never blocked by the quality profile: you pointed at
@@ -896,8 +1197,8 @@ What happens now:
 The retry is deliberately narrow. Only environmental failures repeat — a full
 disk, a read-only mount, a mount that vanished. An import that failed because
 Monarr could not parse the payload stays failed for a person to resolve.
-Migration-era Runner rows are checked against the durable legacy review cohort
-before an automatic retry can change their state.
+A payload held for review because its download storage was replaced is
+skipped: an automatic retry never changes its state.
 
 ## Reading the quality row
 
@@ -989,42 +1290,40 @@ also checked across TMDB and TVDB after metadata hydration, so the same show
 cannot split into two cards merely because the two paths named it through
 different providers.
 
+## Automatic recovery of failed episode searches
+
+A library or policy change during season discovery restarts the comparison
+with fresh evidence after 30 seconds. It does not consume the job's failure
+attempts or admit a plan against the stale snapshot.
+
+At startup and every 30 seconds, Curator checks exhausted season searches for
+still-missing, aired, monitored episodes. An eligible failure gets a fresh
+background comparison after five minutes; repeated exhausted comparisons back
+off through 10, 20 and 40 minutes to a one-hour ceiling. The failed job remains
+in history. The sweep rotates through bounded batches, so old satisfied or
+unmonitored failures cannot hide later missing work.
+
+Failed Runner receipts without fetched counts use at most 100 recent history
+rows to recover article measurements for the exact job and transfer token.
+Zero successful articles cost zero bandwidth budget, while each failure still
+counts toward the 20-attempt ceiling. Missing or unavailable history keeps the
+conservative full-release charge; it never changes the failure verdict.
+
+Provider request limits, active download custody, offloading, monitoring and
+re-grab caps still apply. A newer manual or automatic comparison wins over a
+stale recovery request. Completed searches keep their existing discovery
+cooldowns; this recovery does not repeatedly search upgrades alone.
+
 ## Activity, and keeping it finite
 
-The Activity page leads with what is **moving**: the in-flight sections
-(Downloading, Verifying, Repairing, Copying to library…) are always shown
-whole, because a partly-hidden answer to "what is happening" is not an
-answer.
+Activity shows live work, jobs that need a decision, and finished attempts.
+Use [the Activity guide](#activity--transfers-imports-and-history-in-one-place)
+to retry a job, delete its owned files, or read its log.
 
-Everything terminal is history, and history is collapsed:
-
-- **Finished** and **Failed** are headings with a count. Open one and it
-  loads 25 rows at a time — "Show 25 more" goes further back.
-- **Filter by release title** narrows every group at once.
-- **Clear finished** clears finished rows from Activity. Nothing is deleted
-  from disk, from the library, or from the download client by this action.
-  Pending payload cleanup survives internally and continues on the existing
-  cleanup schedule, subject to the client's cleanup setting. It asks once
-  before clearing Activity.
-- **Clear failed** sits on the Failed grouping and removes every failed row
-  after the same inline confirmation. It dismisses Activity records only:
-  payloads, library files, blocklists, and download-client jobs stay as they
-  are. In the native app, select the Failed filter to reveal the matching
-  button beneath the filters.
-- A single row can be dismissed with **Remove**, which has always been
-  there and has always meant the row only (there is a separate option for
-  telling the client to drop the download too).
-
-Underneath, **Activity retention** (Settings → Library) ages out finished
-and failed rows, and the events behind them, after a number of days —
-30 by default, `0` to keep everything. A daily task does the sweep. It only
-ever touches terminal rows: a download stuck in "grabbed" for six weeks is
-something to look at, not something to hide, so it stays no matter how old
-it is. Pending imported-payload cleanup remains internal until removal is
-confirmed, even after its Activity row ages out. Before this, nothing was ever
-deleted: every grab monarr had ever
-made was still in the table, and the page rendered the most recent hundred
-of them forever.
+**Activity retention** (Settings → Library) expires eligible terminal rows
+and their events after 30 days by default. Set it to `0` to retain them.
+Pending work, unresolved deletion and durable cleanup obligations survive
+the history sweep.
 
 ## Activity, calendar, wanted
 
@@ -1033,8 +1332,7 @@ of them forever.
   task). Imported files are renamed to the library layout —
   `Movie (Year) [Quality].ext`, `Show - S01E02 - Title [Quality].ext`,
   `Author/Title/Title - Author.ext` — using hardlinks when the download and
-  library share a filesystem. **Expand any row** (the ▸) to see the
-  handoff, below.
+  library share a filesystem. Open **Job log** in History for recorded events.
 - **Calendar** has two views, switched with the **Month · Agenda** toggle in
   the page head. The choice is remembered.
 - **Wanted** shows one collapsed row per library title. Expanding a show lists
@@ -1116,14 +1414,9 @@ just upgraded gets them over the following day — or immediately, if you run
 ## The handoff: download to library
 
 The stretch between "the download client finished" and "the files are in
-the library" is a black box in most tools — when something doesn't show up,
-you can't tell why. Monarr lays it out. Expand a row on the **Activity**
-page (the ▸) to see the handoff step by step, each with a timestamp:
-**grabbed** → **downloading** → **downloaded** → **importing** →
-**imported**. Alongside the trace it shows the two paths that matter: what
-the download client *reported*, and where Monarr *looked* after any remote
-path mapping. When an import stops, the trace ends at **failed** with the
-exact reason — no guessing.
+the library" includes download processing, admission and file placement.
+Follow the live stage in **Activity**. Needs attention shows the cause and
+next step for a blocked job. Use **History → Job log** for its recorded events.
 
 For nzbd, the admission request also carries the effective download priority.
 Normal is `0`; High and Very high move the job ahead of normal work; Low and
@@ -1132,45 +1425,15 @@ can run through queue pauses and quota holds, but never through nzbd's disk
 safety guard. Download clients without a native priority capability continue
 to receive the grab normally and ignore this field.
 
-Every row carries the controls for its state:
-
-- **Import now** — on a download **awaiting approval** (from a client set to
-  require approval), imports it right now.
-- **Retry** — on a **failed** row, re-runs the import using the same path,
-  for after you've fixed a mount or added a path mapping.
-- **Restart import** — on an interrupted **importing** row with no live
-  worker, queues the saved payload again. Monarr also recovers these rows on
-  the next completed-download observation after a restart.
-- **Cancel import** — stops a queued or live import, removes any unfinished
-  destination temp file, keeps the completed payload, and returns the row to
-  a restartable **downloaded** state.
-- **Manual import** — browse Monarr to the real files (a folder or a single
-  file), select exactly which scan results belong, pick the target title and
-  copy, and queue the import.
-  Use it when automation couldn't resolve the payload, or to pull in files
-  you placed by hand. It's also on the top of the Activity page for imports
-  not tied to any download.
-- **Blocklist** — declare the release bad: blocklist it so it's never
-  grabbed again and search for a replacement. This is the *only* way a
-  handoff gets blocklisted — an import failure never does it on its own, so
-  a mount problem never churns silently through replacements.
-- **Remove** — drop the row (leaves the client and any files alone).
-
-An **importing** row is only called live when a worker exists. A live row
-shows bytes copied, total bytes, average rate, elapsed time, and the current
-detail. A durable row left behind by a stopped process instead says
-**interrupted · No importer is running**; a full progress bar is not used as
-a substitute for status.
-
-An accepted import waiting behind the two bounded workers sits under
-**Waiting to copy**, says **queued**, and offers **Cancel import**. It is not
-an interrupted job and pressing Retry again is neither necessary nor
-accepted. The durable handoff trace records `Queued for import` before the
-worker starts.
+Activity displays measured import progress when a worker is running.
+A queued import waits for the configured worker pool (four by default,
+`MONARR_IMPORT_WORKERS`). Interrupted imports can recover in the background
+as Curator reconciles the placement journal. Use the actions shown for the
+attempt and see [the Activity guide](#activity--transfers-imports-and-history-in-one-place).
 
 **Require approval per client** (Settings → Download clients) flips a
 client from hands-free to hold-for-approval: its completed downloads park at
-*awaiting approval* until you press **Import now**. Off by default.
+*awaiting approval* until you press **Approve import**. Off by default.
 
 ## Finding things fast
 
@@ -1210,6 +1473,173 @@ All three ask for an API key: **Access → API access → Reveal**. Anything a
 consumer calls that the shim doesn't implement is logged
 (`compat: unknown v3 request …`) — send that log line in an issue.
 
+## Pipeline
+
+System → Connections shows three tiles above the connection table. They answer
+"is the chain between Runner, Curator and Cinema keeping up?" with the last 24
+hours of measured time at each seam (the design is
+[PIPELINE_CONTRACT.md](PIPELINE_CONTRACT.md) section 3.5):
+
+| Tile | Starts | Ends |
+|---|---|---|
+| Failure to next grab | Runner's failure is recorded and a replacement is due (the same transaction) | the replacement was submitted, or a season job was queued for an episode with no single release. A failure with nothing better to grab is dropped, not counted |
+| Download done to imported | Runner's completed terminal is recorded (for a client with manual approval: when you approve it), so a publication waiting for its manifest is measured | the library import completed |
+| Imported to visible in Cinema | the publication was imported and Cinema was given at least one sub-delivery | the last sub-delivery of the import is **visible**: Cinema reported every expected file placed with the bytes and mtime the import left. An older Cinema that does not report results is left out rather than counted as waiting |
+
+Each tile shows p50 and p95 of the timings that finished, how many finished,
+and how many are **waiting** (started in the last 24 h, not finished). Waiting
+timings are never folded into the percentiles, so a stuck handoff cannot make
+the numbers look better. "No data yet" means nothing has finished in the
+window; it is not a zero. The same data is exported on `/metrics`
+(`MONARR_METRICS=true`) as the histograms `monarr_failure_to_next_grab_seconds`,
+`monarr_runner_done_to_import_seconds` and `monarr_import_to_cinema_visible_seconds`,
+plus `monarr_pipeline_overdue_rows` and `monarr_runner_fact_mismatch_total`
+(runner statuses that named a download under another transfer token and were
+ignored).
+
+**The `pipeline:overdue` health check** (System → Health, and `GET
+/api/v1/health`) turns to a warning and names the rows past their state's
+deadline. A deadline is written when a row enters a state (not on every
+poll), so a job held or stalled inside Runner — still listed every poll — is
+caught once its deadline passes: submitting 10 minutes of Runner answering
+"no such token", downloading 30 minutes without progress or a new
+post-processing stage (torrents 24 hours; a job stuck in one stage, such as
+unpack, is not progress), held at Runner's own deadline plus 5 minutes, downloaded/importing 6
+hours, and a publication whose import has not finished within 6 hours of its
+first start (time queued behind other imports does not count, and a retry
+does not restart the clock; past it the want is grabbed again). A download waiting for
+your approval (`awaiting_import`) has no deadline; it shows its age in
+Activity instead. Open the named job in Activity to see its available actions.
+The tiles are read from `GET /api/v1/system/pipeline`.
+
+Every overdue download leaves on its own (v0.45.2). On each poll Curator asks
+Runner about it: a terminal on Runner's receipt is applied; a job still in
+Runner's queue that is moving (bytes, progress or stage) gets its deadline
+extended; one Runner holds waits on Runner's own hold deadline; a job that
+has not moved for 24 hours past its deadline (a hold only when Runner gave
+it no deadline of its own), that Runner keeps blocked past Runner's own
+retry deadline, that has been missing from Runner's queue for 10 minutes of
+successful polls (Runner does not know it, or its receipt is stale — for
+example after Runner moved hosts), or whose receipt says completed with no
+publication arriving within 15 minutes, is failed as *not the release's
+fault* (no blocklist) and its want is grabbed again. An empty queue reply
+decides nothing. A download whose client was deleted or disabled is ended the
+same way by the hourly cleanup. The reason is on the row (`overdue: …`) and
+in History. An unreachable Runner decides nothing.
+
+When the failed job is still listed in Runner's queue (stalled, or blocked
+past Runner's own deadline), Curator also asks Runner once to cancel it
+(v0.46.1), in the background after the failure is recorded. The cancel only
+removes the job from Runner's queue: a job that has finished meanwhile is left
+alone, and its history record is never deleted. It is best effort: if it
+fails or times out (3 seconds) it is logged and ignored, never retried, and
+the failure and re-grab stand. A job absent from Runner's queue is not
+cancelled.
+
+A salvage import never changes its download's state (v0.46.2). When Runner
+fails a job but offers what it could save (salvage), the download stays
+failed while Curator imports the salvage, including on a retry, and a salvage
+arriving after the download was imported leaves it imported; History and the
+handoff trace show the import. Retrying the import of a failed download
+records the retry and leaves the download failed until the import itself
+moves it (importing, then imported or failed). Until v0.46.2 a retry put the
+download back in *downloaded*, where a salvage import left it past its
+deadline for good. A download stranded that way now takes Runner's recorded
+failure at its deadline. A finished import never holds a download's exit
+open, and the half-written stage an earlier import attempt left behind
+(`.monarr-stage-…` next to the library file) is removed automatically. If
+that attempt had already moved the previous library file aside
+(`.monarr-prior-…`), the hourly cleanup removes that copy when a library
+file is in place. It never overwrites a file at that path, including one you
+put there yourself. When the library file is missing, it puts the previous
+file back if the copy matches it, and otherwise removes the copy. If the
+folder cannot be checked (for example, an unmounted share), it waits for the
+next pass.
+
+### Held, provisional and publications in Activity
+
+- **Held by Runner** is its own section. The row says what Runner is waiting
+  on (a disk, a mount, a password) and how long Runner gives it before it
+  ends the job itself. Past that deadline the row reads **Held (stale)**:
+  Runner has not reported since, and Curator is reconciling — it never fails
+  the job on its own.
+- **Provisional** on a failed row means the conclusion is Curator's, not
+  Runner's: the submission never landed (`submit`), the job vanished from
+  every Runner feed (`lost`), or the row was parked by an older build
+  (`parked: …`). If Runner later reports the transfer, the row re-opens by
+  itself.
+- **Awaiting approval** rows (a client with manual approval) show how long
+  they have waited for you: it is the one state with no deadline.
+- Curator records each **publication** for its Runner generation, including
+  finished or salvaged payloads. It records file outcomes as *placed* (with the library path), *discarded* (superseded by the
+  attempt Curator chose, a duplicate of what the library has, a release
+  sample, or a file Curator does not keep), or *unresolved* (an obfuscated
+  name with no episode, a file Curator cannot rank against another attempt).
+  **Subtitles are placed with their video** in the same import, before plurx
+  is told: `.srt .ass .ssa .sub .idx .sup .vtt`, renamed
+  `<video>.<lang>[.forced][.sdh].<ext>` with the language read from the
+  subtitle's name or folder (`2_English.srt`, `eng.forced.srt`,
+  `Subs/<episode>/3_Spanish.srt`); an unknown language is
+  `<video>.<ext>`, and a second subtitle of one language gets `.2`. A
+  publication with one video gives it every subtitle; a season pack matches
+  each subtitle to the episode its name or folder names, and one that matches
+  none is discarded (the reason is on the file). An `.idx` and its `.sub` go
+  together. Other sidecars (`.nfo`, images, `.txt`, `.xml`) are discarded
+  automatically — nothing in a publication waits for manual import because of a
+  sidecar. Sidecars an earlier version left awaiting approval on an imported
+  publication are decided the same way by the next hourly cleanup (the
+  subtitle goes beside the video already placed), and the folder is then
+  removed. When an upgrade replaces a video, the subtitles Monarr placed for
+  it go with it and the new release's are placed; a subtitle Monarr did not
+  place is never deleted.
+  Nothing an automatic import does is left *unresolved*: a file the importer
+  cannot place (an episode it cannot identify, a file of another attempt) is
+  discarded with its reason, and a publication that gave the library nothing
+  ends *import failed* with its want grabbed again. A file that is missing
+  or resized against Runner's manifest ends the publication before anything
+  is placed. A file whose bytes differ from the manifest is discarded with
+  that reason while the rest of a season pack (or a movie's other files) is
+  still imported; the publication then ends, keeping what it placed, and the
+  rest of the want is grabbed again (v0.46.1). A multipart audiobook is
+  placed whole or not at all: every part is checked against the manifest
+  first, and one bad part places nothing and grabs the book again.
+  Publications an earlier version failed with a reason this one no longer
+  has (*N file(s) unresolved: …*, *holds no importable media*) are decided
+  again by v0.45.1: imported again with fresh limits when their want is still
+  open, retired as superseded when a later import already satisfied it. Media
+  an import that ended (imported, or failed with its want grabbed again) left
+  undecided is discarded by the next hourly cleanup, so its folder can go.
+  Every hour Curator also reads the completed folders for a committed Runner
+  folder (one with its `.runner-manifest.json`) that no publication claims —
+  a delivery that arrived while Curator had no row for it — and attributes
+  it to its download by the transfer the manifest names, exactly once. If
+  that download is gone from Curator's records, the folder is recorded as a
+  publication with no download (history `publication_orphaned`), its files
+  are discarded and the same pass removes it; a folder that names no Curator
+  transfer is not Curator's and is left alone.
+  A record with no download, manifest or files (the pre-delivery review
+  backlog) is closed by the same hourly pass when its folder is gone or the
+  path is a completed root or its `completed` folder (history
+  `publication_closed`; nothing is deleted). No publication can sit at a
+  completed root or its `completed` folder, so none can stop another folder
+  from being deleted whole.
+  An import that keeps failing on its payload is tried five times (spaced
+  out), and one that has not finished six hours after it first started ends
+  the same way; what it already placed stays, is recorded and is sent to
+  plurx, and only the rest is grabbed again. A full or blocked library,
+  completed storage that is unavailable or outside the configured completed
+  roots, or a publication whose manifest has not appeared after 30 minutes
+  only waits: the publication shows **held** with why and for how long, the
+  System page counts held publications under the pipeline tiles, it is
+  tried again every few minutes and imports by itself once the cause
+  clears. Use **Retry** when Activity offers it. Historical publications
+  keep their cleanup approval fence. See
+  [Runner payload cleanup](#runner-payload-cleanup) for the owner checks.
+- A failed download starts its replacement within seconds (the next grab is
+  written with the failure itself). It does not wait for Runner to clean up
+  the failed bytes, and it blocklists the release only when Runner says the
+  release was at fault.
+
 ## Notifications
 
 Settings → Notifications. Webhooks and Discord get grab/import/failure
@@ -1225,10 +1655,23 @@ Open Library cover URL when available. Exact work ids relate editions; title
 and author do not. The notifier holds a scoped `plx_` key, never a plurx
 admin token. See `docs/settings.md` for setup and failure meanings.
 
-plurx deliveries are queued and retried; the **Delivery log** on the notifier
-row shows each one, and a delivery that ran out its schedule can be sent
-again from there — **Retry** on the row, or **Retry all failed** for the lot
-once plurx is healthy again.
+Every import notification is written with the import itself, so none is lost
+to a restart or a busy moment. plurx gets one **sub-delivery per directory**,
+retried until plurx answers (5 s, 30 s, 2 m, 5 m, 15 m, 1 h, then hourly —
+it never gives up on a temporary failure) and read back: the **Delivery log**
+on the notifier row shows each directory and what plurx said about it —
+`visible → plurx item 1201` once every file the import placed there is in
+plurx, `queued in cinema, waiting on full_scan:3` while plurx is busy, or
+`warning: expected <file> not placed (<plurx's reason>)`. A directory still
+not visible half an hour after the import is marked **warning**; it is still
+being retried. Only a refusal that retrying cannot fix (a rejected key, a
+directory outside plurx's library roots) ends as **failed**; fix the cause,
+then **Retry** on the row, or **Retry all failed** for the lot. An older plurx
+that does not report results shows `queued (cinema does not report results)`.
+
+**Test** on a plurx notifier checks that plurx can see every library root
+(Settings → Library) and names any it cannot, Curator's path beside plurx's
+roots, before the first import finds it.
 
 ## Troubleshooting quick hits
 
@@ -1247,84 +1690,45 @@ once plurx is healthy again.
 
 ## Runner payload cleanup
 
-Native Runner downloads have separate publication and processing-source
-ownership. Curator accepts the immutable publication manifest, then records
-per-file import and cleanup outcomes. It removes only files with committed
-placement, same-copy redundancy evidence, or an approved replacement scope;
-unknown and recoverable siblings stay in Resolve. A payload file whose exact
-bytes the library already holds for the same episodes, in the same format, is
-redundant even when that library file is flagged or of unverified quality —
-including a copy whose own placement a later copy of the same release
-replaced. A file selected by an in-progress replacement is left to it. A release's sample clip is
-never imported: the episode beside it imports normally and the sample is
-recorded as a known incidental file, including when Resolve's selection
-includes it. A manifest that holds only a sample (or only sidecars) is a
-failed import rather than an empty one marked imported. Valid manifest
-acceptance proceeds independently of that media verdict; the failure does not
-revoke an acceptance already recorded. Runner handles its own processing source
-after safe publication and durable notification, and reports that cleanup
-separately from Curator's acknowledgement and import.
+Runner owns its processing source. On **Delete**, Curator requests disposition
+for the exact Runner job and waits for verified owner cleanup. Curator handles
+the publication under its completed root through the recorded file manifest,
+storage identity and per-file checks. Installed Library files, unrelated
+files and manual-import originals stay in place. A changed drive or missing
+proof can block cleanup. Correct the issue shown in Activity and retry the
+action.
 
-Activity and each completed-folder entry expose the durable lifecycle trace.
-Retry handoff, Runner source cleanup, and Curator publication cleanup
-independently; these actions do not redownload the release. The trace shows
-attempts, last and next attempt times, the blocking reason, and a warning after
-30 minutes. **Delete files…** is an explicit per-file discard for a verified
-accepted publication and leaves unselected siblings in place. Older Runner
-history rows remain in review until explicitly resolved; title or path matches
-do not establish ownership.
+Routine cleanup still removes verified discarded files and placed files whose
+Library copy matches the manifest. A sample is normally discarded. A manifest
+containing only samples or sidecars can fail import. See
+[Cleaning up after a download](#cleaning-up-after-a-download).
 
-## Recover media retained by Runner
+## Historical staged recovery records
 
-1. In Runner's Files view, inspect the folder. Adopt unknown files explicitly;
-   adoption starts with Keep enabled.
-2. Select regular media files and stage recovery. Runner copies and verifies
-   them and holds the original. Temporary, archive and parity files cannot be
-   selected as media.
-3. In Curator Settings → Recovery, choose the handoff from the table (it is
-   named by its source folder; a copy Runner is still making or failed to
-   make cannot be chosen, and says why), search for the library title, map
-   series files to `season:episodes` if the filenames do not say, then
-   preview. Preview verifies each digest and probes its container. If the
-   readiness strip says the recovery mount is missing, fix the mount first —
-   nothing on this page can work without it.
-4. Queue the import from that preview. A changed target requires another
-   preview. Follow the durable import status until Runner receives the receipt.
+The former Settings Recovery wizard is no longer part of the web navigation.
+Existing staged-copy APIs, receipts and worker safeguards remain available for
+operators maintaining earlier workflows; removing the page does not release a
+Runner claim or authorize source cleanup. See the
+[settings reference](settings.md#runner-published-file-mapping) for mount rules.
+Use an item's **Import file** action or Activity → **Import files…**
+for current manual imports. Changed historical storage must pass current drive
+and file identity checks.
 
-Library placement now journals intent before publishing files. A same-name
-replacement retains a rollback copy until library metadata, episode links and
-its per-file recovery receipt commit in one transaction. SQLite uses FULL
-synchronization for those receipts. Failed/partial recovery stays on hold;
-ordinary payload cleanup never handles a recovery source or staging tree.
+Existing recovery placements journal intent before publishing library files.
+Cancellation waits for the actual writer to stop and preserves committed files
+and receipts. Target changes require a fresh preview. Back up the database and
+library together; keep Runner sources held while reviewing restored placement
+intentions and outbox records. Ordinary cleanup never handles recovery sources
+or staging trees.
 
-Use the Recovery activity list to cancel or inspect work after closing the page.
-A cancelled import may have committed earlier files; those remain in the library
-with their receipts. Runner releases the claim only after the worker acknowledges
-that it stopped, then keeps the source for review.
+## Upgrading past the v1 record (v0.47.0)
 
-Recovery inspection uses only Curator's bounded native parser. The UI reports
-“Media recognized; completeness not proven.” An intact copy can faithfully copy a
-bad source. Review episode mappings and concrete destinations before importing.
-A recovery is tied to the title it imports into. Changing that title — an
-ordinary import of it, a metadata or episode edit, a file added or removed —
-or changing quality profiles, root folders, custom formats or download
-clients requires a fresh preview; recoveries queued before upgrading to 0.38.10
-return to review for one. Other titles keep importing while a recovery runs and do not affect
-it. If the title is being imported when the recovery starts, the recovery shows
-"Waiting for this title's import in progress to finish." and fails at once,
-asking for a new preview, if that import changes the title.
-
-Back up Curator's database and library in one coordinated maintenance window.
-After restoring either, keep Runner sources held while reviewing recovered
-placement intentions and outbox records. Do not restore old metadata while
-pre-restore workers continue writing to the library.
-
-Recovery selection is sealed in Runner at staging time. Curator imports every
-file in that handoff together; stage separate handoffs for alternate movie
-versions. Overlapping episode assignments or destinations require a new preview.
-Recognized obfuscated video keeps its source filename and receives a native
-container extension at its library destination. Cancellation rolls back any
-published placement that has not yet committed library metadata.
+Curator reads only Runner's typed terminal and each publication's
+`.runner-manifest.json`; the old `pp_status` / `final_dir` strings and the
+`v1_record` manifest source are no longer written. Upgrade Runner first.
+Publications an earlier version recorded with Runner's v1 record keep it and
+finish importing and cleaning up on their own; nothing needs resolving
+first.
 
 ## Runner holds and retained recovery plans
 
@@ -1392,6 +1796,15 @@ later. This action does not add a replacement; use a deliberate Search afterward
 
 ## Download lifecycle decisions and review
 
+Publication cleanup keeps a source file when its size or content differs from
+the manifest, even if its earlier library copy is intact or the file was marked
+discarded. Missing or unreadable manifest evidence also keeps it. Activity
+shows the cleanup reason; restoring the expected source or evidence allows a
+later pass to finish. If saving a manifest fails, import waits without placing
+or discarding files. Existing v1 stored manifests and historical approval records remain valid.
+Explicit Activity deletion can authorize cleanup of the exact job generation
+after Curator verifies the corresponding manifest and storage.
+
 Runner admission reads the `deliveries-v1` status capability independently of
 retained publications. Curator persists that choice before submitting a download.
 Malformed or oversized discovery entries remain at Runner and produce a
@@ -1408,19 +1821,18 @@ is open, automatic acquisition excludes its original release for the selected
 item, copy and episodes. This exclusion does not globally blacklist the source.
 Download-scope review accepts files from the selected source only.
 
-The lifecycle detail shows pending file-deletion requests. **Cancel deletion
-request** stops its remaining work and preserves completed file outcomes and
-History. If an import or another storage action is active, cancellation reports
-busy immediately; retry after that action finishes. Other completed-folder
-scans and actions remain available. Review the current files before approving another selection. If a file
-is already absent on replay, History records confirmed absence; it does not claim
-that the retry deleted those bytes. A missing or superseded library placement
-protects the retained payload for review instead of retrying cleanup indefinitely.
+A publication file whose library copy is missing or changed is kept as
+*unresolved* with the reason instead of being retried forever. A library or
+download storage Curator cannot read at that moment (a permissions or mount
+problem) is not treated as lost evidence: cleanup waits and retries hourly, and
+the publication shows the reason.
 
-Historical acquisitions may finish importing automatically only when their
-persisted trace proves they were still grabbed or downloading before the original
-upgrade cutover. Ambiguous traces and completed or failed backlog remain held for
-explicit review. Import permission never removes the legacy cleanup fence.
+A payload whose download storage was intentionally replaced (below) is held for
+review: it does not import automatically and is not cleaned up until you
+select its files. The hold applies per file: the most specific record holding a
+file decides, so a hold on a folder does not expose, or protect, an ordinary
+download inside or beside it. (The older pre-delivery review cohort is now part
+of the historical publications.)
 
 If an automatic submission remains uncertain for thirty minutes on a client
 without request-token idempotency, Activity and History request operator review.
@@ -1430,9 +1842,9 @@ review fences when you select a parent or child of the recorded payload folder.
 
 ### Review intentional replacement of download storage
 
-Activity → Download storage shows the expected and observed mount when storage
+System → Storage → Download storage shows the expected and observed mount when storage
 changes. Returning the expected mount recovers automatically. For an intentional
-replacement, open **Review changed storage…** to compare both identities and the
+replacement, open **Review replacement storage** to compare both identities and the
 counts of existing payloads and pre-change requests, including work still in
 flight. Refresh the review if custody changes before acceptance.
 
@@ -1451,30 +1863,14 @@ fallback; network storage keeps its server/export identity.
 
 ### Read the joined lifecycle trace
 
-Runner lifecycle history joins download and processing steps, publication and
-handoff, Curator import, completed-file cleanup, and processing-source cleanup.
-Measured times stay separate for different machines and restarts. Overlapping
-completed steps count once within their recorded timing reference. Processing
-details expand major steps and do not add their duration a second time. Missing,
-running and interrupted durations stay explicitly unknown. The immutable Runner
-snapshot ends at publication; consumer acceptance and later handoff retries have
-their own receipt observations. Historical POST details retain measured durations
-with origin unrecorded when their original machine/session cannot be proved.
-Bounded history says **at least N omitted** and labels totals as a **recorded
-subset**; omission counts are conservative lower bounds, never an exact lifetime
-total.
+Open **Job log** on the attempt in Activity → **History**. It shows recorded
+job events and their times. The job summary remains visible without opening
+the technical log. Older records can have fewer events, and expired History
+cannot be reconstructed from the page.
 
-The lifecycle API projects each Curator file ledger with the same camel-case
-fields the UI reads (`path`, `disposition`, `cleanupState`, `cleanupError` and
-retry timing). A placement may be complete while its exact publication file
-still reports a cleanup permission error; the error stays visible until the
-separate cleanup obligation completes.
-
-Clustered publications show each processing-source copy's node, cleanup status,
-retry attempts and reason. Retry controls show their pending state and visible
-result. Background status refresh preserves focus and scroll position. Reporting
-and file deletion show results in a dialog that remains visible after the file
-row or review form changes.
+Historical lifecycle and receipt reads remain available for internal audit.
+They distinguish transfer, import and cleanup, so an installed file and a
+cleanup error can both be recorded for the same job.
 
 ### Runner native torrent acquisitions
 
@@ -1542,16 +1938,63 @@ receive an explicit streaming error rather than an unbounded stream.
 
 ## Durable import cancellation and deployment drain
 
-Activity's **Cancel import** records durable intent. **Cancelling** remains
-visible until the actual writer exits or uncertain publication is reviewed.
-Committed library files are kept, and ordinary retries cannot erase cancellation.
-Explicit retry uses a new import epoch. **Review retained import** opens the
-source/stage/publication evidence and explicit fencing/disposition actions inside
-the current viewport; Curator never deletes the retained bytes through review.
-The native mobile Activity screen displays pending and retained-review status;
-use the web dialog for the detailed retained-byte review.
+Activity **Delete** records durable intent and requests stop and cleanup.
+Curator waits for writer exit and verifies the job's files before completing
+deletion. A stopped copy can be retried when Activity offers **Retry**. Curator
+checks the recorded temporary files and starts a new import epoch.
 
 For deployments, pause new mutation/work admission while existing copies finish,
 keep status available, then stop and verify actual exit before replacement. See
 [deployment drain](NFS_DEPLOYMENT_DRAIN.md) for the command, first upgrade and
 pending qualification limits. NAS outages may still block restart.
+
+## Activity — transfers, imports and history in one place
+
+Open **Activity** in the sidebar or phone navigation. **In progress** shows
+active transfers, processing, admission and imports. Automatic retries and
+environmental waits stay with the running or waiting work. **Needs attention**
+shows the cause, what you can do next and the available actions. **History**
+shows terminal attempts and historical receipts. Open **Job log** for a
+recorded attempt's technical events.
+
+Use **Retry** after correcting the stated prerequisite. For example, assign a
+Library folder when the job has no destination, reconnect the original drive
+when the recorded files are inaccessible, or resolve a Runner hold before
+resuming a job that supports it. **Approve import** starts a completed download
+waiting for approval. The Activity page also offers **Import files…** on the web
+for files you choose yourself.
+
+**Delete** requests that Curator stop the job and remove its verified downloaded
+and temporary files. It keeps committed Library files, prior-file backups
+awaiting recovery and originals supplied to manual import. A pending result means
+an owner still has work to confirm. A blocked result includes the reason and
+can be retried after you correct it. An older Runner without verified
+disposition support must be updated to finish Runner-owned deletion.
+
+Use the checkboxes in **Needs attention** or **Select all matching jobs** to
+freeze a selection across pages. You can uncheck jobs before submitting. New
+matches stay outside that selection, and a changed attempt can be blocked.
+Use **Retry selected** or **Delete selected** and open **Action results** to see
+completed, waiting and blocked jobs. Retry success means the retry was accepted.
+The server keeps processing accepted actions after you close the app.
+
+Choose **Move selected to History (keep files)** to clear stopped jobs from
+Needs attention. History keeps the job log. A blocked deletion keeps its
+cleanup record and can be retried from History. System drops its held and overdue import warnings. After the next completed-folder scan, System → Storage shows the retained download and links back to the job. Moving a job to History
+changes its visibility. Use **Delete selected** to request file removal.
+
+If an import stopped because its destination filled up, free space and use
+**Retry** on the job. Curator can retry a first installation whose original
+destination folder disappeared on the same storage. A prior library file
+or a changed mount still requires review. An intentionally purged title
+with zero tracked files can be marked **Offload…** from its library page.
+
+System lists each affected release with a link to its Activity job. A single
+episode can have both a late download record and a late import record.
+For a missing TMDB movie with no tracked files, open its library page,
+choose **Correct metadata match…**, search for the movie and select **Use
+this match**. The entry keeps its library ID, monitoring and folder.
+
+Search matches titles and releases. Counts cover the selected view across pages.
+**Imports only** includes retained import records, and `/imports` opens that
+scope. Historical receipts without an associated job are read-only.

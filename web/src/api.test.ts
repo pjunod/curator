@@ -6,6 +6,9 @@ import {
   fmtInterval,
   fmtRelative,
   getDiscoverItems,
+  pipelineTile,
+  publicationHoldText,
+  resolvePublicationFile,
   searchReleases,
   testIndexer,
 } from './api'
@@ -171,5 +174,58 @@ describe('book edition release search', () => {
     } finally {
       globalThis.fetch = orig
     }
+  })
+})
+
+describe('pipelineTile', () => {
+  it('says no data yet rather than a zero when nothing has finished', () => {
+    const t = pipelineTile({ kind: 'failure_to_next_grab', samples: 0, waiting: 0 })
+    expect(t.value).toBe('no data yet')
+    expect(t.detail).toBe('none waiting')
+  })
+
+  it('shows p50 and p95 with the sample count and the waiting count', () => {
+    const t = pipelineTile({
+      kind: 'runner_done_to_import',
+      samples: 12,
+      waiting: 1,
+      p50Seconds: 42,
+      p95Seconds: 3661,
+    })
+    expect(t.title).toBe('Download done to imported')
+    expect(t.value).toBe('p50 42s · p95 1h 1m 1s')
+    expect(t.detail).toBe('12 in last 24 h · 1 waiting')
+  })
+})
+
+describe('resolvePublicationFile', () => {
+  it('posts the file and the decision to the publication resolve route', async () => {
+    const orig = globalThis.fetch
+    const calls: { url: string; init?: RequestInit }[] = []
+    globalThis.fetch = (async (url: string, init?: RequestInit) => {
+      calls.push({ url, init })
+      return new Response(null, { status: 204 })
+    }) as typeof fetch
+    try {
+      await expect(resolvePublicationFile(7, 3, 'Season 01/x.mkv', 'discard')).resolves.toBeUndefined()
+    } finally {
+      globalThis.fetch = orig
+    }
+    expect(calls).toHaveLength(1)
+    expect(calls[0].url).toContain('/queue/7/publications/3/files/resolve')
+    expect(calls[0].init?.method).toBe('POST')
+    expect(JSON.parse(String(calls[0].init?.body))).toEqual({ path: 'Season 01/x.mkv', action: 'discard' })
+  })
+})
+
+describe('publicationHoldText', () => {
+  it('says nothing for a publication that is not held', () => {
+    expect(publicationHoldText({ held: false, heldReason: 'x' })).toBeNull()
+  })
+  it('says why and for how long a held publication waits', () => {
+    const now = new Date('2026-11-11T12:00:00Z')
+    expect(publicationHoldText({ held: true, heldReason: 'library full', heldSince: '2026-11-11T11:15:00Z' }, now)).toBe('Held 45 min: library full')
+    expect(publicationHoldText({ held: true, heldReason: 'storage changed', heldSince: '2026-11-11T02:00:00Z' }, now)).toBe('Held 10 h: storage changed')
+    expect(publicationHoldText({ held: true }, now)).toBe('Held: the environment cannot take it now')
   })
 })
