@@ -385,13 +385,14 @@ func (s *Service) recordTerminalWith(ctx context.Context, dl sqlite.Download, cf
 			detail += " (provisional: a later Runner fact re-opens it)"
 		}
 		w.Handoff = &sqlite.HandoffEntry{Step: stepFailed, At: now.UnixMilli(), Detail: traced(detail, source)}
-		w.History = append(w.History, sqlite.HistoryWrite{Type: "failed", MediaItemID: dl.MediaItemID, ReleaseTitle: dl.ReleaseTitle,
-			Data: map[string]any{"reason": msg, "failure_reason": t.Reason, "fetch_cause": t.FetchCause, "stage": t.Stage,
-				"blames_release": w.BlamesRelease, "salvage": t.Salvage, "provisional": provisional}})
+		failedData := map[string]any{"reason": msg, "failure_reason": t.Reason, "fetch_cause": t.FetchCause, "stage": t.Stage,
+			"blames_release": w.BlamesRelease, "salvage": t.Salvage, "provisional": provisional}
 		if !t.RetryAt.IsZero() {
 			// Why the indexer is left alone for hours: the time it named.
-			w.History[len(w.History)-1].Data["retry_at"] = t.RetryAt.UnixMilli()
+			failedData["retry_at"] = t.RetryAt.UnixMilli()
 		}
+		w.History = append(w.History, sqlite.HistoryWrite{Type: "failed", MediaItemID: dl.MediaItemID, ReleaseTitle: dl.ReleaseTitle,
+			Data: failedData})
 		if w.BlamesRelease && dl.SubmissionPhase != "rejected" {
 			w.Blocklist = &sqlite.BlocklistWrite{MediaItemID: dl.MediaItemID, SourceIndexerID: dl.SourceIndexerID,
 				SourceGUID: dl.SourceGUID, Title: dl.ReleaseTitle, Indexer: dl.Indexer, Reason: msg}
