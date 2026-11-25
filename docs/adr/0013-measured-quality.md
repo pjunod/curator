@@ -113,6 +113,16 @@ Two rules the decision paths must obey from now on:
   user's collection. The escape hatch already exists and stays manual:
   interactive search grabs whatever the user picks, no decision gate.
 
+*Note, 2026-11-25:* an `implausible` file is the opposite case: it was
+measured and refutes itself, so it holds no episode and may be replaced. A
+plausible file the search finds may land at the disbelieved file's own path;
+the import then authorizes the replacement from a fresh measurement of the
+bytes at that path, bracketed by their file generation, never from the
+library row alone. If they now measure plausible (or cannot be measured) the
+file is left alone and the refusal says to rescan it. Before this note the
+replacement was always refused, and the episode was grabbed and refused
+nightly (Good Trouble S02E06, 2026-11-19..25).
+
 ## Consequences
 
 - The re-download chain in Context dies, and with it the two-files-no-story
