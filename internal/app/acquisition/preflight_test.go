@@ -4,7 +4,9 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
+	"time"
 
 	"github.com/pjunod/monarr/internal/domain"
 	"github.com/pjunod/monarr/internal/domain/acquisitionplan"
@@ -334,5 +336,84 @@ func TestPreflightPlanMeasuresSeasonCandidates(t *testing.T) {
 	}
 	if joinWarning("", "b") != "b" || joinWarning("a", "b") != "a; b" {
 		t.Error("joinWarning")
+	}
+}
+
+// The cache keeps only answers about the release, forgets them after a day,
+// and stays bounded.
+func TestProbeCacheKeepsOnlyReleaseAnswers(t *testing.T) {
+	var c probeCache
+	now := time.Now()
+	r := remux("Title.2021.2160p.BluRay.REMUX.DV.HEVC-A", "nzb://a")
+	c.put(r, &ProbeEvidence{Status: ProbeFailed}, now)
+	c.put(r, &ProbeEvidence{Status: ProbeUnavailable, Reason: ports.ProbeUnreadable}, now)
+	if c.get(r, now) != nil {
+		t.Fatal("a probe that could not run was cached")
+	}
+	c.put(r, &ProbeEvidence{Status: ProbeUnavailable, Reason: ports.ProbeEncrypted}, now)
+	if ev := c.get(r, now); ev == nil || ev.Reason != ports.ProbeEncrypted {
+		t.Fatalf("encrypted answer not cached: %+v", ev)
+	}
+	if c.get(r, now.Add(probeCacheTTL+time.Minute)) != nil {
+		t.Error("an answer outlived its day")
+	}
+	for i := 0; i < probeCacheMax+10; i++ {
+		x := r
+		x.GUID = strconv.Itoa(i)
+		c.put(x, &ProbeEvidence{Status: ProbeMeasured}, now)
+	}
+	if len(c.entries) > probeCacheMax {
+		t.Errorf("cache grew to %d", len(c.entries))
+	}
+}
+
+// preflightOne leaves a grab alone whenever a probe cannot change it: no HDR
+// preference, a name that states its HDR, no client that can probe, or a
+// probe that could not run; it refuses on a release-attributable answer
+// under a skip profile and lets a measured, acceptable release through.
+func TestPreflightOneLeavesWhatItCannotJudge(t *testing.T) {
+	client := &probingClient{
+		heads:    map[string]string{"nzb://fel": "mkv-64p-hevc-dv-p7-fel.mkv"},
+		refusals: map[string]string{"nzb://enc": ports.ProbeEncrypted},
+	}
+	p := fel()
+	p.Preflight.SkipUnreadable = true
+	svc, db, itemID := preflightSetup(t, nil, client, p)
+	ctx := context.Background()
+	profile, err := db.GetProfile(ctx, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := domain.MovieWantable{Item: itemID, Profile: 3, Mon: true}
+	try := func(prof quality.Profile, title, url string) (bool, decision.Rejection) {
+		r := remux(title, url)
+		return svc.preflightOne(ctx, w, prof, r, parser.Parse(r.Title))
+	}
+	if ok, _ := try(quality.Profile{Target: profile.Target}, "Title.2021.2160p.BluRay.REMUX.DV.HEVC-A", "nzb://x"); !ok {
+		t.Error("a profile with no HDR preference was gated")
+	}
+	if ok, _ := try(profile, "Title.2021.2160p.BluRay.REMUX.HDR10.HEVC-A", "nzb://stated"); !ok {
+		t.Error("a stated HDR10 release was gated")
+	}
+	if ok, _ := try(profile, "Title.2021.2160p.BluRay.REMUX.DV.HEVC-A", "nzb://failed"); !ok {
+		t.Error("a probe that could not run refused the release")
+	}
+	if ok, why := try(profile, "Title.2021.2160p.BluRay.REMUX.DV.HEVC-A", "nzb://enc"); ok || why.Code != CodeProbeUnreadable {
+		t.Errorf("encrypted under skip = %v %+v", ok, why)
+	}
+	if ok, why := try(profile, "Title.2021.2160p.BluRay.REMUX.DV.HEVC-A", "nzb://fel"); !ok {
+		t.Errorf("measured FEL refused: %+v", why)
+	}
+	for _, url := range []string{"nzb://stated", "nzb://x"} {
+		for _, probed := range client.probed {
+			if probed == url {
+				t.Errorf("%s was probed", url)
+			}
+		}
+	}
+	// No client that can probe: the grab goes ahead on the name.
+	svc.newClient = func(ports.ClientConfig) ports.DownloadClient { return &fakeClient{} }
+	if ok, _ := try(profile, "Title.2021.2160p.BluRay.REMUX.DV.HEVC-B", "nzb://other"); !ok {
+		t.Error("no prober refused the release")
 	}
 }

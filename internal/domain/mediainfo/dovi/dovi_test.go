@@ -359,3 +359,29 @@ func escape(b []byte) []byte {
 	}
 	return out
 }
+
+// The bit reader's errors are sticky and bounded: skipping or reading past
+// the end, and an Exp-Golomb run longer than 32 zeros, all mark the reader
+// bad and read as zero.
+func TestBitReaderRefusesPastTheEnd(t *testing.T) {
+	r := newBitReader([]byte{0xFF})
+	r.skip(4)
+	if r.left() != 4 || !r.ok() {
+		t.Fatalf("left %d ok %v", r.left(), r.ok())
+	}
+	r.skip(5)
+	if r.ok() || r.left() != 0 || r.bits(1) != 0 {
+		t.Error("skipping past the end did not stick")
+	}
+	r = newBitReader(make([]byte, 5)) // 40 zero bits
+	if r.ue() != 0 || r.ok() {
+		t.Error("a 33-zero Exp-Golomb prefix was accepted")
+	}
+	r = newBitReader([]byte{0x00})
+	if r.ue() != 0 || r.ok() {
+		t.Error("a prefix running off the end was accepted")
+	}
+	if NALType([]byte{0x7C}) != -1 {
+		t.Error("NALType of one byte")
+	}
+}

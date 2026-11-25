@@ -260,8 +260,8 @@ What the first slice settled while building §1–§2:
   release to its name, so without a working probe search behaves as it did
   before.
 - **A post does not change**, so a measurement or a release-attributable
-  refusal is cached for a day (by indexer, GUID, title and size, never the
-  URL with its API key); an item searched every few hours does not probe
+  refusal is cached for a day (by indexer, GUID, title, size and the
+  download URL's host and path, never its query with the API key); an item searched every few hours does not probe
   the same releases again. Failures are not cached.
 - **The disc master** (`media_items.disc_el`) is written inside the same
   database writes that store a measurement, so no path forgets it; FEL is

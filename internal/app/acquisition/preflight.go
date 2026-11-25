@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"net/url"
 	"sort"
 	"strconv"
 	"sync"
@@ -43,8 +44,10 @@ const (
 )
 
 // probeCache remembers what pre-flight learned about a release, keyed by the
-// release itself (indexer, GUID, title, size) rather than its URL, which
-// carries an API key and can change.
+// release itself: indexer, GUID, title, size, and the download URL's host and
+// path. The URL's query is left out (it carries the indexer's API key and
+// can change between searches); the path is kept because some indexers send
+// no GUID, and two posts can share a title and size.
 type probeCache struct {
 	mu      sync.Mutex
 	entries map[string]probeCacheEntry
@@ -56,7 +59,11 @@ type probeCacheEntry struct {
 }
 
 func probeKey(r ports.Release) string {
-	return r.Indexer + "\x00" + r.GUID + "\x00" + r.Title + "\x00" + strconv.FormatInt(r.Size, 10)
+	where := r.DownloadURL
+	if u, err := url.Parse(r.DownloadURL); err == nil {
+		where = u.Host + u.Path
+	}
+	return r.Indexer + "\x00" + r.GUID + "\x00" + r.Title + "\x00" + strconv.FormatInt(r.Size, 10) + "\x00" + where
 }
 
 func (c *probeCache) get(r ports.Release, now time.Time) *ProbeEvidence {

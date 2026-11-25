@@ -46,3 +46,15 @@ func TestDerive(t *testing.T) {
 		}
 	}
 }
+
+// An SDR-only screen tone-maps every HDR tier to the same picture: one tie,
+// nothing worth an upgrade, and profile 5 (no base layer) refused.
+func TestDeriveForAnSDRScreen(t *testing.T) {
+	order, ties, reject := Derive(DeviceCaps{})
+	if len(order) == 0 || len(ties) != 1 || len(ties[0]) != len(order) {
+		t.Fatalf("order %v ties %v: every tier should tie on an SDR screen", order, ties)
+	}
+	if len(reject) != 1 || reject[0] != TierDVP5 {
+		t.Errorf("reject = %v", reject)
+	}
+}
