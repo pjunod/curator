@@ -10,6 +10,7 @@ import (
 	"github.com/pjunod/monarr/internal/domain"
 	"github.com/pjunod/monarr/internal/domain/mediainfo"
 	"github.com/pjunod/monarr/internal/domain/quality"
+	"github.com/pjunod/monarr/internal/infra/probe"
 	"github.com/pjunod/monarr/internal/infra/sqlite"
 )
 
@@ -57,7 +58,16 @@ func disbelievedTarget(t *testing.T, tracked bool) (*Service, domain.MediaItem, 
 	if generation == "" {
 		t.Skip("file generations are unavailable on this platform")
 	}
+	src := filepath.Join(t.TempDir(), "payload.mkv")
+	if err = os.WriteFile(src, corpusFile(t, wholeCorpus1080), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	info, _ := probe.File(src)
+	if !info.Measured() {
+		t.Fatal("corpus payload did not measure")
+	}
 	p := sqlite.Placement{
+		Source: src, Info: info,
 		Target: target, SHA256: "new-release-digest", PreviousSHA256: previous,
 		TargetObserved: true, TargetFileGeneration: generation,
 		EpisodeIDs: []int64{ep}, ItemID: id,
@@ -93,6 +103,14 @@ func TestDisbelievedTargetIsReMeasuredNotTakenFromTheRow(t *testing.T) {
 		err := svc.validateMeasuredPlacement(context.Background(), item, scope, p, false)
 		if err == nil || !strings.Contains(err.Error(), "changed after placement preview") {
 			t.Fatalf("authorized bytes the preview never saw: %v", err)
+		}
+	})
+	t.Run("payload could not be measured", func(t *testing.T) {
+		svc, item, scope, p := disbelievedTarget(t, true)
+		p.Info = mediainfo.Info{}
+		err := svc.validateMeasuredPlacement(context.Background(), item, scope, p, false)
+		if err == nil || !strings.Contains(err.Error(), "could not be measured") {
+			t.Fatalf("an unmeasured payload replaced a file: %v", err)
 		}
 	})
 	t.Run("payload is itself implausible", func(t *testing.T) {
@@ -133,9 +151,9 @@ func TestCompletedReleasesCuratorFailedSpendTheBudget(t *testing.T) {
 	}
 	w, err := svc.wantableFromID(ctx, "episode:1:1:1")
 	if err != nil {
-		t.Skipf("fixture has no such wantable: %v", err)
+		t.Fatalf("fixture has no such wantable: %v", err)
 	}
-	fail := func(title, outcome string) {
+	fail := func(title, outcome, why string) {
 		t.Helper()
 		id, err := db.InsertDownload(ctx, sqlite.Download{
 			MediaItemID: itemID, WantableIDs: []string{"episode:1:1:1"}, ReleaseTitle: title,
@@ -148,7 +166,7 @@ func TestCompletedReleasesCuratorFailedSpendTheBudget(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		row.State, row.Progress = "failed", 1
+		row.State, row.Progress, row.Error = "failed", 1, why
 		if err := db.UpdateDownloadHandoff(ctx, row); err != nil {
 			t.Fatal(err)
 		}
@@ -156,18 +174,20 @@ func TestCompletedReleasesCuratorFailedSpendTheBudget(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	// Blameless Runner failures still cost nothing.
+	// Blameless Runner failures, and imports that stopped on a local fault,
+	// still cost nothing.
 	for i := 0; i < reGrabLimit; i++ {
-		fail("Cancelled."+strings.Repeat("c", i+1), "cancelled")
+		fail("Cancelled."+strings.Repeat("c", i+1), "cancelled", "cancelled")
+		fail("Stalled."+strings.Repeat("s", i+1), "completed", importFailedPrefix+"no manifest after 6h; Runner never finished publishing")
 	}
 	if capped, _ := svc.regrabCapped(ctx, w); capped {
-		t.Fatal("blameless Runner failures spent the budget")
+		t.Fatal("blameless failures or local import faults spent the budget")
 	}
 	for i := 0; i < reGrabLimit; i++ {
 		if capped, _ := svc.regrabCapped(ctx, w); capped {
-			t.Fatalf("capped after only %d completed-then-failed releases", i)
+			t.Fatalf("capped after only %d completed-then-refused releases", i)
 		}
-		fail("Good.Trouble.S02E06."+strings.Repeat("m", i+1), "completed")
+		fail("Good.Trouble.S02E06."+strings.Repeat("m", i+1), "completed", importFailedPrefix+nothingImportable+"x.mkv: episode 6 outside planned import allowlist")
 	}
 	if capped, _ := svc.regrabCapped(ctx, w); !capped {
 		t.Fatalf("%d completed releases Curator failed did not cap the want", reGrabLimit)
@@ -219,5 +239,55 @@ func TestLibraryBlockedPublicationIsNotGrabbedAgain(t *testing.T) {
 	}
 	if got, _ := os.ReadFile(existing); string(got) != "keep" {
 		t.Fatal("the protected file changed")
+	}
+}
+
+// A release the library itself refused holds the want for the window at
+// once: every other release would be refused the same way.
+func TestLibraryBlockedRefusalHoldsTheWant(t *testing.T) {
+	svc, db, itemID := setupUsenet(t, &fakeClient{})
+	ctx := context.Background()
+	clients, err := db.ListDownloadClients(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w, err := svc.wantableFromID(ctx, "episode:1:1:1")
+	if err != nil {
+		t.Fatalf("fixture has no such wantable: %v", err)
+	}
+	id, err := db.InsertDownload(ctx, sqlite.Download{
+		MediaItemID: itemID, WantableIDs: []string{"episode:1:1:1"}, ReleaseTitle: "Blocked.Release",
+		Protocol: "usenet", ClientID: clients[0].ID, State: "grabbed", Size: 3 << 30,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	row, err := db.GetDownload(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	row.State, row.Progress = "failed", 1
+	row.Error = importFailedPrefix + libraryBlocksDestination + nothingImportable + "x.mkv: existing destination bytes have no measured replacement authorization"
+	if err := db.UpdateDownloadHandoff(ctx, row); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.W.ExecContext(ctx, `UPDATE downloads SET runner_outcome='completed', runner_blames_release=0 WHERE id=?`, id); err != nil {
+		t.Fatal(err)
+	}
+	if capped, _ := svc.regrabCapped(ctx, w); !capped {
+		t.Fatal("a library-blocked refusal left the want open to the next automatic grab")
+	}
+}
+
+// Review finding: a disbelieved row whose file is already gone is a fresh
+// fill, not a replacement; it must not be refused.
+func TestDisbelievedRowWithNoFileIsAFreshFill(t *testing.T) {
+	svc, item, scope, p := disbelievedTarget(t, true)
+	if err := os.Remove(p.Target); err != nil {
+		t.Fatal(err)
+	}
+	p.PreviousSHA256, p.TargetObserved, p.TargetFileGeneration = "", false, ""
+	if err := svc.validateMeasuredPlacement(context.Background(), item, scope, p, false); err != nil {
+		t.Fatalf("a missing disbelieved file blocked the fill: %v", err)
 	}
 }

@@ -1128,7 +1128,7 @@ func (s *Service) importMovieFile(ctx context.Context, item domain.MediaItem, sc
 	}
 	upgrade := false
 	if !manual && state.HasFiles && state.Best == nil {
-		return placement{}, importPolicyRefusalf("existing file has unverified quality")
+		return placement{}, importLibraryRefusalf("existing file has unverified quality")
 	}
 	if state.Best != nil {
 		// The import judges the language by the same claim the grab did —
@@ -1241,7 +1241,7 @@ func (s *Service) importBookFile(ctx context.Context, item domain.MediaItem, sco
 	}
 	upgrade := false
 	if !manual && state.HasFiles && state.Best == nil {
-		return placement{}, importPolicyRefusalf("existing file has unverified quality")
+		return placement{}, importLibraryRefusalf("existing file has unverified quality")
 	}
 	if state.Best != nil {
 		// Books carry no language requirement (the API refuses one on a book

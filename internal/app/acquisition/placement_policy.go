@@ -110,7 +110,9 @@ func (s *Service) validateMeasuredPlacement(ctx context.Context, item domain.Med
 			// destination itself, its bytes still need authorization to be
 			// replaced; without it the want stays open and every grab is
 			// refused here forever (Good Trouble S02E06, 2026-11-25).
-			if f.Path == p.Target {
+			// Only bytes that would be overwritten need it: a row whose file is
+			// already gone (or holds these same bytes) is a fresh fill.
+			if f.Path == p.Target && !targetAuthorized {
 				if err := authorizeDisbelievedTarget(item, p); err != nil {
 					return err
 				}
@@ -141,7 +143,7 @@ func (s *Service) validateMeasuredPlacement(ctx context.Context, item domain.Med
 	}
 	if !targetAuthorized {
 		if !targetTracked {
-			return importLibraryRefusalf("existing destination bytes have no measured replacement authorization: the library does not track the file at %s", p.Target)
+			return importLibraryRefusalf("existing destination bytes have no measured replacement authorization: this copy of the item does not track the file at %s", p.Target)
 		}
 		return importLibraryRefusalf("existing destination bytes have no measured replacement authorization")
 	}
@@ -155,8 +157,10 @@ func (s *Service) validateMeasuredPlacement(ctx context.Context, item domain.Med
 // publishPlacement re-proves PreviousSHA256 before anything is renamed. A
 // payload that is itself implausible never replaces anything.
 func authorizeDisbelievedTarget(item domain.MediaItem, p sqlite.Placement) error {
-	if p.Provenance == mediainfo.ProvenanceImplausible {
-		return importPolicyRefusalf("measured payload is itself implausible; it cannot replace the disbelieved file at %s", p.Target)
+	if p.Provenance == mediainfo.ProvenanceImplausible || !p.Info.Measured() {
+		// Never act on ignorance (ADR 0013 section 5): only a payload whose
+		// bytes were measured and believed may destroy anything.
+		return importPolicyRefusalf("measured payload is itself implausible or could not be measured; it cannot replace the disbelieved file at %s", p.Target)
 	}
 	reviewed := func(info os.FileInfo) bool {
 		g := deliveryFileGeneration(info)

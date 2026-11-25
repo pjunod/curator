@@ -1067,14 +1067,18 @@ also stop automatic re-grabs. The cap applies to every automatic search — the 
 Auto search, the backlog pass and the re-search after a failure. A manual
 grab is never capped.
 
-A download that **completed but could not be imported** counts as a whole
-release spent: the bytes arrived, they just had nowhere to go. And when the
-import was refused because of what the library already holds at the
-destination — a file it has not verified, a file it does not track, or an
-episode shared with another file — Monarr does not search for a replacement
-at once, because every release would be refused the same way. The download
-says "not grabbing again: the library blocks this destination"; fix or
-rescan that file and the ordinary searches pick the want up again.
+A download that **completed but whose every file the import refused**
+counts as a whole release spent: the bytes arrived, they just had nowhere to
+go. (An import that stopped on a local problem — a full disk, a stall —
+costs nothing, as before.) And when the import was refused because of what
+the library already holds at the destination — a file it has not verified,
+a file this copy does not track, or an episode shared with another file —
+Monarr does not search for a replacement at once, because every release
+would be refused the same way. The download says "not grabbing again: the
+library blocks this destination", and automatic searches leave that want
+alone for the rest of the twelve-hour window, so a blocked want costs at
+most one release per window. Fix or rescan the file the refusal names to
+end it.
 
 A file Monarr measured as **implausible** (far too short or too small for
 what it claims to be) does not count as having the episode, so the search

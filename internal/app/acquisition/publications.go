@@ -802,9 +802,9 @@ func (s *Service) completePublication(ctx context.Context, dl sqlite.Download, c
 		case ended != "":
 			w.Error = ended
 		case len(refusals) > 0:
-			w.Error = "nothing importable: " + strings.Join(refusals, "; ")
+			w.Error = nothingImportable + strings.Join(refusals, "; ")
 		default:
-			w.Error = "nothing importable: the publication holds no media of this item (samples and sidecars only)"
+			w.Error = nothingImportable + "the publication holds no media of this item (samples and sidecars only)"
 		}
 		// What the library holds at the destination refused every file:
 		// any other release meets the same verdict, so grabbing one now only
@@ -814,9 +814,10 @@ func (s *Service) completePublication(ctx context.Context, dl sqlite.Download, c
 		libraryBlocked := ended == "" && blocked > 0 && other == 0
 		regrab := pub.Kind == "completed" && !libraryBlocked
 		if pub.Kind == "completed" {
-			w.DownloadState, w.DownloadError = "failed", "publication import_failed: "+w.Error
+			w.DownloadState, w.DownloadError = "failed", importFailedPrefix+w.Error
 			next := "; grabbing again"
 			if libraryBlocked {
+				w.DownloadError = importFailedPrefix + libraryBlocksDestination + w.Error
 				next = "; not grabbing again: the library blocks this destination"
 				w.RegrabWantables = nil
 			} else {
@@ -910,6 +911,16 @@ func (s *Service) completePublication(ctx context.Context, dl sqlite.Download, c
 	s.log.Info("publication imported", "publication", pub.ID, "kind", pub.Kind, "placed", placed, "state", w.State)
 	return nil
 }
+
+// The download error a completed publication's import failure writes. The
+// regrab budget reads them back (graburn.go): a deterministic refusal of a
+// fetched release spends its bytes; a library-blocked one holds the want for
+// the window. Local faults (holds, stalls, out of attempts) carry neither.
+const (
+	importFailedPrefix       = "publication import_failed: "
+	nothingImportable        = "nothing importable: "
+	libraryBlocksDestination = "the library blocks the destination; "
+)
 
 // duplicateRefusal reports whether the importer declined a file because the
 // library already holds as good or better: discarded{duplicate}.

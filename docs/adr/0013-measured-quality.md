@@ -119,9 +119,11 @@ plausible file the search finds may land at the disbelieved file's own path;
 the import then authorizes the replacement from a fresh measurement of the
 bytes at that path, bracketed by their file generation, never from the
 library row alone. If they now measure plausible (or cannot be measured) the
-file is left alone and the refusal says to rescan it. Before this note the
-replacement was always refused, and the episode was grabbed and refused
-nightly (Good Trouble S02E06, 2026-11-19..25).
+file is left alone and the refusal says to rescan it. The incoming payload
+must itself have been measured and believed; with no existing quality to
+compare against this is a fill, so the profile floor is not applied to it
+(as for any fill). A refusal here is a library-state refusal, which ADR 0026
+item 4 keeps from re-grabbing in a loop.
 
 ## Consequences
 

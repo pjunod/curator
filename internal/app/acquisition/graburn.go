@@ -192,7 +192,7 @@ func (s *Service) regrabSpend(ctx context.Context, w domain.Wantable, exclude in
 	}
 	id := string(w.ID())
 	cutoff := time.Now().Add(-reGrabWindow)
-	spent, failed := 0.0, 0
+	spent, failed, blocked := 0.0, 0, false
 	for _, dl := range rows {
 		if dl.ID == exclude || dl.State != "failed" || dl.AddedAt.Before(cutoff) {
 			continue
@@ -202,16 +202,34 @@ func (s *Service) regrabSpend(ctx context.Context, w domain.Wantable, exclude in
 			// Bytes count only for failures that blame the release (contract
 			// section 3.3, item 5): a local fault, an operator delete, a lost
 			// or cancelled job costs nothing. The attempt ceiling counts all.
-			// A release Runner completed that Curator then failed (its import
-			// placed nothing) fetched the whole release: it spends bytes too,
-			// or a deterministic import refusal regrabs uncapped (the nightly
-			// Good Trouble loop of 2026-11-19..25, 6-7 full grabs a night).
-			if dl.RunnerOutcome == "" || dl.RunnerBlamesRelease || dl.RunnerOutcome == ports.OutcomeCompleted {
+			// A release Runner completed whose import Curator refused (it
+			// placed nothing, deterministically) fetched the whole release: it
+			// spends bytes too, or one refusal regrabs uncapped (the nightly
+			// Good Trouble loop, 6-7 full grabs a night). An import that ended
+			// on a local fault (a hold, a stall, out of attempts) stays free.
+			if dl.RunnerOutcome == "" || dl.RunnerBlamesRelease || deterministicImportRefusal(dl) {
 				spent += releasesFetched(dl)
+			}
+			// What the library holds refused it: any other release meets the
+			// same verdict, so the want waits out the window.
+			if dl.RunnerOutcome == ports.OutcomeCompleted && strings.HasPrefix(dl.Error, importFailedPrefix+libraryBlocksDestination) {
+				blocked = true
 			}
 		}
 	}
-	return spent >= reGrabLimit || failed >= reGrabAttemptCeiling, spent, failed
+	return blocked || spent >= reGrabLimit || failed >= reGrabAttemptCeiling, spent, failed
+}
+
+// deterministicImportRefusal reports a release Runner completed whose
+// publication Curator ended import_failed because the importer refused every
+// file (completePublication), not because the import itself stopped.
+func deterministicImportRefusal(dl sqlite.Download) bool {
+	if dl.RunnerOutcome != ports.OutcomeCompleted || !strings.HasPrefix(dl.Error, importFailedPrefix) {
+		return false
+	}
+	rest := strings.TrimPrefix(dl.Error, importFailedPrefix)
+	rest = strings.TrimPrefix(rest, libraryBlocksDestination)
+	return strings.HasPrefix(rest, nothingImportable)
 }
 
 // releasesFetched is the share of one release a failed grab actually

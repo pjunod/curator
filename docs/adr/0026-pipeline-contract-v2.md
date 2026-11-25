@@ -50,13 +50,15 @@ grabs to exactly those seams.
    `blames_release` failures blocklist and spend fetched bytes against the
    budget; cancelled, lost and an indexer outage never re-grab.
    *Amended 2026-11-25:* a release Runner `completed` whose publication
-   Curator ends `import_failed` also spends its fetched bytes (it fetched
-   the whole release), and a publication refused only for what the library
+   Curator ends `import_failed` because the importer refused every file
+   (`nothing importable`) also spends its fetched bytes: it fetched the whole
+   release. An import that ended on a local fault (no manifest, a stall, out
+   of attempts) stays free. A publication refused only for what the library
    already holds at the destination (an unverified or untracked file, a
-   protected sibling) is not grabbed again at once: every release would meet
-   the same verdict. The want stays wanted for the ordinary searches, under
-   the budget. Before this, one such refusal re-grabbed 6–7 full releases a
-   night, uncapped (Good Trouble S02E06, 2026-11-19..25).
+   protected sibling) is not grabbed again at once, since every release meets
+   the same verdict, and caps its want for the rest of the window: at most
+   one release per window until the library changes. Before this, one such
+   refusal re-grabbed 6–7 full releases a night, uncapped.
 5. **Curator's own terminals are provisional** (`submit`, `lost`, and the
    rows migration 0072 converted from parks). Any later Runner fact re-opens
    them. Curator never authors `hold_expired`: a hold past Runner's deadline
