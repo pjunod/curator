@@ -2,6 +2,8 @@ package acquisition
 
 import (
 	"context"
+	"errors"
+	"os"
 	"path/filepath"
 	"slices"
 
@@ -9,6 +11,7 @@ import (
 	"github.com/pjunod/monarr/internal/domain/hdr"
 	"github.com/pjunod/monarr/internal/domain/mediainfo"
 	"github.com/pjunod/monarr/internal/domain/quality"
+	"github.com/pjunod/monarr/internal/infra/probe"
 	"github.com/pjunod/monarr/internal/infra/sqlite"
 )
 
@@ -52,7 +55,11 @@ func (s *Service) validateMeasuredPlacement(ctx context.Context, item domain.Med
 		byID[r.FileID] = r
 	}
 	targetAuthorized := p.PreviousSHA256 == "" || p.PreviousSHA256 == p.SHA256
+	targetTracked := false
 	for _, f := range files {
+		if f.CopyID == scope.CopyID && f.Path == p.Target {
+			targetTracked = true
+		}
 		if f.CopyID != scope.CopyID {
 			continue
 		}
@@ -75,12 +82,13 @@ func (s *Service) validateMeasuredPlacement(ctx context.Context, item domain.Med
 			continue
 		}
 		// A receipt for the same bytes is idempotent; it does not replace them.
+		// A tracked file already gone from disk leaves nothing to compare.
 		if f.Path == p.Target {
 			digest, _, e := fileDigest(ctx, f.Path)
-			if e != nil {
+			if e != nil && !errors.Is(e, os.ErrNotExist) {
 				return e
 			}
-			if digest == p.SHA256 {
+			if e == nil && digest == p.SHA256 {
 				continue
 			}
 		}
@@ -94,18 +102,31 @@ func (s *Service) validateMeasuredPlacement(ctx context.Context, item domain.Med
 				if scope.ReplacementOperationID != "" && filepath.Clean(f.Path) != filepath.Clean(p.Target) {
 					continue
 				}
-				return importPolicyRefusalf("replacement overlaps protected sibling episode %d", e)
+				return importLibraryRefusalf("replacement overlaps protected sibling episode %d", e)
 			}
 		}
 		r := byID[f.ID]
 		if r.Provenance == mediainfo.ProvenanceImplausible {
+			// A disbelieved file holds no episode (episodeStates,
+			// DiskStateForItem), so it protects nothing. When it occupies the
+			// destination itself, its bytes still need authorization to be
+			// replaced; without it the want stays open and every grab is
+			// refused here forever (Good Trouble S02E06, 2026-11-25).
+			// Only bytes that would be overwritten need it: a row whose file is
+			// already gone (or holds these same bytes) is a fresh fill.
+			if f.Path == p.Target && !targetAuthorized {
+				if err := authorizeDisbelievedTarget(ctx, item, p); err != nil {
+					return err
+				}
+				targetAuthorized = true
+			}
 			continue
 		}
 		if scope.Manual && !replace && f.Path != p.Target {
 			continue
 		}
 		if !r.Known {
-			return importPolicyRefusalf("existing file quality is unverified")
+			return importLibraryRefusalf("existing file quality is unverified")
 		}
 		allowed := profile.UpgradesAllowed && profile.Upgrade(p.Quality, langs, measuredHDR, r.Quality, r.SourceVerified(), r.AudioOf(), r.HDROf())
 		if scope.Manual {
@@ -116,14 +137,45 @@ func (s *Service) validateMeasuredPlacement(ctx context.Context, item domain.Med
 		}
 		// A claim permitting cleanup must be validated against these same facts.
 		if !replace {
-			return importPolicyRefusalf("replacement requires measured authorization")
+			return importLibraryRefusalf("replacement requires measured authorization")
 		}
 		if f.Path == p.Target {
 			targetAuthorized = true
 		}
 	}
 	if !targetAuthorized {
-		return importPolicyRefusalf("existing destination bytes have no measured replacement authorization")
+		if !targetTracked {
+			return importLibraryRefusalf("existing destination bytes have no measured replacement authorization: this copy of the item does not track the file at %s", p.Target)
+		}
+		return importLibraryRefusalf("existing destination bytes have no measured replacement authorization")
+	}
+	return nil
+}
+
+// authorizeDisbelievedTarget proves, from the bytes rather than the library
+// row, that the file at the destination is still the implausible file the
+// library disbelieved. The row is only a pointer: the bytes are proven to be
+// the ones the placement previewed (PreviousSHA256 and its file generation),
+// measured again, and publishPlacement re-proves PreviousSHA256 before
+// anything is renamed, so bytes swapped after this measurement are refused
+// there. A payload that is itself implausible never replaces anything.
+func authorizeDisbelievedTarget(ctx context.Context, item domain.MediaItem, p sqlite.Placement) error {
+	if p.Provenance == mediainfo.ProvenanceImplausible || !p.Info.Measured() {
+		// Never act on ignorance (ADR 0013 section 5): only a payload whose
+		// bytes were measured and believed may destroy anything.
+		return importPolicyRefusalf("measured payload is itself implausible or could not be measured; it cannot replace the disbelieved file at %s", p.Target)
+	}
+	digest, _, generation, err := fileDigestSnapshot(ctx, p.Target)
+	reviewed := generation != "" && (generation == p.TargetFileGeneration || (p.TargetAfterBackupGen != "" && generation == p.TargetAfterBackupGen))
+	if err != nil || digest != p.PreviousSHA256 || !reviewed {
+		return importPolicyRefusalf("disbelieved destination changed after placement preview: %s", p.Target)
+	}
+	info, _ := probe.File(p.Target)
+	if !info.Measured() {
+		return importLibraryRefusalf("disbelieved destination could not be measured again: %s", p.Target)
+	}
+	if _, implausible := mediainfo.Check(info, item.Runtime); !implausible {
+		return importLibraryRefusalf("the file at %s is recorded as implausible but now measures plausible; rescan it before replacing", p.Target)
 	}
 	return nil
 }

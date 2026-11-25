@@ -113,6 +113,18 @@ Two rules the decision paths must obey from now on:
   user's collection. The escape hatch already exists and stays manual:
   interactive search grabs whatever the user picks, no decision gate.
 
+*Note, 2026-11-25:* an `implausible` file is the opposite case: it was
+measured and refutes itself, so it holds no episode and may be replaced. A
+plausible file the search finds may land at the disbelieved file's own path;
+the import then authorizes the replacement from a fresh measurement of the
+bytes at that path, bracketed by their file generation, never from the
+library row alone. If they now measure plausible (or cannot be measured) the
+file is left alone and the refusal says to rescan it. The incoming payload
+must itself have been measured and believed; with no existing quality to
+compare against this is a fill, so the profile floor is not applied to it
+(as for any fill). A refusal here is a library-state refusal, which ADR 0026
+item 4 keeps from re-grabbing in a loop.
+
 ## Consequences
 
 - The re-download chain in Context dies, and with it the two-files-no-story

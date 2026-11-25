@@ -126,7 +126,11 @@ MediaFile: path, size, quality, mediaInfo, provenance, confidence, probedAt,
     itself — a 2160p file at 725 kbps, or a declared TrueHD track the whole
     file has no room for (domain/mediainfo/plausible.go). Such a file stays on
     disk and stays visible, and stops counting toward the item being
-    satisfied, so the search for a real copy continues. `failed` means we do
+    satisfied, so the search for a real copy continues. When that real copy
+    lands at the disbelieved file's own path, the import re-measures the
+    bytes there (bracketed by their file generation) and replaces them only
+    if they still measure implausible and the new file does not (ADR 0013
+    §5 note). `failed` means we do
     not know, which is a reason to LEAVE A FILE ALONE; `implausible` means we
     do know, which is the opposite.
   · sourceRelease/sourceIndexer name what monarr grabbed to produce the file,

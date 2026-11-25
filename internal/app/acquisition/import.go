@@ -53,6 +53,10 @@ type FileOutcome struct {
 	Upgrade                 bool   `json:"upgrade,omitempty"`
 	Quality                 string `json:"quality,omitempty"`
 	Reason                  string `json:"reason,omitempty"`
+	// LibraryBlocked marks a refusal caused by what the library already
+	// holds at the destination, not by this file: no other release can be
+	// placed there either, so the refusal must not trigger the next grab.
+	LibraryBlocked bool `json:"libraryBlocked,omitempty"`
 	// Retryable marks a file that failed on the environment (a full disk,
 	// a mount that went away) rather than on its own merits — worth trying
 	// again unchanged, unlike a quality decision.
@@ -684,6 +688,7 @@ func (s *Service) importDownloadFiles(ctx context.Context, dl sqlite.Download, s
 				return result, err
 			}
 			outcome.Reason = err.Error()
+			outcome.LibraryBlocked = isLibraryRefusal(err)
 			if errors.Is(err, errReplacementFileOutsideScope) {
 				outcome.ReplacementDisposition = "excess"
 			}
@@ -1123,7 +1128,7 @@ func (s *Service) importMovieFile(ctx context.Context, item domain.MediaItem, sc
 	}
 	upgrade := false
 	if !manual && state.HasFiles && state.Best == nil {
-		return placement{}, importPolicyRefusalf("existing file has unverified quality")
+		return placement{}, importLibraryRefusalf("existing file has unverified quality")
 	}
 	if state.Best != nil {
 		// The import judges the language by the same claim the grab did —
@@ -1236,7 +1241,7 @@ func (s *Service) importBookFile(ctx context.Context, item domain.MediaItem, sco
 	}
 	upgrade := false
 	if !manual && state.HasFiles && state.Best == nil {
-		return placement{}, importPolicyRefusalf("existing file has unverified quality")
+		return placement{}, importLibraryRefusalf("existing file has unverified quality")
 	}
 	if state.Best != nil {
 		// Books carry no language requirement (the API refuses one on a book
@@ -1345,7 +1350,7 @@ func (s *Service) importEpisodeFile(ctx context.Context, item domain.MediaItem, 
 		st := epStates[epID]
 		if !manual {
 			if st.HasFile && st.Have == nil {
-				return placement{}, importPolicyRefusalf("episode %d has unverified existing file", epNum)
+				return placement{}, importLibraryRefusalf("episode %d has unverified existing file", epNum)
 			}
 			if st.Have != nil && (!profile.UpgradesAllowed || !profile.Upgrade(q, importLanguages(releaseTitle, src), srcHDR, *st.Have, st.Verified, st.Audio, st.HDR)) {
 				return placement{}, importPolicyRefusalf("episode %d is protected by current policy", epNum)

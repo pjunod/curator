@@ -706,6 +706,10 @@ func (s *Service) completePublication(ctx context.Context, dl sqlite.Download, c
 	// as a duplicate or a newer attempt's file).
 	placed, held := 0, 0
 	var refusals []string
+	// blocked counts refusals about what the library already holds at the
+	// destination; other counts every other refusal. Only a publication
+	// refused for library reasons alone skips the next grab.
+	blocked, other := 0, 0
 	for _, f := range m.Files {
 		abs := filepath.Clean(filepath.Join(pub.Path, filepath.FromSlash(f.Path)))
 		pf := sqlite.PublicationFile{Path: f.Path, Bytes: f.Bytes, SHA256: f.SHA256}
@@ -768,6 +772,11 @@ func (s *Service) completePublication(ctx context.Context, dl sqlite.Download, c
 			if len(refusals) < 3 {
 				refusals = append(refusals, f.Path+": "+o.Reason)
 			}
+			if media && o.LibraryBlocked {
+				blocked++
+			} else if media {
+				other++
+			}
 		}
 		files = append(files, pf)
 	}
@@ -793,17 +802,31 @@ func (s *Service) completePublication(ctx context.Context, dl sqlite.Download, c
 		case ended != "":
 			w.Error = ended
 		case len(refusals) > 0:
-			w.Error = "nothing importable: " + strings.Join(refusals, "; ")
+			w.Error = nothingImportable + strings.Join(refusals, "; ")
 		default:
-			w.Error = "nothing importable: the publication holds no media of this item (samples and sidecars only)"
+			w.Error = nothingImportable + "the publication holds no media of this item (samples and sidecars only)"
 		}
+		// What the library holds at the destination refused every file:
+		// any other release meets the same verdict, so grabbing one now only
+		// burns the indexer's allowance (the nightly Good Trouble loop of
+		// 2026-11-19..25). The want stays wanted; the ordinary searches, under
+		// the regrab budget, try again once the library has changed.
+		libraryBlocked := ended == "" && blocked > 0 && other == 0
+		regrab := pub.Kind == "completed" && !libraryBlocked
 		if pub.Kind == "completed" {
-			w.DownloadState, w.DownloadError = "failed", "publication import_failed: "+w.Error
-			w.Handoff = &sqlite.HandoffEntry{Step: stepFailed, At: now, Detail: detail + "; " + w.Error + "; grabbing again"}
-			w.RegrabWantables = dl.WantableIDs
+			w.DownloadState, w.DownloadError = "failed", importFailedPrefix+w.Error
+			next := "; grabbing again"
+			if libraryBlocked {
+				w.DownloadError = importFailedPrefix + libraryBlocksDestination + w.Error
+				next = "; not grabbing again: the library blocks this destination"
+				w.RegrabWantables = nil
+			} else {
+				w.RegrabWantables = dl.WantableIDs
+			}
+			w.Handoff = &sqlite.HandoffEntry{Step: stepFailed, At: now, Detail: detail + "; " + w.Error + next}
 		}
 		w.History = append(w.History, sqlite.HistoryWrite{Type: "import_failed", MediaItemID: dl.MediaItemID, ReleaseTitle: dl.ReleaseTitle,
-			Data: map[string]any{"reason": w.Error, "publication": pub.Path, "placed": placed, "regrab": pub.Kind == "completed"}})
+			Data: map[string]any{"reason": w.Error, "publication": pub.Path, "placed": placed, "regrab": regrab, "libraryBlocked": libraryBlocked}})
 	} else {
 		w.State = "imported"
 		if ended != "" {
@@ -888,6 +911,16 @@ func (s *Service) completePublication(ctx context.Context, dl sqlite.Download, c
 	s.log.Info("publication imported", "publication", pub.ID, "kind", pub.Kind, "placed", placed, "state", w.State)
 	return nil
 }
+
+// The download error a completed publication's import failure writes. The
+// regrab budget reads them back (graburn.go): a deterministic refusal of a
+// fetched release spends its bytes; a library-blocked one holds the want for
+// the window. Local faults (holds, stalls, out of attempts) carry neither.
+const (
+	importFailedPrefix       = "publication import_failed: "
+	nothingImportable        = "nothing importable: "
+	libraryBlocksDestination = "the library blocks the destination; "
+)
 
 // duplicateRefusal reports whether the importer declined a file because the
 // library already holds as good or better: discarded{duplicate}.
@@ -1145,7 +1178,7 @@ func (s *Service) checkPrecedence(ctx context.Context, item domain.MediaItem, co
 			return nil
 		}
 	}
-	return importPolicyRefusal{precedenceRefusal{verdict}}
+	return importPolicyRefusal{err: precedenceRefusal{verdict}}
 }
 
 // attemptLive reports a download that may still deliver its want: not
