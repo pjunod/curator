@@ -1178,7 +1178,7 @@ func (s *Service) checkPrecedence(ctx context.Context, item domain.MediaItem, co
 			return nil
 		}
 	}
-	return importPolicyRefusal{precedenceRefusal{verdict}}
+	return importPolicyRefusal{err: precedenceRefusal{verdict}}
 }
 
 // attemptLive reports a download that may still deliver its want: not
