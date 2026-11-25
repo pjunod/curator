@@ -195,8 +195,14 @@ LIMIT ? OFFSET ?;
 -- Written by the probe path only; `quality` is set separately so a probe that
 -- learns nothing new about quality still records that it ran.
 UPDATE media_files
-SET media_info = ?, audio_languages = ?, quality_provenance = ?, quality_confidence = ?, probed_at = ?
+SET media_info = ?, audio_languages = ?, hdr_tier = ?, quality_provenance = ?, quality_confidence = ?, probed_at = ?
 WHERE id = ?;
+
+-- name: RecordDiscEnhancementLayer :exec
+-- ADR 0031 section 6: a measured profile 7 enhancement layer for a title.
+-- The caller passes only fel or mel. An FEL already recorded is never
+-- overwritten, so FEL is sticky and MEL holds only until an FEL is seen.
+UPDATE media_items SET disc_el = ? WHERE id = ? AND disc_el != 'fel';
 
 -- name: SetFileQualityWithProvenance :exec
 UPDATE media_files

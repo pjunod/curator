@@ -27,6 +27,7 @@ import (
 	"github.com/pjunod/monarr/internal/domain/quality"
 	"github.com/pjunod/monarr/internal/infra/sqlite"
 	"github.com/pjunod/monarr/internal/ports"
+	"slices"
 )
 
 func (s *Server) acqErr(w http.ResponseWriter, err error) {
@@ -274,6 +275,9 @@ func profileDTO(p quality.Profile, inUse int64) apigen.QualityProfile {
 		langs := append([]string(nil), p.Languages...)
 		qp.AudioLanguages = &langs
 	}
+	qp.HdrOrder, qp.HdrReject = hdrTiersDTO(p.HDROrder), hdrTiersDTO(p.HDRReject)
+	qp.Preflight = preflightDTO(p.Preflight)
+	qp.HdrTies = hdrTiesDTO(p.HDRTies)
 	if p.Floor != nil {
 		f := qualityDTO(*p.Floor)
 		qp.Floor = &f
@@ -327,6 +331,29 @@ func profileFromInput(in apigen.ProfileInput) (quality.Profile, error) {
 			p.Languages = append(p.Languages, c)
 		}
 		p.Languages = language.Normalize(p.Languages)
+	}
+	order, err := hdrTiersFromInput("hdrOrder", in.HdrOrder)
+	if err != nil {
+		return quality.Profile{}, err
+	}
+	reject, err := hdrTiersFromInput("hdrReject", in.HdrReject)
+	if err != nil {
+		return quality.Profile{}, err
+	}
+	if (len(order) > 0 || len(reject) > 0) && quality.IsBookFormat(target.Source) {
+		return quality.Profile{}, fmt.Errorf("HDR preferences apply to film and TV profiles; a %s profile has no picture", target.Display())
+	}
+	for _, t := range reject {
+		if slices.Contains(order, t) {
+			return quality.Profile{}, fmt.Errorf("%s is both preferred and refused; pick one", t.Label())
+		}
+	}
+	p.HDROrder, p.HDRReject = order, reject
+	if p.HDRTies, err = hdrTiesFromInput(in.HdrTies, order); err != nil {
+		return quality.Profile{}, err
+	}
+	if p.Preflight, err = preflightFromInput(in.Preflight); err != nil {
+		return quality.Profile{}, err
 	}
 	if in.Floor != nil {
 		floor := quality.Quality{Source: quality.Source(strings.TrimSpace(in.Floor.Source))}
@@ -770,6 +797,15 @@ func (s *Server) SearchReleases(w http.ResponseWriter, r *http.Request, id int64
 			Quality: c.QualityStr, Score: c.Score, Accepted: c.Accepted, IsUpgrade: c.IsUpgrade,
 			Rejections: []apigen.Rejection{}, Match: match, CandidateToken: c.Token,
 		}
+		if c.HDR.Tier != "" {
+			h := releaseHDRDTO(c.HDR)
+			rc.Hdr = &h
+		}
+		if c.MeasuredHDR != nil {
+			h := releaseHDRDTO(*c.MeasuredHDR)
+			rc.MeasuredHdr = &h
+		}
+		rc.Probe = probeEvidenceDTO(c.Probe)
 		if c.BlacklistReason != "" {
 			reason := c.BlacklistReason
 			rc.BlacklistReason = &reason

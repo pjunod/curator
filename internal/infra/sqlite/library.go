@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/pjunod/monarr/internal/domain"
+	"github.com/pjunod/monarr/internal/domain/hdr"
 	"github.com/pjunod/monarr/internal/domain/matcher"
 	"github.com/pjunod/monarr/internal/domain/mediainfo"
 	"github.com/pjunod/monarr/internal/domain/quality"
@@ -54,6 +55,7 @@ func itemToDomain(r sqlitegen.MediaItem) domain.MediaItem {
 		Year:      int(r.Year),
 		Author:    r.Author,
 		BookType:  quality.BookType(r.BookType),
+		DiscEL:    r.DiscEl,
 		IDs: domain.ExternalIDs{
 			TMDB: r.TmdbID, IMDB: r.ImdbID, TVDB: r.TvdbID,
 			ISBN13: r.Isbn13, OLID: r.Olid, ASIN: r.Asin,
@@ -579,7 +581,7 @@ func (d *DB) ListMediaItems(ctx context.Context, kind domain.MediaKind) ([]domai
 			item.FileCount = int(s.Files)
 			item.OffloadedEpisodes = int(s.OffloadedEpisodes)
 			item.OffloadedSeasons = int(s.OffloadedSeasons)
-			item.Quality, item.QualityVerified, item.Audio = weakestRecorded(textOf(s.Qualities))
+			item.Quality, item.QualityVerified, item.Audio, item.HDR = weakestRecorded(textOf(s.Qualities))
 		}
 		out = append(out, item)
 	}
@@ -621,11 +623,16 @@ func textOf(v any) string {
 // the weakest link across files, the same rule SeasonWantable uses: known
 // only when every file is known, carrying only the languages every file
 // carries. Unknown never starts a hunt, so the safe direction holds here too.
-func weakestRecorded(joined string) (quality.Quality, bool, quality.Audio) {
+//
+// The HDR field (ADR 0031) is media_files.hdr_tier. An item has one HDR tier
+// only when every file measured the same one, the SeasonWantable rule;
+// anything mixed or unmeasured is unknown, which never starts a hunt.
+func weakestRecorded(joined string) (quality.Quality, bool, quality.Audio, hdr.Tier) {
 	var worst quality.Quality
 	var verified, have bool
 	audio := quality.Audio{Known: true}
 	var common map[string]bool
+	tier, tierSet, tierMixed := hdr.TierUnknown, false, false
 	for _, raw := range strings.Split(joined, ",") {
 		raw = strings.TrimSpace(raw)
 		if raw == "" {
@@ -640,6 +647,14 @@ func weakestRecorded(joined string) (quality.Quality, bool, quality.Audio) {
 		if !have || quality.Rank(q) < quality.Rank(worst) {
 			worst, verified, have = q, v, true
 		}
+		fileTier := hdr.TierUnknown
+		if len(parts) >= 5 {
+			fileTier = hdr.Tier(parts[4])
+		}
+		if fileTier == hdr.TierUnknown || (tierSet && fileTier != tier) {
+			tierMixed = true
+		}
+		tier, tierSet = fileTier, true
 		fileAudio := quality.Audio{}
 		if len(parts) >= 4 {
 			fileAudio = audioFromColumn(parts[3])
@@ -662,14 +677,17 @@ func weakestRecorded(joined string) (quality.Quality, bool, quality.Audio) {
 			}
 		}
 	}
+	if tierMixed {
+		tier = hdr.TierUnknown
+	}
 	if !have || !audio.Known {
-		return worst, verified, quality.Audio{}
+		return worst, verified, quality.Audio{}, tier
 	}
 	for l := range common {
 		audio.Languages = append(audio.Languages, l)
 	}
 	sort.Strings(audio.Languages)
-	return worst, verified, audio
+	return worst, verified, audio, tier
 }
 
 // SetSeasonMonitored flips one season's monitored flag and cascades it to

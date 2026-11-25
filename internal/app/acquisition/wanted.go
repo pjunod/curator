@@ -159,7 +159,7 @@ func wants(profile quality.Profile, w domain.Wantable) bool {
 	if !known {
 		return !w.OnDisk()
 	}
-	return profile.UpgradesAllowed && !profile.Satisfied(current, w.SourceVerified(), w.AudioLanguages())
+	return profile.UpgradesAllowed && !profile.Satisfied(current, w.SourceVerified(), w.AudioLanguages(), w.CurrentHDR())
 }
 
 // wantedEpisodes builds the episode wantables for one copy of a series (cp nil
@@ -188,7 +188,7 @@ func (s *Service) wantedEpisodes(item domain.MediaItem, profile quality.Profile,
 				Mon: true, Title: item.Title, Year: item.Year,
 				Identity: mediaIdentity(item),
 				Season:   e.SeasonNumber, Episode: e.EpisodeNumber,
-				Have: st.Have, Files: st.HasFile, Verified: st.Verified, Audio: st.Audio,
+				Have: st.Have, Files: st.HasFile, Verified: st.Verified, Audio: st.Audio, HDR: st.HDR,
 				Absolute: e.AbsoluteNum, Copy: copyID, CopyName: copyName,
 			}
 			if wants(profile, ep) {

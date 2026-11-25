@@ -28,6 +28,14 @@ type corpusCase struct {
 		Repack     bool   `json:"repack"`
 		Group      string `json:"group"`
 		Author     string `json:"author"`
+		// HDR, when present, pins the whole HDR claim (ADR 0031 §3); an
+		// empty tier means the name must claim nothing.
+		HDR *struct {
+			Tier       string `json:"tier"`
+			Profile    int    `json:"profile"`
+			EL         string `json:"el"`
+			Confidence string `json:"confidence"`
+		} `json:"hdr"`
 	} `json:"expect"`
 }
 
@@ -88,6 +96,13 @@ func TestGoldenCorpus(t *testing.T) {
 			}
 			if exp.Author != "" && got.Author != exp.Author {
 				errs = append(errs, fmt.Sprintf("author %q != %q", got.Author, exp.Author))
+			}
+			if h := exp.HDR; h != nil {
+				g := got.HDR
+				if string(g.Tier()) != h.Tier || g.DVProfile != h.Profile || g.ELType != h.EL || g.Confidence != h.Confidence {
+					errs = append(errs, fmt.Sprintf("hdr tier %q profile %d el %q confidence %q != %q %d %q %q",
+						g.Tier(), g.DVProfile, g.ELType, g.Confidence, h.Tier, h.Profile, h.EL, h.Confidence))
+				}
 			}
 			if exp.Group != "" && got.Group != exp.Group {
 				errs = append(errs, fmt.Sprintf("group %q != %q", got.Group, exp.Group))

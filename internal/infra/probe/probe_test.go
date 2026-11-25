@@ -324,3 +324,52 @@ func TestTailParseFFprobeRejectsUnusableOutput(t *testing.T) {
 		t.Errorf("an unparseable duration produced numbers: %+v", info)
 	}
 }
+
+// The two probers must not drift (ADR 0031 §2). For each Dolby Vision and
+// HDR10+ fixture, the committed ffprobe output (captured with -show_streams
+// -show_format -show_frames -read_intervals %+#1, ffprobe 9.0.2) mapped by
+// ParseFFprobe has to agree with the native walker on everything ffprobe
+// reports. ffprobe does not print the RPU's CM version or level 6 block, so
+// those are the only fields the native path may know alone.
+func TestTailFFprobeAndNativeAgreeOnDolbyVision(t *testing.T) {
+	noExternalProber(t)
+	for _, name := range []string{
+		"mkv-64p-hevc-dv-p7-fel.mkv",
+		"mp4-2160p-hevc-dv-p5.mp4",
+		"mp4-64p-hevc-dv-p81.mp4",
+		"mkv-64p-hevc-hdr10plus.mkv",
+	} {
+		t.Run(name, func(t *testing.T) {
+			native, err := probe.NativeFile(corpusFile(t, name))
+			if err != nil {
+				t.Fatalf("native: %v", err)
+			}
+			raw, err := os.ReadFile(filepath.Join("testdata", name+".ffprobe.json"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			ext, err := probe.ParseFFprobe(raw, native.SizeBytes)
+			if err != nil {
+				t.Fatalf("ffprobe mapping: %v", err)
+			}
+			if strings.Join(ext.Video.HDR, ",") != strings.Join(native.Video.HDR, ",") {
+				t.Errorf("hdr: ffprobe %v, native %v", ext.Video.HDR, native.Video.HDR)
+			}
+			n, e := native.Video.DoVi, ext.Video.DoVi
+			if (n == nil) != (e == nil) {
+				t.Fatalf("dovi presence: native %+v, ffprobe %+v", n, e)
+			}
+			if n == nil {
+				return
+			}
+			nc := *n
+			nc.CMVersion, nc.MaxCLL, nc.MaxFALL, nc.MasteringMaxNits = "", 0, 0, 0
+			if nc != *e {
+				t.Errorf("dovi:\n native  %+v\n ffprobe %+v", nc, *e)
+			}
+			if n.Label() != e.Label() {
+				t.Errorf("label: native %q, ffprobe %q", n.Label(), e.Label())
+			}
+		})
+	}
+}

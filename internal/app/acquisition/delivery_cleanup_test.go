@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/pjunod/monarr/internal/domain/hdr"
 	"github.com/pjunod/monarr/internal/domain/parser"
 	"github.com/pjunod/monarr/internal/domain/quality"
 )
@@ -32,7 +33,7 @@ func TestReplacementPackFileWithSelectedSiblingOrUnknownEpisodeIsNotDisposableEx
 		t.Run(tc.name, func(t *testing.T) {
 			_, callErr := svc.importEpisodeFile(ctx, item, importScope{Planned: true, ReplacementOperationID: "replace-one-episode", AllowedEpisodeIDs: []int64{selectedEpisode}}, profile,
 				map[int64]episodeState{}, filepath.Join(t.TempDir(), "Test.Show.S01E01E02.1080p.WEB-DL.mkv"),
-				parser.Parsed{Season: 1, Episodes: tc.episodes}, quality.Quality{Source: quality.SourceWEBDL, Resolution: 1080}, "Test.Show.S01E01E02.1080p.WEB-DL", false)
+				parser.Parsed{Season: 1, Episodes: tc.episodes}, quality.Quality{Source: quality.SourceWEBDL, Resolution: 1080}, hdr.Evidence{}, "Test.Show.S01E01E02.1080p.WEB-DL", false)
 			if callErr == nil {
 				t.Fatal("indivisible file unexpectedly imported outside its selected scope")
 			}

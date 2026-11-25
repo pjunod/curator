@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/pjunod/monarr/internal/domain/mediainfo"
+	"github.com/pjunod/monarr/internal/domain/mediainfo/dovi"
 )
 
 // FFprobeEnv names an external ffprobe binary. Opportunistic enrichment only:
@@ -109,8 +110,12 @@ func ffprobe(path string, size int64) (mediainfo.Info, error) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), ffprobeTimeout)
 	defer cancel()
+	// -show_frames over the first packet of each stream adds the per-frame
+	// side data — the Dolby Vision RPU and HDR10+ metadata — that no stream
+	// header carries. One decoded frame per stream, bounded by the timeout.
 	out, err := exec.CommandContext(ctx, bin,
-		"-v", "quiet", "-print_format", "json", "-show_streams", "-show_format", path).Output()
+		"-v", "quiet", "-print_format", "json", "-show_streams", "-show_format",
+		"-show_frames", "-read_intervals", "%+#1", path).Output()
 	if err != nil {
 		return mediainfo.Info{}, err
 	}
@@ -130,10 +135,94 @@ type ffprobeOutput struct {
 		ColorTransfer string `json:"color_transfer"`
 		FieldOrder    string `json:"field_order"`
 		Channels      int    `json:"channels"`
+		Index         int    `json:"index"`
+		SideData      []struct {
+			Type       string `json:"side_data_type"`
+			Profile    int    `json:"dv_profile"`
+			Level      int    `json:"dv_level"`
+			RPU        int    `json:"rpu_present_flag"`
+			EL         int    `json:"el_present_flag"`
+			BL         int    `json:"bl_present_flag"`
+			CompatID   int    `json:"dv_bl_signal_compatibility_id"`
+			VersionMaj int    `json:"dv_version_major"`
+			VersionMin int    `json:"dv_version_minor"`
+		} `json:"side_data_list"`
 	} `json:"streams"`
+	Frames []ffprobeFrame `json:"frames"`
 	Format struct {
 		Duration string `json:"duration"`
 	} `json:"format"`
+}
+
+// ffprobeFrame is one decoded frame's side data. FFmpeg decodes the RPU
+// itself and prints its fields; they are mapped onto dovi.Header and dovi.NLQ
+// so classification runs through the same functions the native parser uses.
+type ffprobeFrame struct {
+	MediaType   string `json:"media_type"`
+	StreamIndex int    `json:"stream_index"`
+	SideData    []struct {
+		Type                string `json:"side_data_type"`
+		VDRRPUProfile       int    `json:"vdr_rpu_profile"`
+		BLFullRange         int    `json:"bl_video_full_range_flag"`
+		ELSpatialResampling int    `json:"el_spatial_resampling_filter_flag"`
+		DisableResidual     int    `json:"disable_residual_flag"`
+		VDRBitDepth         int    `json:"vdr_bit_depth"`
+		CoefDataType        int    `json:"coef_data_type"`
+		CoefLog2Denom       int    `json:"coef_log2_denom"`
+		Components          []struct {
+			NLQOffset uint64 `json:"nlq_offset"`
+			VDRInMax  uint64 `json:"vdr_in_max"`
+			Slope     uint64 `json:"linear_deadzone_slope"`
+			Threshold uint64 `json:"linear_deadzone_threshold"`
+		} `json:"components"`
+	} `json:"side_data_list"`
+}
+
+// FFmpeg side-data type names.
+const (
+	ffDoViConfig   = "DOVI configuration record"
+	ffDoViMetadata = "Dolby Vision Metadata"
+	ffHDR10Plus    = "HDR Dynamic Metadata SMPTE2094-40 (HDR10+)"
+)
+
+// doviFromFrame maps FFmpeg's decoded RPU onto dovi.RPU. FFmpeg prints the
+// quantizer as single fixed-point values (integer part shifted above the
+// coef_log2_denom fraction bits); they are split back into the bitstream's
+// form for dovi.NLQ. The CM version and level 6 block are not printed, so
+// they stay unknown on this path.
+func doviFromFrame(f ffprobeFrame) (rpu *dovi.RPU, hdr10Plus bool) {
+	for _, sd := range f.SideData {
+		switch sd.Type {
+		case ffHDR10Plus:
+			hdr10Plus = true
+		case ffDoViMetadata:
+			h := dovi.Header{
+				VDRRPUProfile:       sd.VDRRPUProfile,
+				BLFullRange:         sd.BLFullRange == 1,
+				ELSpatialResampling: sd.ELSpatialResampling == 1,
+				DisableResidual:     sd.DisableResidual == 1,
+				VDRBitDepth:         sd.VDRBitDepth,
+			}
+			r := dovi.RPU{Profile: h.Profile()}
+			switch {
+			case h.DisableResidual:
+				r.ELType = dovi.ELNone
+			case sd.CoefDataType == 0 && sd.CoefLog2Denom > 0 && sd.CoefLog2Denom <= 32 && len(sd.Components) == 3:
+				var n dovi.NLQ
+				shift := uint(sd.CoefLog2Denom)
+				mask := uint64(1)<<shift - 1
+				for c, comp := range sd.Components {
+					n.Offset[c] = comp.NLQOffset
+					n.VDRInMaxInt[c], n.VDRInMax[c] = comp.VDRInMax>>shift, comp.VDRInMax&mask
+					n.SlopeInt[c], n.Slope[c] = comp.Slope>>shift, comp.Slope&mask
+					n.ThresholdInt[c], n.Threshold[c] = comp.Threshold>>shift, comp.Threshold&mask
+				}
+				r.ELType = n.ELType()
+			}
+			rpu = &r
+		}
+	}
+	return rpu, hdr10Plus
 }
 
 // ParseFFprobe maps ffprobe's JSON onto the same Info the native walkers
@@ -172,6 +261,26 @@ func ParseFFprobe(raw []byte, size int64) (mediainfo.Info, error) {
 			case "arib-std-b67":
 				v.HDR = append(v.HDR, mediainfo.HLG)
 			}
+			var cfg *dovi.Config
+			for _, sd := range st.SideData {
+				if sd.Type == ffDoViConfig {
+					cfg = &dovi.Config{
+						VersionMajor: sd.VersionMaj, VersionMinor: sd.VersionMin,
+						Profile: sd.Profile, Level: sd.Level,
+						RPU: sd.RPU == 1, EL: sd.EL == 1, BL: sd.BL == 1,
+						BLCompatID: sd.CompatID,
+					}
+				}
+			}
+			var rpu *dovi.RPU
+			var hdr10Plus bool
+			for _, fr := range out.Frames {
+				if fr.MediaType == "video" && fr.StreamIndex == st.Index {
+					rpu, hdr10Plus = doviFromFrame(fr)
+					break
+				}
+			}
+			v.ApplyDolbyVision(cfg, rpu, hdr10Plus)
 			info.Video = v
 		case "audio":
 			info.Audio = append(info.Audio, mediainfo.AudioInfo{
@@ -188,6 +297,7 @@ func ParseFFprobe(raw []byte, size int64) (mediainfo.Info, error) {
 	if info.Video == nil {
 		return info, errors.New("ffprobe: no video stream")
 	}
+	info.ProberRevision = mediainfo.ProberRevision
 	return info, nil
 }
 

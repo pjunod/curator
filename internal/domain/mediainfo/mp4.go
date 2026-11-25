@@ -4,6 +4,8 @@ import (
 	"errors"
 	"io"
 	"strings"
+
+	"github.com/pjunod/monarr/internal/domain/mediainfo/dovi"
 )
 
 // mp4Budget caps an MP4 probe. `moov` carries a sample table whose size grows
@@ -28,6 +30,7 @@ func probeMP4(r io.ReaderAt, size int64) (Info, error) {
 	c := newCursor(r, size, mp4Budget)
 
 	var moov []byte
+	var afterMoov int64
 	for c.remaining() >= 8 {
 		typ, body, err := readBoxHeader(c)
 		if err != nil {
@@ -44,6 +47,7 @@ func probeMP4(r io.ReaderAt, size int64) (Info, error) {
 			if err != nil && len(moov) == 0 {
 				return Info{}, wrapMalformed(err)
 			}
+			afterMoov = c.pos
 			break
 		}
 		if body < 0 { // size 0 = "to end of file"
@@ -58,11 +62,36 @@ func probeMP4(r io.ReaderAt, size int64) (Info, error) {
 	}
 
 	info := Info{}
-	parseMoov(moov, &info)
+	vt := parseMoov(moov, &info)
 	if info.Video == nil && len(info.Audio) == 0 {
 		return info, ErrMalformed
 	}
+	if info.Video != nil {
+		var f frameFacts
+		if info.Video.Codec == "hevc" && vt.lengthSize > 0 {
+			if vt.sampleSize == 0 && vt.trackID > 0 {
+				// A fragmented file keeps its samples in moof/mdat pairs and
+				// leaves the moov sample tables empty.
+				vt.sampleOffset, vt.sampleSize = firstFragmentSample(c, afterMoov, vt.trackID)
+			}
+			if vt.sampleSize > 0 {
+				f = scanAccessUnit(c, vt.sampleOffset, vt.sampleOffset+vt.sampleSize, vt.lengthSize)
+			}
+		}
+		applyFrameFacts(info.Video, vt.cfg, f)
+	}
 	return info, nil
+}
+
+// mp4VideoTrack is what parseMoov hands back about the video track beyond
+// its VideoInfo: the Dolby Vision record and where its first sample lives,
+// so the probe can read that one frame.
+type mp4VideoTrack struct {
+	trackID      uint32
+	cfg          *dovi.Config
+	lengthSize   int
+	sampleOffset int64
+	sampleSize   int64
 }
 
 // readBoxHeader reads one box header at the cursor and leaves the cursor on the
@@ -139,15 +168,17 @@ func boxes(b []byte, fn func(typ string, body []byte)) {
 	}
 }
 
-func parseMoov(moov []byte, info *Info) {
+func parseMoov(moov []byte, info *Info) mp4VideoTrack {
+	var vt mp4VideoTrack
 	boxes(moov, func(typ string, body []byte) {
 		switch typ {
 		case "mvhd":
 			parseMVHD(body, info)
 		case "trak":
-			parseTrak(body, info)
+			parseTrak(body, info, &vt)
 		}
 	})
+	return vt
 }
 
 // parseMVHD reads the movie header for the overall duration. Version 1 widened
@@ -193,11 +224,17 @@ func parseMVHD(b []byte, info *Info) {
 	}
 }
 
-func parseTrak(b []byte, info *Info) {
+func parseTrak(b []byte, info *Info, vt *mp4VideoTrack) {
 	var handler string
 	var lang string
 	var sampleDesc []byte
+	var sampleOffset, sampleSize int64
+	var trackID uint32
 	boxes(b, func(typ string, body []byte) {
+		if typ == "tkhd" {
+			trackID = tkhdTrackID(body)
+			return
+		}
 		if typ != "mdia" {
 			return
 		}
@@ -213,8 +250,15 @@ func parseTrak(b []byte, info *Info) {
 						return
 					}
 					boxes(b3, func(t4 string, b4 []byte) {
-						if t4 == "stsd" {
+						switch t4 {
+						case "stsd":
 							sampleDesc = b4
+						case "stsz":
+							sampleSize = firstSampleSize(b4)
+						case "stco":
+							sampleOffset = firstChunkOffset(b4, false)
+						case "co64":
+							sampleOffset = firstChunkOffset(b4, true)
 						}
 					})
 				})
@@ -227,8 +271,13 @@ func parseTrak(b []byte, info *Info) {
 	switch handler {
 	case "vide":
 		if info.Video == nil {
-			if v := parseVisualSampleEntry(sampleDesc); v != nil {
+			if v, extra := parseVisualSampleEntry(sampleDesc); v != nil {
 				info.Video = v
+				*vt = extra
+				vt.trackID = trackID
+				if sampleOffset > 0 {
+					vt.sampleOffset, vt.sampleSize = sampleOffset, sampleSize
+				}
 			}
 		}
 	case "soun":
@@ -299,7 +348,7 @@ const (
 )
 
 // parseVisualSampleEntry reads the first video entry out of an stsd box.
-func parseVisualSampleEntry(stsd []byte) *VideoInfo {
+func parseVisualSampleEntry(stsd []byte) (*VideoInfo, mp4VideoTrack) {
 	entries := stsdEntries(stsd)
 	for _, e := range entries {
 		codec, dv := mp4VideoCodec(e.format)
@@ -317,18 +366,20 @@ func parseVisualSampleEntry(stsd []byte) *VideoInfo {
 		if h, ok := r.u16(); ok {
 			v.Height = int(h)
 		}
+		var vt mp4VideoTrack
 		if len(e.body) > visualSubBoxOffset {
-			parseVisualSubBoxes(e.body[visualSubBoxOffset:], v)
+			parseVisualSubBoxes(e.body[visualSubBoxOffset:], v, &vt)
 		}
-		return v
+		return v, vt
 	}
-	return nil
+	return nil, mp4VideoTrack{}
 }
 
-func parseVisualSubBoxes(b []byte, v *VideoInfo) {
+func parseVisualSubBoxes(b []byte, v *VideoInfo, vt *mp4VideoTrack) {
 	boxes(b, func(typ string, body []byte) {
 		switch typ {
 		case "hvcC":
+			vt.lengthSize = nalLengthSizeHVCC(body)
 			if d := bitDepthHVCC(body); d > 0 {
 				v.BitDepth = d
 			}
@@ -340,8 +391,11 @@ func parseVisualSubBoxes(b []byte, v *VideoInfo) {
 			if d := bitDepthAV1C(body); d > 0 {
 				v.BitDepth = d
 			}
-		case "dvcC", "dvvC":
+		case "dvcC", "dvvC", "dvwC":
 			v.HDR = append(v.HDR, DV)
+			if cfg, ok := dovi.ParseConfig(body); ok {
+				vt.cfg = &cfg
+			}
 		case "colr":
 			parseColr(body, v)
 		}
@@ -516,4 +570,213 @@ func mp4AudioCodec(format string) string {
 		return "mp3"
 	}
 	return ""
+}
+
+// firstSampleSize reads the first sample's size from an stsz box: the shared
+// size when every sample is the same, else the first table entry.
+func firstSampleSize(b []byte) int64 {
+	r := &byteReader{b: b}
+	if !r.skip(4) { // version + flags
+		return 0
+	}
+	shared, ok := r.u32()
+	if !ok {
+		return 0
+	}
+	count, ok := r.u32()
+	if !ok || count == 0 {
+		return 0
+	}
+	if shared != 0 {
+		return int64(shared)
+	}
+	first, ok := r.u32()
+	if !ok {
+		return 0
+	}
+	return int64(first)
+}
+
+// firstChunkOffset reads the file offset of the first chunk from stco (32-bit)
+// or co64 (64-bit). The first sample of a track is the first sample of its
+// first chunk, so no stsc walk is needed.
+func firstChunkOffset(b []byte, wide bool) int64 {
+	r := &byteReader{b: b}
+	if !r.skip(4) {
+		return 0
+	}
+	count, ok := r.u32()
+	if !ok || count == 0 {
+		return 0
+	}
+	if wide {
+		off, ok := r.u64()
+		if !ok || off > 1<<62 {
+			return 0
+		}
+		return int64(off)
+	}
+	off, ok := r.u32()
+	if !ok {
+		return 0
+	}
+	return int64(off)
+}
+
+// tkhdTrackID reads track_ID from a track header (version 0: 32-bit times,
+// version 1: 64-bit).
+func tkhdTrackID(b []byte) uint32 {
+	r := &byteReader{b: b}
+	v, ok := r.u8()
+	if !ok || !r.skip(3) {
+		return 0
+	}
+	skip := 8
+	if v == 1 {
+		skip = 16
+	}
+	if !r.skip(skip) {
+		return 0
+	}
+	id, _ := r.u32()
+	return id
+}
+
+// maxMoof bounds the first movie-fragment box we read; a moof is a sample
+// table for one fragment, kilobytes in practice.
+const maxMoof = 1 << 20
+
+// firstFragmentSample finds the first moof after the moov and returns the file
+// offset and size of the track's first sample in it. Boxes before it are
+// stepped over by seeking.
+func firstFragmentSample(c *cursor, from int64, trackID uint32) (int64, int64) {
+	if err := c.seek(from); err != nil {
+		return 0, 0
+	}
+	for c.remaining() >= 8 {
+		start := c.pos
+		typ, body, err := readBoxHeader(c)
+		if err != nil || body < 0 {
+			return 0, 0
+		}
+		if typ == "moof" {
+			if body > maxMoof {
+				return 0, 0
+			}
+			moof, err := c.read(body)
+			if err != nil {
+				return 0, 0
+			}
+			return moofFirstSample(moof, start, trackID)
+		}
+		if err := c.skip(body); err != nil {
+			return 0, 0
+		}
+	}
+	return 0, 0
+}
+
+// tfhd and trun flags (ISO/IEC 14496-12 §8.8.7, §8.8.8).
+const (
+	tfhdBaseDataOffset   = 0x000001
+	tfhdSampleDescIndex  = 0x000002
+	tfhdDefaultDuration  = 0x000008
+	tfhdDefaultSize      = 0x000010
+	tfhdDefaultBaseMoof  = 0x020000
+	trunDataOffset       = 0x000001
+	trunFirstSampleFlags = 0x000004
+	trunSampleDuration   = 0x000100
+	trunSampleSize       = 0x000200
+)
+
+// moofFirstSample reads the track fragment for trackID. The data base is the
+// tfhd base_data_offset when given, else the start of the moof: the
+// default-base-is-moof flag says so, and so does the rule for the first track
+// fragment. A later track fragment with neither starts where the previous
+// one's data ended, which this does not compute; it answers "could not tell"
+// rather than an offset into another track's samples.
+func moofFirstSample(moof []byte, moofStart int64, trackID uint32) (int64, int64) {
+	var off, size int64
+	first := true
+	boxes(moof, func(typ string, traf []byte) {
+		if typ != "traf" || size > 0 {
+			return
+		}
+		firstTraf := first
+		first = false
+		base := moofStart
+		var defaultSize int64
+		mine := false
+		boxes(traf, func(t string, b []byte) {
+			r := &byteReader{b: b}
+			switch t {
+			case "tfhd":
+				flags, ok := r.u32()
+				id, ok2 := r.u32()
+				if !ok || !ok2 || id != trackID {
+					return
+				}
+				mine = true
+				flags &= 0xFFFFFF
+				if flags&tfhdBaseDataOffset != 0 {
+					v, ok := r.u64()
+					if !ok || v > 1<<62 {
+						mine = false
+						return
+					}
+					base = int64(v)
+				} else if !firstTraf && flags&tfhdDefaultBaseMoof == 0 {
+					mine = false
+					return
+				}
+				if flags&tfhdSampleDescIndex != 0 {
+					r.skip(4)
+				}
+				if flags&tfhdDefaultDuration != 0 {
+					r.skip(4)
+				}
+				if flags&tfhdDefaultSize != 0 {
+					if v, ok := r.u32(); ok {
+						defaultSize = int64(v)
+					}
+				}
+			case "trun":
+				if !mine || size > 0 {
+					return
+				}
+				flags, ok := r.u32()
+				count, ok2 := r.u32()
+				if !ok || !ok2 || count == 0 {
+					return
+				}
+				flags &= 0xFFFFFF
+				var dataOffset int64
+				if flags&trunDataOffset != 0 {
+					v, ok := r.u32()
+					if !ok {
+						return
+					}
+					dataOffset = int64(int32(v))
+				}
+				if flags&trunFirstSampleFlags != 0 {
+					r.skip(4)
+				}
+				if flags&trunSampleDuration != 0 {
+					r.skip(4)
+				}
+				s := defaultSize
+				if flags&trunSampleSize != 0 {
+					v, ok := r.u32()
+					if !ok {
+						return
+					}
+					s = int64(v)
+				}
+				if s > 0 && base+dataOffset > 0 {
+					off, size = base+dataOffset, s
+				}
+			}
+		})
+	})
+	return off, size
 }

@@ -26,6 +26,7 @@ import (
 	"github.com/pjunod/monarr/internal/domain"
 	"github.com/pjunod/monarr/internal/domain/decision"
 	"github.com/pjunod/monarr/internal/domain/format"
+	"github.com/pjunod/monarr/internal/domain/hdr"
 	"github.com/pjunod/monarr/internal/domain/matcher"
 	"github.com/pjunod/monarr/internal/domain/mediainfo"
 	"github.com/pjunod/monarr/internal/domain/parser"
@@ -164,6 +165,7 @@ type Service struct {
 	seasonRetryCursor atomic.Int64
 	newIndexer        IndexerFactory
 	newClient         ClientFactory
+	probes            probeCache // pre-flight results per release (preflight.go)
 
 	// searchTimeout bounds each indexer call.
 	searchTimeout time.Duration
@@ -322,6 +324,7 @@ type episodeState struct {
 	Have     *quality.Quality
 	Verified bool
 	Audio    quality.Audio
+	HDR      hdr.Tier
 }
 
 func mediaIdentity(item domain.MediaItem) domain.MediaIdentity {
@@ -368,6 +371,7 @@ func (s *Service) episodeStates(ctx context.Context, item domain.MediaItem, copy
 				st.Have = &q
 				st.Verified = rec.SourceVerified()
 				st.Audio = rec.AudioOf()
+				st.HDR = rec.HDROf()
 			}
 			out[epID] = st
 		}
@@ -497,20 +501,29 @@ type Candidate struct {
 	QualityStr string          `json:"quality"`
 	// Languages are the audio languages the name advertises (ADR 0022),
 	// canonical codes; "mul" for a MULTi/DUAL release.
-	Languages  []string             `json:"languages"`
-	Age        string               `json:"age"`
-	Score      int                  `json:"score"`   // custom-format score sum
-	Formats    []string             `json:"formats"` // matched custom formats
-	Accepted   bool                 `json:"accepted"`
-	IsUpgrade  bool                 `json:"isUpgrade"`
-	Rejections []decision.Rejection `json:"rejections"`
-	Match      domain.MatchEvidence `json:"match"`
-	Token      string               `json:"candidateToken"`
+	Languages []string `json:"languages"`
+	// HDR is what the name claims about HDR and Dolby Vision (ADR 0031), and
+	// MeasuredHDR what a pre-flight probe of the release's first bytes
+	// measured, when one ran. Ranking uses the measurement when present.
+	HDR         CandidateHDR         `json:"hdr"`
+	MeasuredHDR *CandidateHDR        `json:"measuredHdr,omitempty"`
+	Age         string               `json:"age"`
+	Score       int                  `json:"score"`   // custom-format score sum
+	Formats     []string             `json:"formats"` // matched custom formats
+	Accepted    bool                 `json:"accepted"`
+	IsUpgrade   bool                 `json:"isUpgrade"`
+	Rejections  []decision.Rejection `json:"rejections"`
+	Match       domain.MatchEvidence `json:"match"`
+	Token       string               `json:"candidateToken"`
 	// Warning is a caution that does not decline the release: the profile
 	// would take it, but something about it does not add up. Today that is
 	// only an advertised size too small to hold what the name claims.
 	Warning         string `json:"warning,omitempty"`
 	BlacklistReason string `json:"blacklistReason,omitempty"`
+	// Probe is the pre-flight evidence (ADR 0031 §6), when one ran.
+	Probe *ProbeEvidence `json:"probe,omitempty"`
+
+	parsed parser.Parsed
 }
 
 type candidateRecord struct {
@@ -669,8 +682,8 @@ func (s *Service) SearchCopyDetailed(ctx context.Context, itemID, copyID int64, 
 	for _, r := range releases {
 		p := parser.Parse(r.Title)
 		c := Candidate{Release: r, Quality: p.Quality, QualityStr: p.Quality.Display(),
-			Languages: p.Languages,
-			Score:     format.Score(r.Title, formats), Formats: format.Matches(r.Title, formats)}
+			Languages: p.Languages, HDR: claimedHDR(p.HDR), parsed: p,
+			Score: format.Score(r.Title, formats), Formats: format.Matches(r.Title, formats)}
 		c.BlacklistReason, _, err = s.db.BlocklistReason(ctx, r.Title, r.Indexer)
 		if err != nil {
 			return nil, status, err
@@ -709,6 +722,17 @@ func (s *Service) SearchCopyDetailed(ctx context.Context, itemID, copyID int64, 
 		out = append(out, c)
 	}
 
+	sortCandidates(out, profile)
+	if top, bytes, ok := profile.Probes(); ok {
+		s.preflightCandidates(ctx, out, item, target, profile, top, bytes)
+		sortCandidates(out, profile)
+	}
+	return out, status, nil
+}
+
+// sortCandidates orders the search list: accepted first, then quality rank,
+// then the profile's HDR order (ADR 0031 §4), custom-format score, seeders.
+func sortCandidates(out []Candidate, profile quality.Profile) {
 	sort.SliceStable(out, func(i, j int) bool {
 		if out[i].Accepted != out[j].Accepted {
 			return out[i].Accepted
@@ -717,19 +741,28 @@ func (s *Service) SearchCopyDetailed(ctx context.Context, itemID, copyID int64, 
 		if ri != rj {
 			return ri > rj
 		}
+		// Same quality: the profile's HDR order (ADR 0031 §4).
+		if ei, ej := out[i].hdrEvidence(), out[j].hdrEvidence(); hdrBetter(profile, ei, ej) || hdrBetter(profile, ej, ei) {
+			return hdrBetter(profile, ei, ej)
+		}
 		// Same quality: custom-format score breaks the tie (Phase 5).
 		if out[i].Score != out[j].Score {
 			return out[i].Score > out[j].Score
 		}
 		return out[i].Release.Seeders > out[j].Release.Seeders
 	})
-	return out, status, nil
 }
 
 // releaseOf is what the decision engine judges a parsed name by: the quality
 // it claims and the languages it advertises (ADR 0022).
 func releaseOf(p parser.Parsed) decision.Release {
-	return decision.Release{Quality: p.Quality, Languages: p.Languages}
+	return decision.Release{Quality: p.Quality, Languages: p.Languages, HDR: hdr.Claimed(p.HDR)}
+}
+
+// hdrBetter orders two releases of equal quality by the profile's HDR order
+// (ADR 0031 §4); false both ways when the profile has none.
+func hdrBetter(profile quality.Profile, a, b hdr.Evidence) bool {
+	return hdr.Better(profile.HDRRank, a, b)
 }
 
 func describeTarget(w domain.Wantable) string {
@@ -2269,3 +2302,28 @@ func (s *Service) cancelRunnerDownload(ctx context.Context, id int64, cfg ports.
 }
 
 var ErrCandidateExpired = errors.New("release search evidence expired or changed; search again before grabbing")
+
+// CandidateHDR is one HDR description of a release, for the search list: the
+// tier, its label, the Dolby Vision details known, and how they are known.
+type CandidateHDR struct {
+	Tier       hdr.Tier `json:"tier"`
+	Label      string   `json:"label"`
+	DVProfile  int      `json:"dvProfile,omitempty"`
+	ELType     string   `json:"elType,omitempty"`
+	Confidence string   `json:"confidence,omitempty"` // claims only
+	Measured   bool     `json:"measured"`
+}
+
+func claimedHDR(c hdr.Claim) CandidateHDR {
+	e := hdr.Claimed(c)
+	return CandidateHDR{Tier: e.Tier, Label: e.Tier.Label(), DVProfile: c.DVProfile, ELType: c.ELType, Confidence: e.Confidence}
+}
+
+// hdrEvidence is what ranking and the decision engine judge the candidate's
+// HDR by: the measurement when a pre-flight probe made one, else the claim.
+func (c Candidate) hdrEvidence() hdr.Evidence {
+	if m := c.MeasuredHDR; m != nil {
+		return hdr.Measure(m.Tier)
+	}
+	return hdr.Evidence{Tier: c.HDR.Tier, Confidence: c.HDR.Confidence}
+}

@@ -34,4 +34,17 @@ describe('buildProfileSentence', () => {
       ),
     ).toBe('hunts the best release up to Bluray 2160p, then stops; English or French audio required')
   })
+  it('names the HDR order and refusals where the server does (ADR 0031)', () => {
+    expect(
+      buildProfileSentence({
+        target: 'Remux 2160p',
+        upgradesAllowed: false,
+        audioLanguages: [],
+        hdrOrder: ['DV P7 FEL', 'DV P7 MEL', 'DV P8', 'HDR10+', 'HDR10'],
+        hdrReject: ['DV P5'],
+      }),
+    ).toBe(
+      'hunts the best release up to Remux 2160p, then stops; prefers DV P7 FEL › DV P7 MEL › DV P8 › HDR10+ › HDR10; never DV P5; no upgrades once a file is present',
+    )
+  })
 })

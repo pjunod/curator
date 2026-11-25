@@ -40,3 +40,4 @@ Context for all of these lives in [../architecture.md](../architecture.md).
 - [0029 — shared availability](0029-shared-availability.md): observed primary-copy presence and owner discovery.
 
 - [0030: Household accounts and requests](0030-household-accounts-and-requests.md) — standalone accounts, optional identity links and scoped admission.
+- [0031: Dolby Vision and HDR measured, ranked and probed](0031-dolby-vision-measurement.md) — measured DV records, name claims, profile HDR order with device-derived ties, and Runner pre-flight probes.

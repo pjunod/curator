@@ -2012,6 +2012,23 @@ func (q *Queries) MarkPayloadRemoved(ctx context.Context, arg MarkPayloadRemoved
 	return err
 }
 
+const recordDiscEnhancementLayer = `-- name: RecordDiscEnhancementLayer :exec
+UPDATE media_items SET disc_el = ? WHERE id = ? AND disc_el != 'fel'
+`
+
+type RecordDiscEnhancementLayerParams struct {
+	DiscEl string
+	ID     int64
+}
+
+// ADR 0031 section 6: a measured profile 7 enhancement layer for a title.
+// The caller passes only fel or mel. An FEL already recorded is never
+// overwritten, so FEL is sticky and MEL holds only until an FEL is seen.
+func (q *Queries) RecordDiscEnhancementLayer(ctx context.Context, arg RecordDiscEnhancementLayerParams) error {
+	_, err := q.db.ExecContext(ctx, recordDiscEnhancementLayer, arg.DiscEl, arg.ID)
+	return err
+}
+
 const setDownloadHandle = `-- name: SetDownloadHandle :exec
 UPDATE downloads SET handle = ?, transfer = ?, updated_at = ? WHERE id = ?
 `
@@ -2035,13 +2052,14 @@ func (q *Queries) SetDownloadHandle(ctx context.Context, arg SetDownloadHandlePa
 
 const setFileMediaInfo = `-- name: SetFileMediaInfo :exec
 UPDATE media_files
-SET media_info = ?, audio_languages = ?, quality_provenance = ?, quality_confidence = ?, probed_at = ?
+SET media_info = ?, audio_languages = ?, hdr_tier = ?, quality_provenance = ?, quality_confidence = ?, probed_at = ?
 WHERE id = ?
 `
 
 type SetFileMediaInfoParams struct {
 	MediaInfo         string
 	AudioLanguages    string
+	HdrTier           string
 	QualityProvenance string
 	QualityConfidence string
 	ProbedAt          int64
@@ -2055,6 +2073,7 @@ func (q *Queries) SetFileMediaInfo(ctx context.Context, arg SetFileMediaInfoPara
 	_, err := q.db.ExecContext(ctx, setFileMediaInfo,
 		arg.MediaInfo,
 		arg.AudioLanguages,
+		arg.HdrTier,
 		arg.QualityProvenance,
 		arg.QualityConfidence,
 		arg.ProbedAt,

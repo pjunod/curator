@@ -12,6 +12,7 @@ import (
 	"github.com/pjunod/monarr/internal/domain/acquisitionplan"
 	"github.com/pjunod/monarr/internal/domain/decision"
 	"github.com/pjunod/monarr/internal/domain/format"
+	"github.com/pjunod/monarr/internal/domain/hdr"
 	"github.com/pjunod/monarr/internal/domain/language"
 	"github.com/pjunod/monarr/internal/domain/mediainfo"
 	"github.com/pjunod/monarr/internal/domain/parser"
@@ -224,6 +225,12 @@ func (s *Service) SyncRSS(ctx context.Context) error {
 				freshProfile, err := s.db.GetProfile(ctx, fresh.ProfileID())
 				if err != nil || !wants(freshProfile, fresh) || !decision.Decide(releaseOf(p), fresh, freshProfile).Accepted {
 					unlock()
+					continue
+				}
+				// RSS grabs are measured like searched ones (ADR 0031 §6).
+				if ok, why := s.preflightOne(ctx, fresh, freshProfile, r, p); !ok {
+					unlock()
+					s.log.Info("rss: declined on pre-flight", "release", r.Title, "why", why.Reason)
 					continue
 				}
 				evidence := matchEvidence(p, fresh, r, match)
@@ -628,7 +635,9 @@ func (s *Service) searchAndGrabBestReserved(ctx context.Context, w domain.Wantab
 
 	type scored struct {
 		r        ports.Release
+		p        parser.Parsed
 		q        quality.Quality
+		hdr      hdr.Evidence
 		score    int
 		evidence domain.MatchEvidence
 	}
@@ -640,7 +649,7 @@ func (s *Service) searchAndGrabBestReserved(ctx context.Context, w domain.Wantab
 				if profile.Met(c.q, true) {
 					class = acquisitionplan.TargetMet
 				}
-				return acquisitionplan.Candidate{Key: acquisitionplan.CandidateKey(k), Pref: acquisitionplan.Preference{Class: class, QualityRank: quality.Rank(c.q), FormatScore: c.score}, Eligible: []acquisitionplan.EpisodeKey{key}, Payload: []acquisitionplan.EpisodeKey{key}, SizeBytes: c.r.Size, SizeKnown: c.r.Size > 0, Protocol: c.r.Protocol, Seeders: c.r.Seeders, SeedersKnown: c.r.SeedersKnown}
+				return acquisitionplan.Candidate{Key: acquisitionplan.CandidateKey(k), Pref: acquisitionplan.Preference{Class: class, QualityRank: quality.Rank(c.q), FormatScore: c.score, HDRRank: profile.HDRRank(c.hdr.Tier), HDRMeasured: c.hdr.Measured}, Eligible: []acquisitionplan.EpisodeKey{key}, Payload: []acquisitionplan.EpisodeKey{key}, SizeBytes: c.r.Size, SizeKnown: c.r.Size > 0, Protocol: c.r.Protocol, Seeders: c.r.Seeders, SeedersKnown: c.r.SeedersKnown}
 			}
 			ka, kb := a.r.Title+"|"+a.r.GUID, b.r.Title+"|"+b.r.GUID
 			if ka == kb {
@@ -656,12 +665,15 @@ func (s *Service) searchAndGrabBestReserved(ctx context.Context, w domain.Wantab
 		if quality.Rank(a.q) != quality.Rank(b.q) {
 			return quality.Rank(a.q) > quality.Rank(b.q)
 		}
+		if hdrBetter(profile, a.hdr, b.hdr) || hdrBetter(profile, b.hdr, a.hdr) {
+			return hdrBetter(profile, a.hdr, b.hdr)
+		}
 		if a.score != b.score {
 			return a.score > b.score
 		}
 		return a.r.Seeders > b.r.Seeders
 	}
-	var best *scored
+	var accepted []*scored
 	var refused rejections
 	for _, r := range deduplicateReleases(releases) {
 		tally.Seen++
@@ -693,15 +705,64 @@ func (s *Service) searchAndGrabBestReserved(ctx context.Context, w domain.Wantab
 			continue
 		}
 		tally.Accepted++
-		cand := &scored{r: r, q: p.Quality, score: format.Score(r.Title, formats), evidence: matchEvidence(p, w, r, match)}
-		if best == nil || better(cand, best) {
-			best = cand
+		accepted = append(accepted, &scored{r: r, p: p, q: p.Quality, hdr: hdr.Claimed(p.HDR), score: format.Score(r.Title, formats), evidence: matchEvidence(p, w, r, match)})
+	}
+	sort.SliceStable(accepted, func(i, j int) bool { return better(accepted[i], accepted[j]) })
+	// Pre-flight (ADR 0031 §6): measure the best few before choosing, and
+	// choose on the measurement.
+	if top, bytes, ok := profile.Probes(); ok && len(accepted) > 0 {
+		if prober, ok := s.releaseProber(ctx); ok {
+			var picked []*scored
+			for _, c := range accepted {
+				if len(picked) < top && c.r.Protocol == ports.ProtocolUsenet {
+					picked = append(picked, c)
+				}
+			}
+			rels := make([]ports.Release, len(picked))
+			for i, c := range picked {
+				rels[i] = c.r
+			}
+			evidence := s.probeReleases(ctx, prober, rels, bytes)
+			drop := map[*scored]bool{}
+			for i, c := range picked {
+				ev := evidence[i]
+				if ev == nil {
+					continue
+				}
+				s.recordDiscMaster(ctx, w.MediaItemID(), ev)
+				switch {
+				case ev.measured():
+					if d := decision.Decide(measuredRelease(c.p, ev), w, profile); !d.Accepted {
+						s.log.Info("auto search: declined on the measured HDR", "release", c.r.Title, "tier", string(ev.Tier))
+						if len(d.Rejections) > 0 {
+							refused.add(d.Rejections[0].Code, d.Rejections[0].Reason)
+						}
+						drop[c] = true
+						continue
+					}
+					c.hdr = hdr.Measure(ev.Tier)
+				case ev.refusesUnder(profile):
+					s.log.Info("auto search: declined, could not measure", "release", c.r.Title, "reason", ev.Reason)
+					refused.add(CodeProbeUnreadable, unreadableReason(ev))
+					drop[c] = true
+				}
+			}
+			kept := accepted[:0]
+			for _, c := range accepted {
+				if !drop[c] {
+					kept = append(kept, c)
+				}
+			}
+			tally.Accepted -= len(accepted) - len(kept)
+			accepted = kept
+			sort.SliceStable(accepted, func(i, j int) bool { return better(accepted[i], accepted[j]) })
 		}
 	}
 	tally.TopRejection = refused.top(tally.Seen)
-	if best == nil {
+	if len(accepted) == 0 {
 		return tally, nil
 	}
+	best := accepted[0]
 	if beforeGrab != nil {
 		if err := beforeGrab(); err != nil {
 			return tally, err

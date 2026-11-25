@@ -13,6 +13,7 @@ import (
 
 	"github.com/pjunod/monarr/internal/domain"
 	"github.com/pjunod/monarr/internal/domain/filename"
+	"github.com/pjunod/monarr/internal/domain/hdr"
 	"github.com/pjunod/monarr/internal/domain/naming"
 	"github.com/pjunod/monarr/internal/domain/parser"
 	"github.com/pjunod/monarr/internal/domain/quality"
@@ -709,6 +710,7 @@ func (s *Service) planItemFile(ctx context.Context, pc *planContext, f ItemImpor
 
 	var have *quality.Quality
 	verified, audio := pc.disk.SourceVerified, pc.disk.Audio
+	haveHDR := hdr.TierUnknown
 	langs := importLanguages(base, src)
 	switch item.Kind {
 	case domain.KindSeries:
@@ -730,7 +732,7 @@ func (s *Service) planItemFile(ctx context.Context, pc *planContext, f ItemImpor
 			}
 			st := pc.epStates[id]
 			if st.Have != nil && (have == nil || quality.Better(*have, *st.Have)) {
-				have, verified, audio = st.Have, st.Verified, st.Audio
+				have, verified, audio, haveHDR = st.Have, st.Verified, st.Audio, st.HDR
 			}
 			if title == "" {
 				title = episodeTitle(item, season, ep)
@@ -742,14 +744,17 @@ func (s *Service) planItemFile(ctx context.Context, pc *planContext, f ItemImpor
 		langs = nil
 		line.Destination = filepath.Join(pc.root, naming.BookFileName(item.Author, item.Title)+strings.ToLower(filepath.Ext(src)))
 	default:
-		have = pc.disk.Best
+		have, haveHDR = pc.disk.Best, pc.disk.HDR
 		line.Destination = movieDestination(pc.root, item, src, q)
 	}
+	// The preview judges HDR by the file name's claim; the import itself
+	// measures the file and decides on that (ADR 0031 §4).
+	srcHDR := hdr.Claimed(parser.Parse(base).HDR)
 
 	switch {
 	case have == nil:
 		line.Action, line.Reason = "new", "nothing is there yet"
-	case pc.profile.Upgrade(q, langs, *have, verified, audio) || (quality.Better(q, *have) && (item.Kind == domain.KindBook || pc.profile.LanguageAcceptable(langs))):
+	case pc.profile.Upgrade(q, langs, srcHDR, *have, verified, audio, haveHDR) || (quality.Better(q, *have) && (item.Kind == domain.KindBook || pc.profile.LanguageAcceptable(langs))):
 		line.Action, line.Existing = "replace", have.Display()
 		line.Reason = fmt.Sprintf("%s ranks above the %s here in the %s profile; the old file is removed once this one is placed", q.Display(), have.Display(), pc.profile.Name)
 	default:

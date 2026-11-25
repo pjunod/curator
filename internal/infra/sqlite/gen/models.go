@@ -644,6 +644,7 @@ type MediaFile struct {
 	SourceGuid              string
 	SourceIndexerID         int64
 	SourceFileGeneration    string
+	HdrTier                 string
 }
 
 type MediaFileEpisode struct {
@@ -723,6 +724,7 @@ type MediaItem struct {
 	MonitorSeason    int64
 	Origin           string
 	OffloadedAt      int64
+	DiscEl           string
 }
 
 type MetadataMatchIssue struct {

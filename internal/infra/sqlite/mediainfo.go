@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pjunod/monarr/internal/domain/hdr"
 	"github.com/pjunod/monarr/internal/domain/mediainfo"
 	"github.com/pjunod/monarr/internal/domain/quality"
 	sqlitegen "github.com/pjunod/monarr/internal/infra/sqlite/gen"
@@ -62,7 +63,14 @@ func (f FileQuality) NeedsProbe(sizeOnDisk int64) bool {
 	if f.Size != sizeOnDisk {
 		return true
 	}
-	return f.Provenance == mediainfo.ProvenanceFailed && !mediainfo.IsUnsupported(f.Info.Container)
+	if f.Provenance == mediainfo.ProvenanceFailed && !mediainfo.IsUnsupported(f.Info.Container) {
+		return true
+	}
+	// A measurement from an older prober may be missing facts the current
+	// one reads (mediainfo.ProberRevision). Only measured records qualify: a
+	// manual quality is the user's, and a filename hint is re-probed anyway.
+	measured := f.Provenance == mediainfo.ProvenanceProbe || f.Provenance == mediainfo.ProvenanceImplausible
+	return measured && f.Info.Outdated()
 }
 
 // CopyDiskState is what one copy of an item actually has on disk.
@@ -86,6 +94,18 @@ type CopyDiskState struct {
 	// (ADR 0022). The zero value when Best is nil or the file was never
 	// probed, which never makes an item wanted.
 	Audio quality.Audio
+	// HDR is the measured HDR tier of the file behind Best (ADR 0031);
+	// unknown when Best is nil or the file was never probed.
+	HDR hdr.Tier
+}
+
+// HDROf reads the ADR 0031 HDR tier out of a file record. A file that was
+// never probed, or whose probe failed, is unknown — never SDR.
+func (f FileQuality) HDROf() hdr.Tier {
+	if !f.Probed || f.Provenance == mediainfo.ProvenanceFailed {
+		return hdr.TierUnknown
+	}
+	return f.Info.HDRTier()
 }
 
 // AudioOf reads the ADR 0022 language facts out of a file record.
@@ -200,6 +220,7 @@ func (d *DB) DiskStateForItem(ctx context.Context, itemID, copyID int64) (CopyDi
 		state.Best = &q
 		state.SourceVerified = bestRecord.SourceVerified()
 		state.Audio = bestRecord.AudioOf()
+		state.HDR = bestRecord.HDROf()
 	}
 	return state, nil
 }
@@ -252,10 +273,57 @@ func (d *DB) SetFileMediaInfo(ctx context.Context, fileID int64, info mediainfo.
 	if !conf.Valid() {
 		conf = mediainfo.ConfidenceNone
 	}
-	return d.Write.SetFileMediaInfo(ctx, sqlitegen.SetFileMediaInfoParams{
-		MediaInfo: raw, AudioLanguages: audioLanguagesColumn(info), QualityProvenance: string(prov),
+	if err := d.Write.SetFileMediaInfo(ctx, sqlitegen.SetFileMediaInfoParams{
+		MediaInfo: raw, AudioLanguages: audioLanguagesColumn(info), HdrTier: hdrTierColumn(info, prov), QualityProvenance: string(prov),
 		QualityConfidence: string(conf), ProbedAt: at.UnixMilli(), ID: fileID,
-	})
+	}); err != nil {
+		return err
+	}
+	if el := discEnhancementLayer(info, prov); el != "" {
+		f, err := d.Read.GetMediaFile(ctx, fileID)
+		if err != nil || !f.MediaItemID.Valid {
+			return err
+		}
+		return d.RecordDiscEnhancementLayer(ctx, f.MediaItemID.Int64, el)
+	}
+	return nil
+}
+
+// discEnhancementLayer is what a measurement says about the title's disc
+// master (migration 0093, ADR 0031 §6): "fel" or "mel" for a profile 7
+// stream whose first RPU was read, empty otherwise. Only profile 7 is a disc
+// master: an encode re-made the picture and carries no enhancement layer.
+func discEnhancementLayer(info mediainfo.Info, prov mediainfo.Provenance) string {
+	if prov == mediainfo.ProvenanceFailed || prov == mediainfo.ProvenanceImplausible {
+		return ""
+	}
+	switch info.HDRTier() {
+	case hdr.TierDVP7FEL:
+		return hdr.ELFEL
+	case hdr.TierDVP7MEL:
+		return hdr.ELMEL
+	}
+	return ""
+}
+
+// RecordDiscEnhancementLayer records a measured profile 7 enhancement layer
+// for a title, from an imported file or a pre-flight probe of a release. An
+// FEL, once recorded, stays: a MEL remux of an FEL disc is a different
+// master, not news about the disc.
+func (d *DB) RecordDiscEnhancementLayer(ctx context.Context, itemID int64, el string) error {
+	if itemID == 0 || (el != hdr.ELFEL && el != hdr.ELMEL) {
+		return nil
+	}
+	return d.Write.RecordDiscEnhancementLayer(ctx, sqlitegen.RecordDiscEnhancementLayerParams{DiscEl: el, ID: itemID})
+}
+
+// hdrTierColumn is media_files.hdr_tier (migration 0093): the measured HDR
+// tier, empty for a failed probe — the same rule as FileQuality.HDROf.
+func hdrTierColumn(info mediainfo.Info, prov mediainfo.Provenance) string {
+	if prov == mediainfo.ProvenanceFailed {
+		return ""
+	}
+	return string(info.HDRTier())
 }
 
 // audioLanguagesColumn renders media_files.audio_languages (ADR 0022,

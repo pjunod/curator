@@ -10,10 +10,12 @@ import (
 	"time"
 
 	"github.com/pjunod/monarr/internal/domain"
+	"github.com/pjunod/monarr/internal/domain/hdr"
 	"github.com/pjunod/monarr/internal/domain/language"
 	"github.com/pjunod/monarr/internal/domain/quality"
 	sqlitegen "github.com/pjunod/monarr/internal/infra/sqlite/gen"
 	"github.com/pjunod/monarr/internal/ports"
+	"slices"
 )
 
 // ---- profiles ----
@@ -30,6 +32,51 @@ type profileDef struct {
 	// every definition written before the rule existed reads back as
 	// "no opinion" without a migration.
 	Languages []string `json:"languages,omitempty"`
+	// HDROrder and HDRReject are the ADR 0031 HDR preferences, omitted when
+	// empty for the same reason.
+	HDROrder  []hdr.Tier    `json:"hdrOrder,omitempty"`
+	HDRReject []hdr.Tier    `json:"hdrReject,omitempty"`
+	HDRTies   [][]hdr.Tier  `json:"hdrTies,omitempty"`
+	Preflight *preflightDef `json:"preflight,omitempty"`
+}
+
+type preflightDef struct {
+	Top            int   `json:"top,omitempty"`
+	Bytes          int64 `json:"bytes,omitempty"`
+	SkipUnreadable bool  `json:"skipUnreadable,omitempty"`
+}
+
+// validTiers keeps the tiers a profile may name, in order, once each. A tier
+// this build does not know (written by a newer one) is dropped rather than
+// failing the whole profile.
+func validTiers(in []hdr.Tier) []hdr.Tier {
+	var out []hdr.Tier
+	for _, t := range in {
+		if t.Valid() && !slices.Contains(out, t) {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
+// validTies keeps tie groups of two or more valid tiers, each tier in one
+// group at most.
+func validTies(in [][]hdr.Tier) [][]hdr.Tier {
+	var out [][]hdr.Tier
+	seen := map[hdr.Tier]bool{}
+	for _, group := range in {
+		var g []hdr.Tier
+		for _, t := range validTiers(group) {
+			if !seen[t] {
+				seen[t] = true
+				g = append(g, t)
+			}
+		}
+		if len(g) > 1 {
+			out = append(out, g)
+		}
+	}
+	return out
 }
 
 type qualityDef struct {
@@ -50,6 +97,11 @@ func profileFromRow(r sqlitegen.QualityProfile) (quality.Profile, error) {
 		ID: r.ID, Name: r.Name, UpgradesAllowed: r.UpgradesAllowed != 0,
 		Target: def.Target.quality(), DownloadPriority: def.DownloadPriority,
 		Languages: language.Normalize(def.Languages),
+		HDROrder:  validTiers(def.HDROrder), HDRReject: validTiers(def.HDRReject),
+		HDRTies: validTies(def.HDRTies),
+	}
+	if def.Preflight != nil {
+		p.Preflight = quality.Preflight{Top: def.Preflight.Top, Bytes: def.Preflight.Bytes, SkipUnreadable: def.Preflight.SkipUnreadable}
 	}
 	if def.Floor != nil {
 		f := def.Floor.quality()
@@ -95,6 +147,12 @@ func profileDefinition(p quality.Profile) (string, error) {
 		Target:           qualityDef{Source: string(p.Target.Source), Resolution: p.Target.Resolution},
 		DownloadPriority: p.DownloadPriority,
 		Languages:        language.Normalize(p.Languages),
+		HDROrder:         validTiers(p.HDROrder),
+		HDRReject:        validTiers(p.HDRReject),
+		HDRTies:          validTies(p.HDRTies),
+	}
+	if p.Preflight != (quality.Preflight{}) {
+		def.Preflight = &preflightDef{Top: p.Preflight.Top, Bytes: p.Preflight.Bytes, SkipUnreadable: p.Preflight.SkipUnreadable}
 	}
 	if p.Floor != nil {
 		def.Floor = &qualityDef{Source: string(p.Floor.Source), Resolution: p.Floor.Resolution}

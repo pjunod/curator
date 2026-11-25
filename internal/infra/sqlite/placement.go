@@ -461,8 +461,13 @@ func (d *DB) CommitPlacement(ctx context.Context, p Placement) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
-	if _, err = tx.ExecContext(ctx, `UPDATE media_files SET media_info=?,audio_languages=?,probed_at=? WHERE id=?`, string(info), audioLanguagesColumn(p.Info), time.Now().UnixMilli(), fid); err != nil {
+	if _, err = tx.ExecContext(ctx, `UPDATE media_files SET media_info=?,audio_languages=?,hdr_tier=?,probed_at=? WHERE id=?`, string(info), audioLanguagesColumn(p.Info), hdrTierColumn(p.Info, p.Provenance), time.Now().UnixMilli(), fid); err != nil {
 		return 0, err
+	}
+	if el := discEnhancementLayer(p.Info, p.Provenance); el != "" && p.ItemID != 0 {
+		if err = q.RecordDiscEnhancementLayer(ctx, sqlitegen.RecordDiscEnhancementLayerParams{DiscEl: el, ID: p.ItemID}); err != nil {
+			return 0, err
+		}
 	}
 	p.State = "committed"
 	raw, err := json.Marshal(p)

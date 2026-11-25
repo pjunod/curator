@@ -20,6 +20,7 @@ import (
 
 	"github.com/pjunod/monarr/internal/domain"
 	"github.com/pjunod/monarr/internal/domain/filename"
+	"github.com/pjunod/monarr/internal/domain/hdr"
 	"github.com/pjunod/monarr/internal/domain/language"
 	"github.com/pjunod/monarr/internal/domain/mediainfo"
 	"github.com/pjunod/monarr/internal/domain/naming"
@@ -632,7 +633,8 @@ func (s *Service) importDownloadFiles(ctx context.Context, dl sqlite.Download, s
 		// Deliberately NOT a blocklist. The release is fine — 500 MB of a
 		// 60 GB remux is a transfer that stopped, and punishing the release
 		// for it would burn a good one and send monarr after a worse copy.
-		if why, cut := truncatedPayload(src); cut {
+		measured := measureVideo(src)
+		if why, cut := truncatedPayload(measured); cut {
 			outcome.Reason = why
 			s.log.Warn("import: refusing a file that is cut short",
 				"release", dl.ReleaseTitle, "file", outcome.Name, "why", why)
@@ -648,12 +650,12 @@ func (s *Service) importDownloadFiles(ctx context.Context, dl sqlite.Download, s
 		var put placement
 		switch item.Kind {
 		case domain.KindMovie:
-			put, err = s.importMovieFile(ctx, item, scope, profile, src, q, dl.ReleaseTitle, manual)
+			put, err = s.importMovieFile(ctx, item, scope, profile, src, q, importHDR(measured, dl.ReleaseTitle), dl.ReleaseTitle, manual)
 		case domain.KindBook:
 			put, err = s.importBookFile(ctx, item, scope, profile, src, q, manual,
 				fileIndex, len(videos), audioPlan)
 		default:
-			put, err = s.importEpisodeFile(ctx, item, scope, profile, epStates, src, p, q, dl.ReleaseTitle, manual)
+			put, err = s.importEpisodeFile(ctx, item, scope, profile, epStates, src, p, q, importHDR(measured, dl.ReleaseTitle), dl.ReleaseTitle, manual)
 		}
 		if err != nil {
 			if errors.Is(err, context.Canceled) || errors.Is(err, ErrImportControl) {
@@ -830,6 +832,28 @@ func selectedFiles(root string, selected []string, isMedia func(string) bool) ([
 	return out, nil
 }
 
+// measureVideo probes a video file about to be imported, once, for every
+// import-time question asked of its bytes. A book, or a file the prober cannot
+// read, yields the zero Info, which answers every one of them "don't know".
+func measureVideo(src string) mediainfo.Info {
+	if !filename.IsVideo(src) {
+		return mediainfo.Info{} // a book's bytes are its own business
+	}
+	info, _ := probe.File(src)
+	return info
+}
+
+// importHDR is the HDR of a file about to be imported: what its bytes measure
+// when the probe read them, else what the release name claims (ADR 0031). The
+// import decides an upgrade on it exactly as the grab did, but with the
+// measurement in hand where the grab had only the name.
+func importHDR(info mediainfo.Info, releaseTitle string) hdr.Evidence {
+	if info.Measured() {
+		return hdr.Measure(info.HDRTier())
+	}
+	return hdr.Claimed(parser.Parse(releaseTitle).HDR)
+}
+
 // truncatedPayload reports whether a file declares more bytes than it has, and
 // says so in the user's terms.
 //
@@ -840,11 +864,7 @@ func selectedFiles(root string, selected []string, isMedia func(string) bool) ([
 // Anything it cannot judge passes. A container monarr does not deep-parse, a
 // muxer that declared no length, an unreadable file: none of those are proof
 // of anything, and this refusal is only for the case that is.
-func truncatedPayload(src string) (string, bool) {
-	if !filename.IsVideo(src) {
-		return "", false // a book's bytes are its own business
-	}
-	info, _ := probe.File(src)
+func truncatedPayload(info mediainfo.Info) (string, bool) {
 	if !info.Truncated() {
 		return "", false
 	}
@@ -1092,7 +1112,7 @@ func importLanguages(releaseTitle, src string) []string {
 	return language.Normalize(append(fromRelease, fromFile...))
 }
 
-func (s *Service) importMovieFile(ctx context.Context, item domain.MediaItem, scope importScope, profile quality.Profile, src string, q quality.Quality, releaseTitle string, manual bool) (placement, error) {
+func (s *Service) importMovieFile(ctx context.Context, item domain.MediaItem, scope importScope, profile quality.Profile, src string, q quality.Quality, srcHDR hdr.Evidence, releaseTitle string, manual bool) (placement, error) {
 	scope.Manual = manual
 	if err := s.checkPrecedence(ctx, item, scope.CopyID, src, 0, nil, nil); err != nil {
 		return placement{}, err
@@ -1111,7 +1131,7 @@ func (s *Service) importMovieFile(ctx context.Context, item domain.MediaItem, sc
 		// records what the file really carries, and a file that turns out
 		// not to have the language leaves the item wanted again.
 		langs := importLanguages(releaseTitle, src)
-		upgrade = profile.Upgrade(q, langs, *state.Best, state.SourceVerified, state.Audio)
+		upgrade = profile.Upgrade(q, langs, srcHDR, *state.Best, state.SourceVerified, state.Audio, state.HDR)
 		if (!profile.UpgradesAllowed || !upgrade) && !manual {
 			return placement{}, importPolicyRefusalf("%s does not improve on the %s already here (profile %q)",
 				q.Display(), state.Best.Display(), profile.Name)
@@ -1175,7 +1195,7 @@ func (s *Service) planBookImport(ctx context.Context, item domain.MediaItem, sco
 		}
 		return plan, nil
 	}
-	plan.Upgrade = profile.Upgrade(worst, nil, *state.Best, state.SourceVerified, state.Audio)
+	plan.Upgrade = profile.Upgrade(worst, nil, hdr.Evidence{}, *state.Best, state.SourceVerified, state.Audio, hdr.TierUnknown)
 	if (!profile.UpgradesAllowed || !plan.Upgrade) && !manual {
 		return nil, fmt.Errorf("%s audiobook does not improve on the %s already here (profile %q)",
 			worst.Display(), state.Best.Display(), profile.Name)
@@ -1221,7 +1241,7 @@ func (s *Service) importBookFile(ctx context.Context, item domain.MediaItem, sco
 	if state.Best != nil {
 		// Books carry no language requirement (the API refuses one on a book
 		// profile), so the release side is "no claim" and passes.
-		upgrade = profile.Upgrade(q, nil, *state.Best, state.SourceVerified, state.Audio)
+		upgrade = profile.Upgrade(q, nil, hdr.Evidence{}, *state.Best, state.SourceVerified, state.Audio, hdr.TierUnknown)
 		if (!profile.UpgradesAllowed || !upgrade) && !manual {
 			return placement{}, importPolicyRefusalf("%s does not improve on the %s already here (profile %q)",
 				q.Display(), state.Best.Display(), profile.Name)
@@ -1251,7 +1271,7 @@ func (s *Service) importBookFile(ctx context.Context, item domain.MediaItem, sco
 	return s.placementMetadata(ctx, dest, upgrade)
 }
 
-func (s *Service) importEpisodeFile(ctx context.Context, item domain.MediaItem, scope importScope, profile quality.Profile, epStates map[int64]episodeState, src string, p parser.Parsed, q quality.Quality, releaseTitle string, manual bool) (placement, error) {
+func (s *Service) importEpisodeFile(ctx context.Context, item domain.MediaItem, scope importScope, profile quality.Profile, epStates map[int64]episodeState, src string, p parser.Parsed, q quality.Quality, srcHDR hdr.Evidence, releaseTitle string, manual bool) (placement, error) {
 	scope.Manual = manual
 	season, eps := nameEpisodes(p, filepath.Base(src))
 	if len(eps) == 0 || season < 0 {
@@ -1280,6 +1300,7 @@ func (s *Service) importEpisodeFile(ctx context.Context, item domain.MediaItem, 
 	var worst *quality.Quality
 	worstVerified := true
 	worstAudio := quality.Audio{}
+	worstHDR := hdr.TierUnknown
 	missing := false
 	for _, epNum := range eps {
 		epID, err := s.db.GetEpisodeID(ctx, item.ID, season, epNum)
@@ -1326,7 +1347,7 @@ func (s *Service) importEpisodeFile(ctx context.Context, item domain.MediaItem, 
 			if st.HasFile && st.Have == nil {
 				return placement{}, importPolicyRefusalf("episode %d has unverified existing file", epNum)
 			}
-			if st.Have != nil && (!profile.UpgradesAllowed || !profile.Upgrade(q, importLanguages(releaseTitle, src), *st.Have, st.Verified, st.Audio)) {
+			if st.Have != nil && (!profile.UpgradesAllowed || !profile.Upgrade(q, importLanguages(releaseTitle, src), srcHDR, *st.Have, st.Verified, st.Audio, st.HDR)) {
 				return placement{}, importPolicyRefusalf("episode %d is protected by current policy", epNum)
 			}
 		}
@@ -1339,6 +1360,7 @@ func (s *Service) importEpisodeFile(ctx context.Context, item domain.MediaItem, 
 			worst = st.Have
 			worstVerified = st.Verified
 			worstAudio = st.Audio
+			worstHDR = st.HDR
 		}
 	}
 	if len(epIDs) == 0 {
@@ -1348,7 +1370,7 @@ func (s *Service) importEpisodeFile(ctx context.Context, item domain.MediaItem, 
 	upgrade := !manual && worst != nil
 	if !missing && worst != nil {
 		langs := importLanguages(releaseTitle, src)
-		upgrade = profile.Upgrade(q, langs, *worst, worstVerified, worstAudio)
+		upgrade = profile.Upgrade(q, langs, srcHDR, *worst, worstVerified, worstAudio, worstHDR)
 		if (!profile.UpgradesAllowed || !upgrade) && !manual {
 			return placement{}, importPolicyRefusalf("%s does not improve on the %s already here (profile %q)",
 				q.Display(), worst.Display(), profile.Name)

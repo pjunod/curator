@@ -5,6 +5,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/pjunod/monarr/internal/domain/hdr"
 	"github.com/pjunod/monarr/internal/domain/quality"
 )
 
@@ -76,6 +77,10 @@ type Wantable interface {
 	// whether every track declared one. The zero value — nothing known —
 	// never makes an item wanted.
 	AudioLanguages() quality.Audio
+	// CurrentHDR is the measured HDR tier of the file behind CurrentQuality
+	// (ADR 0031); hdr.TierUnknown when it was never measured, which never
+	// makes an item wanted.
+	CurrentHDR() hdr.Tier
 }
 
 // MovieWantable is the degenerate case: one item, one file.
@@ -89,7 +94,9 @@ type MovieWantable struct {
 	Files    bool
 	Verified bool
 	// Audio is the measured audio languages of the file behind Have.
-	Audio    quality.Audio
+	Audio quality.Audio
+	// HDR is the measured HDR tier of the file behind Have.
+	HDR      hdr.Tier
 	Title    string
 	Year     int
 	Identity MediaIdentity
@@ -130,6 +137,9 @@ func (m MovieWantable) SourceVerified() bool { return m.Verified }
 // AudioLanguages implements Wantable.
 func (m MovieWantable) AudioLanguages() quality.Audio { return m.Audio }
 
+// CurrentHDR implements Wantable.
+func (m MovieWantable) CurrentHDR() hdr.Tier { return m.HDR }
+
 // EpisodeWantable is one episode of a series.
 type EpisodeWantable struct {
 	Item      int64
@@ -140,6 +150,7 @@ type EpisodeWantable struct {
 	Files     bool
 	Verified  bool
 	Audio     quality.Audio
+	HDR       hdr.Tier
 	Title     string // series title
 	Year      int
 	Identity  MediaIdentity
@@ -180,6 +191,9 @@ func (e EpisodeWantable) SourceVerified() bool { return e.Verified }
 
 // AudioLanguages implements Wantable.
 func (e EpisodeWantable) AudioLanguages() quality.Audio { return e.Audio }
+
+// CurrentHDR implements Wantable.
+func (e EpisodeWantable) CurrentHDR() hdr.Tier { return e.HDR }
 
 // SeasonWantable is the season-pack search target: one download that
 // satisfies many episode wantables at import time — Sonarr's hardest
@@ -348,6 +362,9 @@ func (b BookWantable) SourceVerified() bool { return b.Verified }
 // AudioLanguages implements Wantable.
 func (b BookWantable) AudioLanguages() quality.Audio { return b.Audio }
 
+// CurrentHDR implements Wantable: a book has no picture.
+func (b BookWantable) CurrentHDR() hdr.Tier { return hdr.TierUnknown }
+
 // SearchQuery is what a planner emits for indexers (blueprint §4.1).
 type SearchQuery struct {
 	Q string
@@ -492,4 +509,21 @@ func PlanSearch(w Wantable) []SearchQuery {
 	default:
 		return nil
 	}
+}
+
+// CurrentHDR implements Wantable. A season has one HDR tier only when every
+// episode measured the same one; a mixed or partly-measured season is
+// unknown, which never makes it wanted on the HDR axis — weakest-link needs
+// the profile's order to define "weakest", and a pack is not grabbed to
+// settle an ordering question per episode.
+func (s SeasonWantable) CurrentHDR() hdr.Tier {
+	var tier hdr.Tier
+	for i, e := range s.Episodes {
+		t := e.CurrentHDR()
+		if t == hdr.TierUnknown || (i > 0 && t != tier) {
+			return hdr.TierUnknown
+		}
+		tier = t
+	}
+	return tier
 }

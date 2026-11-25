@@ -28,7 +28,9 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/pjunod/monarr/internal/domain/hdr"
 	"github.com/pjunod/monarr/internal/domain/language"
+	"github.com/pjunod/monarr/internal/domain/mediainfo/dovi"
 )
 
 // Container markers stored in Info.Container.
@@ -87,9 +89,99 @@ type VideoInfo struct {
 	Width      int      `json:"width"`             // coded width in pixels
 	Height     int      `json:"height"`            // coded height in pixels
 	BitDepth   int      `json:"bitDepth"`          // 8 unless the codec record says otherwise
-	HDR        []string `json:"hdr,omitempty"`     // "hdr10" | "hlg" | "dv", sorted, deduped
+	HDR        []string `json:"hdr,omitempty"`     // "dv" | "hdr10" | "hdr10plus" | "hlg", sorted, deduped
 	Interlaced bool     `json:"interlaced"`        // container says the content is interlaced
 	Profile    string   `json:"profile,omitempty"` // codec profile string when cheap to read
+	// DoVi is what kind of Dolby Vision the file carries (ADR 0031). Nil when
+	// there is none, and also when a container names Dolby Vision without a
+	// configuration record or RPU the probe could read — HDR still says "dv"
+	// then, but nothing more is known.
+	DoVi *DoViInfo `json:"dovi,omitempty"`
+}
+
+// DoViInfo is the measured Dolby Vision record: the decoder configuration
+// the container stores, refined by the first RPU when the probe reached one.
+type DoViInfo struct {
+	Profile    int  `json:"profile"`
+	Level      int  `json:"level,omitempty"`
+	RPU        bool `json:"rpu"`
+	EL         bool `json:"el"`
+	BL         bool `json:"bl"`
+	BLCompatID int  `json:"blCompatId"`
+	// ELType is "none", "mel" or "fel"; empty means the probe could not tell,
+	// which is unknown, not absent (ADR 0013 §5 on a new axis).
+	ELType string `json:"elType,omitempty"`
+	// CMVersion is the content-mapping version of the first RPU, "2.9" or
+	// "4.0"; empty when no RPU was read.
+	CMVersion string `json:"cmVersion,omitempty"`
+	// Level 6 static metadata from the first RPU, in nits; zero when absent.
+	MaxCLL           int `json:"maxCll,omitempty"`
+	MaxFALL          int `json:"maxFall,omitempty"`
+	MasteringMaxNits int `json:"masteringMaxNits,omitempty"`
+	// Source says how far the probe got: "config" (configuration record
+	// only) or "rpu" (an RPU was decoded).
+	Source string `json:"source"`
+}
+
+// DoVi Source values.
+const (
+	DoViFromConfig = "config"
+	DoViFromRPU    = "rpu"
+)
+
+// newDoVi merges what the container's configuration record and the first RPU
+// say. The record is authoritative for profile and layers; the RPU is the only
+// place the enhancement layer's type and the CM version are written.
+func newDoVi(cfg *dovi.Config, rpu *dovi.RPU) *DoViInfo {
+	if cfg == nil && rpu == nil {
+		return nil
+	}
+	d := &DoViInfo{Source: DoViFromConfig}
+	if cfg != nil {
+		d.Profile, d.Level = cfg.Profile, cfg.Level
+		d.RPU, d.EL, d.BL, d.BLCompatID = cfg.RPU, cfg.EL, cfg.BL, cfg.BLCompatID
+		if !cfg.EL {
+			d.ELType = dovi.ELNone
+		}
+	}
+	if rpu != nil {
+		d.Source = DoViFromRPU
+		if d.Profile == 0 {
+			d.Profile, d.RPU = rpu.Profile, true
+		}
+		// A single-layer record outranks an RPU that claims a residual: the
+		// layer the RPU describes is not in the file.
+		if d.ELType == "" {
+			d.ELType = rpu.ELType
+		}
+		d.CMVersion = rpu.CMVersion
+		if rpu.HasL6 {
+			d.MaxCLL, d.MaxFALL, d.MasteringMaxNits = rpu.MaxCLL, rpu.MaxFALL, rpu.MaxDisplayMastering
+		}
+	}
+	return d
+}
+
+// Label renders the record the way people write it: "DV P7 FEL", "DV 8.1",
+// "DV P5". Profile 8 is named by its base-layer compatibility because that is
+// the whole difference between 8.1, 8.2 and 8.4.
+func (d DoViInfo) Label() string {
+	var s string
+	switch {
+	case d.Profile == 0:
+		return displayNames[DV]
+	case d.Profile == 8 && (d.BLCompatID == 1 || d.BLCompatID == 2 || d.BLCompatID == 4):
+		s = fmt.Sprintf("DV 8.%d", d.BLCompatID)
+	default:
+		s = fmt.Sprintf("DV P%d", d.Profile)
+	}
+	switch d.ELType {
+	case dovi.ELFEL:
+		s += " FEL"
+	case dovi.ELMEL:
+		s += " MEL"
+	}
+	return s
 }
 
 // AudioInfo is one measured audio track.
@@ -128,6 +220,44 @@ type Info struct {
 	// SizeBytes is the file's actual length at probe time, kept alongside
 	// DeclaredBytes so the comparison survives into storage.
 	SizeBytes int64 `json:"sizeBytes,omitempty"`
+	// ProberRevision is the ProberRevision that measured this record; 0 for
+	// records written before revisions existed.
+	ProberRevision int `json:"prober,omitempty"`
+}
+
+// ProberRevision numbers what the probers know how to measure. It rises when
+// they learn to measure something a stored record could be missing, and a
+// record measured at an older revision is re-probed by the next scan
+// (sqlite.FileQuality.NeedsProbe) — the same paced, queued backfill ADR 0013
+// §4 uses for files never probed at all, rather than a one-off migration.
+//
+//	1  ADR 0013: container, codecs, dimensions, HDR transfer, audio
+//	2  ADR 0031: Dolby Vision record and first RPU, HDR10+ (HEVC only)
+const ProberRevision = 2
+
+// Outdated reports whether the current prober would measure more than this
+// record holds. Each revision names the files it adds facts for, so a
+// revision bump re-reads those files and not the whole library.
+func (i Info) Outdated() bool {
+	if i.ProberRevision >= ProberRevision {
+		return false
+	}
+	// Revision 2 reads the first HEVC access unit; nothing else gained.
+	return i.Video != nil && i.Video.Codec == "hevc"
+}
+
+// HDRTier reduces the measurement to the shared HDR vocabulary (ADR 0031).
+// A record that measured no video is unknown; one that measured video and no
+// HDR format is SDR, because the probe would have seen one.
+func (i Info) HDRTier() hdr.Tier {
+	if !i.Measured() {
+		return hdr.TierUnknown
+	}
+	profile, el := 0, ""
+	if d := i.Video.DoVi; d != nil {
+		profile, el = d.Profile, d.ELType
+	}
+	return hdr.Classify(i.Video.HDR, profile, el, true)
 }
 
 // Truncated reports whether the container declares more bytes than the file
@@ -183,6 +313,9 @@ func Probe(r io.ReaderAt, size int64) (Info, error) {
 	}
 
 	info.finalize(size)
+	if info.Measured() {
+		info.ProberRevision = ProberRevision
+	}
 	return info, err
 }
 
@@ -198,6 +331,9 @@ func (i *Info) finalize(size int64) {
 		if i.Video.BitDepth <= 0 {
 			i.Video.BitDepth = 8
 		}
+		if i.Video.DoVi != nil {
+			i.Video.HDR = append(i.Video.HDR, DV)
+		}
 		i.Video.HDR = normalizeHDR(i.Video.HDR)
 	}
 	if len(i.Audio) == 0 {
@@ -208,9 +344,10 @@ func (i *Info) finalize(size int64) {
 
 // HDR formats, in the order they are reported.
 const (
-	HDR10 = "hdr10"
-	HLG   = "hlg"
-	DV    = "dv"
+	HDR10     = "hdr10"
+	HDR10Plus = "hdr10plus" // SMPTE ST 2094-40 dynamic metadata
+	HLG       = "hlg"
+	DV        = "dv"
 )
 
 func normalizeHDR(in []string) []string {
@@ -373,7 +510,7 @@ var displayNames = map[string]string{
 	"truehd": "TrueHD", "mlp": "MLP", "dts": "DTS", "eac3": "E-AC-3", "ac3": "AC-3",
 	"aac": "AAC", "flac": "FLAC", "pcm": "PCM", "opus": "Opus", "mp3": "MP3",
 	"alac": "ALAC", "vorbis": "Vorbis",
-	HDR10: "HDR10", HLG: "HLG", DV: "Dolby Vision",
+	HDR10: "HDR10", HDR10Plus: "HDR10+", HLG: "HLG", DV: "Dolby Vision",
 }
 
 // Display renders a name for a measured codec or HDR format ("hevc" → "HEVC").
@@ -400,6 +537,10 @@ func (i Info) Summary() string {
 		parts = append(parts, name)
 	}
 	for _, h := range i.Video.HDR {
+		if h == DV && i.Video.DoVi != nil {
+			parts = append(parts, i.Video.DoVi.Label())
+			continue
+		}
 		parts = append(parts, Display(h))
 	}
 	if a := i.BestAudio(); a != "" {

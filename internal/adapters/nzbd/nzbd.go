@@ -110,6 +110,13 @@ func parseRetryAfter(raw string, now time.Time) time.Time {
 	return parsed
 }
 
+// defaultResponseLimit bounds a buffered nzbd response.
+const defaultResponseLimit = 8 << 20
+
+// sizedResponse is a response type that knows it may be larger than the
+// default bound (a probe head, base64 in JSON).
+type sizedResponse interface{ responseLimit() int64 }
+
 func (c *Client) do(ctx context.Context, method, path string, out any) error {
 	return c.doBody(ctx, method, path, nil, out)
 }
@@ -141,12 +148,16 @@ func (c *Client) doBodyPolicy(ctx context.Context, method, path string, body io.
 		}
 		return nil
 	}
-	raw, readErr := io.ReadAll(io.LimitReader(resp.Body, (8<<20)+1))
+	limit := int64(defaultResponseLimit)
+	if l, ok := out.(sizedResponse); ok && l.responseLimit() > limit {
+		limit = l.responseLimit()
+	}
+	raw, readErr := io.ReadAll(io.LimitReader(resp.Body, limit+1))
 	if readErr != nil {
 		return fmt.Errorf("nzbd: read response from %s: %w", path, readErr)
 	}
-	if len(raw) > 8<<20 {
-		return fmt.Errorf("nzbd: response from %s exceeds 8 MiB", path)
+	if int64(len(raw)) > limit {
+		return fmt.Errorf("nzbd: response from %s exceeds %d MiB", path, limit>>20)
 	}
 	if resp.StatusCode == http.StatusUnauthorized {
 		return apiError(resp, "authentication rejected")

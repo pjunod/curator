@@ -824,14 +824,14 @@ func (s *Service) rematchVerdict(ctx context.Context, r *rematchRank, line *Rema
 		return err
 	}
 	var have *quality.Quality
-	verified, audio := r.disk.SourceVerified, r.disk.Audio
+	verified, audio, haveHDR := r.disk.SourceVerified, r.disk.Audio, r.disk.HDR
 	langs := importLanguages(f.SourceRelease, f.Path)
 	switch r.target.Kind {
 	case domain.KindSeries:
 		for _, id := range epIDs {
 			st := r.eps[id]
 			if st.Have != nil && (have == nil || quality.Better(*have, *st.Have)) {
-				have, verified, audio = st.Have, st.Verified, st.Audio
+				have, verified, audio, haveHDR = st.Have, st.Verified, st.Audio, st.HDR
 			}
 		}
 	case domain.KindBook:
@@ -843,7 +843,7 @@ func (s *Service) rematchVerdict(ctx context.Context, r *rematchRank, line *Rema
 	switch {
 	case have == nil:
 		line.Action, line.Reason = "beside", "the file already here has no known quality; this one is kept beside it"
-	case r.profile.Upgrade(q, langs, *have, verified, audio) || (quality.Better(q, *have) && (r.target.Kind == domain.KindBook || r.profile.LanguageAcceptable(langs))):
+	case r.profile.Upgrade(q, langs, importHDR(f.Info, f.SourceRelease), *have, verified, audio, haveHDR) || (quality.Better(q, *have) && (r.target.Kind == domain.KindBook || r.profile.LanguageAcceptable(langs))):
 		line.Action, line.Existing = "replace", have.Display()
 		line.Reason = fmt.Sprintf("%s ranks above the %s here in the %s profile; the old file is removed once this one is in place", q.Display(), have.Display(), r.profile.Name)
 		for _, o := range others {

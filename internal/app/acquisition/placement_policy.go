@@ -6,6 +6,7 @@ import (
 	"slices"
 
 	"github.com/pjunod/monarr/internal/domain"
+	"github.com/pjunod/monarr/internal/domain/hdr"
 	"github.com/pjunod/monarr/internal/domain/mediainfo"
 	"github.com/pjunod/monarr/internal/domain/quality"
 	"github.com/pjunod/monarr/internal/infra/sqlite"
@@ -25,6 +26,10 @@ func (s *Service) validateMeasuredPlacement(ctx context.Context, item domain.Med
 		return err
 	}
 	langs := importLanguages(scope.Release, p.Source)
+	measuredHDR := hdr.Evidence{}
+	if p.Info.Measured() {
+		measuredHDR = hdr.Measure(p.Info.HDRTier())
+	}
 	if measured, known := p.Info.AudioLanguages(); known {
 		langs = measured
 	}
@@ -102,9 +107,9 @@ func (s *Service) validateMeasuredPlacement(ctx context.Context, item domain.Med
 		if !r.Known {
 			return importPolicyRefusalf("existing file quality is unverified")
 		}
-		allowed := profile.UpgradesAllowed && profile.Upgrade(p.Quality, langs, r.Quality, r.SourceVerified(), r.AudioOf())
+		allowed := profile.UpgradesAllowed && profile.Upgrade(p.Quality, langs, measuredHDR, r.Quality, r.SourceVerified(), r.AudioOf(), r.HDROf())
 		if scope.Manual {
-			allowed = profile.Upgrade(p.Quality, langs, r.Quality, r.SourceVerified(), r.AudioOf()) || (quality.Better(p.Quality, r.Quality) && profile.LanguageAcceptable(langs))
+			allowed = profile.Upgrade(p.Quality, langs, measuredHDR, r.Quality, r.SourceVerified(), r.AudioOf(), r.HDROf()) || (quality.Better(p.Quality, r.Quality) && profile.LanguageAcceptable(langs))
 		}
 		if !allowed {
 			return importPolicyRefusalf("measured %s cannot replace existing %s under current policy", p.Quality.Display(), r.Quality.Display())

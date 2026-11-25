@@ -192,6 +192,10 @@ export interface MediaFileInfo {
   verified?: boolean
   /** Measured facts as one line: "1080p · HEVC · HDR10 · TrueHD · 23 Mbps". */
   facts?: string
+  /** The measured HDR tier (ADR 0031); absent when the file was never measured. */
+  hdrTier?: HDRTier
+  /** The measured Dolby Vision record, when the file carries one. */
+  dolbyVision?: DolbyVision
   /**
    * Why this file's own measurements cannot be true, in one sentence.
    * Empty for every file that adds up. When set, the file is not counted
@@ -301,6 +305,14 @@ export interface MediaItemDetail extends Omit<MediaItemSummary, 'episodeCount' |
   // quality / qualityTarget / upgrade are inherited from MediaItemSummary —
   // the detail response carries the same three fields.
   monitor?: SeriesMonitorMode
+  /** The primary copy's measured HDR tier, when every file shares one (ADR 0031). */
+  hdrTier?: HDRTier
+  /**
+   * The title's Dolby Vision disc master as measurement has shown it: 'fel'
+   * once any profile 7 file or pre-flight probe measured a full enhancement
+   * layer, 'mel' while only minimal ones were seen.
+   */
+  discEnhancementLayer?: '' | 'fel' | 'mel'
   backdropPath: string
   overview: string
   genres: string[]
@@ -798,9 +810,90 @@ export interface QualityProfile {
    * or empty means no requirement.
    */
   audioLanguages?: string[]
+  /** Preferred HDR tiers, best first (ADR 0031); absent = no opinion. */
+  hdrOrder?: HDRTier[]
+  /** HDR tiers the profile never takes. */
+  hdrReject?: HDRTier[]
+  /** Groups of tiers that rank as one: the device renders them identically. */
+  hdrTies?: HDRTier[][]
+  /** How releases are measured before grabbing; applies with an HDR order or refusals. */
+  preflight?: PreflightPolicy
   sentence: string
   /** How many items/copies/lists use it; non-zero means delete is refused. */
   inUse?: number
+}
+
+/**
+ * An HDR presentation (ADR 0031). Profiles order and refuse the first eight;
+ * dv-p7 (EL type unknown), dv (profile unknown) and '' only describe what was
+ * seen.
+ */
+export type HDRTier =
+  | 'dv-p7-fel' | 'dv-p7-mel' | 'dv-p8' | 'hdr10plus' | 'hdr10' | 'hlg' | 'dv-p5' | 'sdr'
+  | 'dv-p7' | 'dv' | ''
+
+/** One selectable HDR tier, from GET /hdr-tiers. */
+export interface HDRTierOption {
+  tier: HDRTier
+  label: string
+}
+
+/** A profile's pre-flight probe policy (ADR 0031). Zero values mean the defaults. */
+export interface PreflightPolicy {
+  /** How many of the best releases to probe; 0 = 5, 1000 = every one. */
+  top?: number
+  /** Bytes per probe; 0 = 4 MiB, at most 16 MiB. */
+  bytes?: number
+  /** Refuse a release whose head cannot be read, instead of ranking it by name. */
+  skipUnreadable?: boolean
+}
+
+/** The measured Dolby Vision record of a file or probed release (ADR 0031). */
+export interface DolbyVision {
+  profile: number
+  level?: number
+  rpu: boolean
+  el: boolean
+  bl: boolean
+  /** 0 none (P5), 1 HDR10, 2 SDR, 4 HLG, 6 UHD Blu-ray HDR10. */
+  blCompatId: number
+  /** '' when the first RPU could not be read. */
+  elType?: '' | 'none' | 'mel' | 'fel'
+  cmVersion?: '' | '2.9' | '4.0'
+  maxCll?: number
+  maxFall?: number
+  masteringMaxNits?: number
+  source: 'config' | 'rpu'
+  /** "DV P7 FEL", "DV 8.1", "DV P5". */
+  label: string
+}
+
+/** What a release's name claims, or a probe measured, about its HDR. */
+export interface ReleaseHDR {
+  tier: HDRTier
+  label: string
+  dvProfile?: number
+  elType?: '' | 'none' | 'mel' | 'fel'
+  confidence?: '' | 'high' | 'medium' | 'low'
+  measured: boolean
+}
+
+/** What a pre-flight probe found (ADR 0031). */
+export interface ProbeEvidence {
+  status: 'measured' | 'unavailable' | 'failed'
+  /** encrypted | compressed | missing_articles | no_media | unreadable */
+  reason?: string
+  detail?: string
+  file?: string
+  path?: string[]
+  articles?: number
+  missing?: number
+  bytes?: number
+  millis?: number
+  container?: string
+  facts?: string
+  tier?: HDRTier
+  dolbyVision?: DolbyVision
 }
 
 export interface ProfileInput {
@@ -811,6 +904,36 @@ export interface ProfileInput {
   downloadPriority?: number
   /** Codes from GET /languages. Omit or send empty for no requirement. */
   audioLanguages?: string[]
+  /** Tiers from GET /hdr-tiers, best first; empty for no opinion. */
+  hdrOrder?: HDRTier[]
+  hdrReject?: HDRTier[]
+  hdrTies?: HDRTier[][]
+  preflight?: PreflightPolicy
+}
+
+/** One playback device a plurx connection reports, and the order it suggests (ADR 0031). */
+export interface HDRDevice {
+  source: string
+  id: string
+  user: string
+  device: string
+  client: string
+  lastSeenAt: number
+  dolbyVision: boolean
+  /** Decodes a profile 7 enhancement layer. */
+  fel: boolean
+  profile5: boolean
+  hdr10: boolean
+  hlg: boolean
+  hdr10plus: boolean
+  hdrOrder: HDRTier[]
+  hdrTies: HDRTier[][]
+  hdrReject: HDRTier[]
+}
+
+export interface HDRDevices {
+  devices: HDRDevice[]
+  errors: { source: string; message: string }[]
 }
 
 /** One selectable audio language, from GET /languages (ADR 0022). */
@@ -899,6 +1022,12 @@ export interface ReleaseCandidate {
    * English, the scene convention.
    */
   languages?: string[]
+  /** What the name claims about HDR; absent when it says nothing. */
+  hdr?: ReleaseHDR
+  /** What a pre-flight probe measured, when one ran (ADR 0031). */
+  measuredHdr?: ReleaseHDR
+  /** The pre-flight probe's evidence. */
+  probe?: ProbeEvidence
   score: number
   formats?: string[]
   accepted: boolean
@@ -1130,6 +1259,10 @@ export const updateProfile = (id: number, body: ProfileInput) =>
 export const deleteProfile = (id: number) => send('DELETE', `/profiles/${id}`)
 /** The audio languages a profile may require, in display order (ADR 0022). */
 export const listLanguages = () => get<LanguageOption[]>('/languages')
+/** The HDR tiers a profile may order or refuse, in default order (ADR 0031). */
+export const listHDRTiers = () => get<HDRTierOption[]>('/hdr-tiers')
+/** Playback devices from the plurx connections, each with its derived HDR order. */
+export const listHDRDevices = () => get<HDRDevices>('/hdr/devices')
 export const getIndexers = () => get<Indexer[]>('/indexers')
 export const updateIndexerBudget = (id: number, dailyRequestCap: number) => send<Indexer>('PATCH', `/indexers/${id}`, { dailyRequestCap })
 export const addIndexer = (i: IndexerInput) => send<Indexer>('POST', '/indexers', i)

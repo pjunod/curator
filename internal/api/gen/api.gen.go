@@ -239,6 +239,69 @@ func (e DeploymentDrainStatusPhase) Valid() bool {
 	}
 }
 
+// Defines values for DolbyVisionCmVersion.
+const (
+	DolbyVisionCmVersionEmpty DolbyVisionCmVersion = ""
+	DolbyVisionCmVersionN29   DolbyVisionCmVersion = "2.9"
+	DolbyVisionCmVersionN40   DolbyVisionCmVersion = "4.0"
+)
+
+// Valid indicates whether the value is a known member of the DolbyVisionCmVersion enum.
+func (e DolbyVisionCmVersion) Valid() bool {
+	switch e {
+	case DolbyVisionCmVersionEmpty:
+		return true
+	case DolbyVisionCmVersionN29:
+		return true
+	case DolbyVisionCmVersionN40:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for DolbyVisionElType.
+const (
+	DolbyVisionElTypeEmpty DolbyVisionElType = ""
+	DolbyVisionElTypeFel   DolbyVisionElType = "fel"
+	DolbyVisionElTypeMel   DolbyVisionElType = "mel"
+	DolbyVisionElTypeNone  DolbyVisionElType = "none"
+)
+
+// Valid indicates whether the value is a known member of the DolbyVisionElType enum.
+func (e DolbyVisionElType) Valid() bool {
+	switch e {
+	case DolbyVisionElTypeEmpty:
+		return true
+	case DolbyVisionElTypeFel:
+		return true
+	case DolbyVisionElTypeMel:
+		return true
+	case DolbyVisionElTypeNone:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for DolbyVisionSource.
+const (
+	Config DolbyVisionSource = "config"
+	Rpu    DolbyVisionSource = "rpu"
+)
+
+// Valid indicates whether the value is a known member of the DolbyVisionSource enum.
+func (e DolbyVisionSource) Valid() bool {
+	switch e {
+	case Config:
+		return true
+	case Rpu:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for DownloadClientConfigMode.
 const (
 	DownloadClientConfigModePoll DownloadClientConfigMode = "poll"
@@ -350,6 +413,51 @@ const (
 func (e GrabRequestIntent) Valid() bool {
 	switch e {
 	case AdditionalCopy:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for HDRTier.
+const (
+	HDRTierDv        HDRTier = "dv"
+	HDRTierDvP5      HDRTier = "dv-p5"
+	HDRTierDvP7      HDRTier = "dv-p7"
+	HDRTierDvP7Fel   HDRTier = "dv-p7-fel"
+	HDRTierDvP7Mel   HDRTier = "dv-p7-mel"
+	HDRTierDvP8      HDRTier = "dv-p8"
+	HDRTierEmpty     HDRTier = ""
+	HDRTierHdr10     HDRTier = "hdr10"
+	HDRTierHdr10plus HDRTier = "hdr10plus"
+	HDRTierHlg       HDRTier = "hlg"
+	HDRTierSdr       HDRTier = "sdr"
+)
+
+// Valid indicates whether the value is a known member of the HDRTier enum.
+func (e HDRTier) Valid() bool {
+	switch e {
+	case HDRTierDv:
+		return true
+	case HDRTierDvP5:
+		return true
+	case HDRTierDvP7:
+		return true
+	case HDRTierDvP7Fel:
+		return true
+	case HDRTierDvP7Mel:
+		return true
+	case HDRTierDvP8:
+		return true
+	case HDRTierEmpty:
+		return true
+	case HDRTierHdr10:
+		return true
+	case HDRTierHdr10plus:
+		return true
+	case HDRTierHlg:
+		return true
+	case HDRTierSdr:
 		return true
 	default:
 		return false
@@ -551,6 +659,27 @@ func (e MediaFileInfoProvenance) Valid() bool {
 	case MediaFileInfoProvenanceProbe:
 		return true
 	case MediaFileInfoProvenanceRelease:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for MediaItemDetailDiscEnhancementLayer.
+const (
+	MediaItemDetailDiscEnhancementLayerEmpty MediaItemDetailDiscEnhancementLayer = ""
+	MediaItemDetailDiscEnhancementLayerFel   MediaItemDetailDiscEnhancementLayer = "fel"
+	MediaItemDetailDiscEnhancementLayerMel   MediaItemDetailDiscEnhancementLayer = "mel"
+)
+
+// Valid indicates whether the value is a known member of the MediaItemDetailDiscEnhancementLayer enum.
+func (e MediaItemDetailDiscEnhancementLayer) Valid() bool {
+	switch e {
+	case MediaItemDetailDiscEnhancementLayerEmpty:
+		return true
+	case MediaItemDetailDiscEnhancementLayerFel:
+		return true
+	case MediaItemDetailDiscEnhancementLayerMel:
 		return true
 	default:
 		return false
@@ -947,6 +1076,27 @@ func (e PlurxWatchedEventKind) Valid() bool {
 	}
 }
 
+// Defines values for ProbeEvidenceStatus.
+const (
+	ProbeEvidenceStatusFailed      ProbeEvidenceStatus = "failed"
+	ProbeEvidenceStatusMeasured    ProbeEvidenceStatus = "measured"
+	ProbeEvidenceStatusUnavailable ProbeEvidenceStatus = "unavailable"
+)
+
+// Valid indicates whether the value is a known member of the ProbeEvidenceStatus enum.
+func (e ProbeEvidenceStatus) Valid() bool {
+	switch e {
+	case ProbeEvidenceStatusFailed:
+		return true
+	case ProbeEvidenceStatusMeasured:
+		return true
+	case ProbeEvidenceStatusUnavailable:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ProposalConfidence.
 const (
 	ProposalConfidenceAmbiguous ProposalConfidence = "ambiguous"
@@ -1277,6 +1427,54 @@ func (e RecommendationStatusModelState) Valid() bool {
 	case RecommendationStatusModelStateNotInstalled:
 		return true
 	case RecommendationStatusModelStateReady:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ReleaseHDRConfidence.
+const (
+	ReleaseHDRConfidenceEmpty  ReleaseHDRConfidence = ""
+	ReleaseHDRConfidenceHigh   ReleaseHDRConfidence = "high"
+	ReleaseHDRConfidenceLow    ReleaseHDRConfidence = "low"
+	ReleaseHDRConfidenceMedium ReleaseHDRConfidence = "medium"
+)
+
+// Valid indicates whether the value is a known member of the ReleaseHDRConfidence enum.
+func (e ReleaseHDRConfidence) Valid() bool {
+	switch e {
+	case ReleaseHDRConfidenceEmpty:
+		return true
+	case ReleaseHDRConfidenceHigh:
+		return true
+	case ReleaseHDRConfidenceLow:
+		return true
+	case ReleaseHDRConfidenceMedium:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ReleaseHDRElType.
+const (
+	ReleaseHDRElTypeEmpty ReleaseHDRElType = ""
+	ReleaseHDRElTypeFel   ReleaseHDRElType = "fel"
+	ReleaseHDRElTypeMel   ReleaseHDRElType = "mel"
+	ReleaseHDRElTypeNone  ReleaseHDRElType = "none"
+)
+
+// Valid indicates whether the value is a known member of the ReleaseHDRElType enum.
+func (e ReleaseHDRElType) Valid() bool {
+	switch e {
+	case ReleaseHDRElTypeEmpty:
+		return true
+	case ReleaseHDRElTypeFel:
+		return true
+	case ReleaseHDRElTypeMel:
+		return true
+	case ReleaseHDRElTypeNone:
 		return true
 	default:
 		return false
@@ -2849,6 +3047,40 @@ type DiscoverList struct {
 	Title string `json:"title"`
 }
 
+// DolbyVision The measured Dolby Vision record of a file (ADR 0031).
+type DolbyVision struct {
+	Bl bool `json:"bl"`
+
+	// BlCompatId Base-layer compatibility; 0 none (P5), 1 HDR10, 2 SDR, 4 HLG, 6 UHD Blu-ray HDR10.
+	BlCompatId int                   `json:"blCompatId"`
+	CmVersion  *DolbyVisionCmVersion `json:"cmVersion,omitempty"`
+	El         bool                  `json:"el"`
+
+	// ElType Empty when the first RPU could not be read.
+	ElType *DolbyVisionElType `json:"elType,omitempty"`
+
+	// Label "DV P7 FEL", "DV 8.1", "DV P5".
+	Label            string `json:"label"`
+	Level            *int   `json:"level,omitempty"`
+	MasteringMaxNits *int   `json:"masteringMaxNits,omitempty"`
+	MaxCll           *int   `json:"maxCll,omitempty"`
+	MaxFall          *int   `json:"maxFall,omitempty"`
+	Profile          int    `json:"profile"`
+	Rpu              bool   `json:"rpu"`
+
+	// Source How far the probe got.
+	Source DolbyVisionSource `json:"source"`
+}
+
+// DolbyVisionCmVersion defines model for DolbyVision.CmVersion.
+type DolbyVisionCmVersion string
+
+// DolbyVisionElType Empty when the first RPU could not be read.
+type DolbyVisionElType string
+
+// DolbyVisionSource How far the probe got.
+type DolbyVisionSource string
+
 // DownloadClientConfig defines model for DownloadClientConfig.
 type DownloadClientConfig struct {
 	Category *string `json:"category,omitempty"`
@@ -2993,6 +3225,50 @@ type GrabRequest struct {
 
 // GrabRequestIntent Manual acquisition always creates an independent additional copy.
 type GrabRequestIntent string
+
+// HDRDevice defines model for HDRDevice.
+type HDRDevice struct {
+	Client      string `json:"client"`
+	Device      string `json:"device"`
+	DolbyVision bool   `json:"dolbyVision"`
+
+	// Fel Decodes a profile 7 enhancement layer.
+	Fel        bool        `json:"fel"`
+	Hdr10      bool        `json:"hdr10"`
+	Hdr10plus  bool        `json:"hdr10plus"`
+	HdrOrder   []HDRTier   `json:"hdrOrder"`
+	HdrReject  []HDRTier   `json:"hdrReject"`
+	HdrTies    [][]HDRTier `json:"hdrTies"`
+	Hlg        bool        `json:"hlg"`
+	Id         string      `json:"id"`
+	LastSeenAt int64       `json:"lastSeenAt"`
+	Profile5   bool        `json:"profile5"`
+
+	// Source The plurx connection's name.
+	Source string `json:"source"`
+	User   string `json:"user"`
+}
+
+// HDRDevices defines model for HDRDevices.
+type HDRDevices struct {
+	Devices []HDRDevice `json:"devices"`
+	Errors  []struct {
+		Message string `json:"message"`
+		Source  string `json:"source"`
+	} `json:"errors"`
+}
+
+// HDRTier An HDR presentation (ADR 0031). Profiles name the first eight; dv-p7 (EL type unknown), dv (profile unknown) and the empty string (nothing known) appear only as observations.
+type HDRTier string
+
+// HDRTierOption defines model for HDRTierOption.
+type HDRTierOption struct {
+	// Label Display name ("DV P7 FEL").
+	Label string `json:"label"`
+
+	// Tier An HDR presentation (ADR 0031). Profiles name the first eight; dv-p7 (EL type unknown), dv (profile unknown) and the empty string (nothing known) appear only as observations.
+	Tier HDRTier `json:"tier"`
+}
 
 // HandoffEntry defines model for HandoffEntry.
 type HandoffEntry struct {
@@ -3401,13 +3677,19 @@ type MediaCopyUpdate struct {
 // MediaFileInfo defines model for MediaFileInfo.
 type MediaFileInfo struct {
 	// CopyId Which quality copy this file belongs to; 0/absent = primary.
-	CopyId     *int64  `json:"copyId,omitempty"`
-	EpisodeIds []int64 `json:"episodeIds"`
+	CopyId *int64 `json:"copyId,omitempty"`
+
+	// DolbyVision The measured Dolby Vision record of a file (ADR 0031).
+	DolbyVision *DolbyVision `json:"dolbyVision,omitempty"`
+	EpisodeIds  []int64      `json:"episodeIds"`
 
 	// Facts The measured facts as one line, e.g. "1080p · HEVC · HDR10 · TrueHD · 23 Mbps". Empty when the file was never probed.
 	Facts          *string `json:"facts,omitempty"`
 	FileGeneration *string `json:"fileGeneration,omitempty"`
-	Id             int64   `json:"id"`
+
+	// HdrTier An HDR presentation (ADR 0031). Profiles name the first eight; dv-p7 (EL type unknown), dv (profile unknown) and the empty string (nothing known) appear only as observations.
+	HdrTier *HDRTier `json:"hdrTier,omitempty"`
+	Id      int64    `json:"id"`
 
 	// Implausible Why this file's own measurements cannot be true, in one sentence ready to show. Empty for every file that adds up. When set, the file is not counted toward the item being satisfied, so the search for a real copy continues.
 	Implausible *string `json:"implausible,omitempty"`
@@ -3465,18 +3747,24 @@ type MediaItemDetail struct {
 	Copies    []MediaCopy       `json:"copies"`
 	Countries []CountryEvidence `json:"countries"`
 
+	// DiscEnhancementLayer The title's Dolby Vision disc master as measurement has shown it (ADR 0031): fel once any profile 7 file or pre-flight probe of the title measured a full enhancement layer, mel while only minimal ones were seen, empty before any.
+	DiscEnhancementLayer *MediaItemDetailDiscEnhancementLayer `json:"discEnhancementLayer,omitempty"`
+
 	// DownloadPriority Effective scheduler priority after applying the per-item override or inheriting the selected quality profile. Supported values are -100, -50, 0, 50, 100, and 900 (force).
 	DownloadPriority int `json:"downloadPriority"`
 
 	// DownloadPriorityOverride NULL means inherit downloadPriority from the quality profile.
-	DownloadPriorityOverride *int                   `json:"downloadPriorityOverride"`
-	Ended                    bool                   `json:"ended"`
-	Files                    []MediaFileInfo        `json:"files"`
-	Genres                   []string               `json:"genres"`
-	Id                       int64                  `json:"id"`
-	IdentitySources          []IdentitySourceStatus `json:"identitySources"`
-	Ids                      ExternalIds            `json:"ids"`
-	Kind                     MediaKind              `json:"kind"`
+	DownloadPriorityOverride *int            `json:"downloadPriorityOverride"`
+	Ended                    bool            `json:"ended"`
+	Files                    []MediaFileInfo `json:"files"`
+	Genres                   []string        `json:"genres"`
+
+	// HdrTier An HDR presentation (ADR 0031). Profiles name the first eight; dv-p7 (EL type unknown), dv (profile unknown) and the empty string (nothing known) appear only as observations.
+	HdrTier         *HDRTier               `json:"hdrTier,omitempty"`
+	Id              int64                  `json:"id"`
+	IdentitySources []IdentitySourceStatus `json:"identitySources"`
+	Ids             ExternalIds            `json:"ids"`
+	Kind            MediaKind              `json:"kind"`
 
 	// Monitor Persistent series policy. Applying a mode resets existing selections. All selects everything; latest selects the latest and later seasons; future selects episodes airing today or later; new_seasons selects seasons after the last season started before today; first_season selects only the lowest regular season (season 1 when none is known yet) and later seasons arrive unmonitored, ready to monitor or Re-acquire; none clears selections. Specials start unmonitored. Refresh preserves manual selections.
 	Monitor   *SeriesMonitorMode `json:"monitor,omitempty"`
@@ -3520,6 +3808,9 @@ type MediaItemDetail struct {
 	UpgradeReason *string `json:"upgradeReason,omitempty"`
 	Year          int     `json:"year"`
 }
+
+// MediaItemDetailDiscEnhancementLayer The title's Dolby Vision disc master as measurement has shown it (ADR 0031): fel once any profile 7 file or pre-flight probe of the title measured a full enhancement layer, mel while only minimal ones were seen, empty before any.
+type MediaItemDetailDiscEnhancementLayer string
 
 // MediaItemDetailUpgrade missing = nothing on disk · seeking = below the cutoff and being hunted · met = cutoff reached · capped = below the cutoff with upgrades switched off.
 type MediaItemDetailUpgrade string
@@ -3915,6 +4206,52 @@ type PlurxWatchedEvent struct {
 // PlurxWatchedEventKind watched: movie or episode. reacquire / reacquire_status: movie, show, season or episode (ids as for watched: movie tmdb/imdb; show, season and episode use the SHOW's tmdb plus season and episode).
 type PlurxWatchedEventKind string
 
+// PreflightPolicy How a profile measures releases before grabbing them (ADR 0031). It applies whenever the profile has an HDR order or refusal list.
+type PreflightPolicy struct {
+	// Bytes Head size per probe; 0 = default (4 MiB), at most 16 MiB.
+	Bytes *int64 `json:"bytes,omitempty"`
+
+	// SkipUnreadable Refuse a release whose head cannot be read instead of ranking it by its name.
+	SkipUnreadable *bool `json:"skipUnreadable,omitempty"`
+
+	// Top How many of the best-ranked releases to probe; 0 = default (5), at most 10.
+	Top *int `json:"top,omitempty"`
+}
+
+// ProbeEvidence What a pre-flight probe found (ADR 0031): Runner read the head of the release's main file and Curator measured it with the prober it runs on imported files.
+type ProbeEvidence struct {
+	Articles  *int    `json:"articles,omitempty"`
+	Bytes     *int    `json:"bytes,omitempty"`
+	Container *string `json:"container,omitempty"`
+	Detail    *string `json:"detail,omitempty"`
+
+	// DolbyVision The measured Dolby Vision record of a file (ADR 0031).
+	DolbyVision *DolbyVision `json:"dolbyVision,omitempty"`
+
+	// Facts The measured facts line
+	Facts *string `json:"facts,omitempty"`
+
+	// File The inner media file Runner read.
+	File    *string `json:"file,omitempty"`
+	Millis  *int64  `json:"millis,omitempty"`
+	Missing *int    `json:"missing,omitempty"`
+
+	// Path How the bytes were reached, e.g. ["yenc", "rar-store"].
+	Path *[]string `json:"path,omitempty"`
+
+	// Reason encrypted, compressed, missing_articles, no_media or unreadable.
+	Reason *string `json:"reason,omitempty"`
+
+	// Status unavailable = Runner said why it could not read the head; failed = no answer.
+	Status ProbeEvidenceStatus `json:"status"`
+
+	// Tier An HDR presentation (ADR 0031). Profiles name the first eight; dv-p7 (EL type unknown), dv (profile unknown) and the empty string (nothing known) appear only as observations.
+	Tier *HDRTier `json:"tier,omitempty"`
+}
+
+// ProbeEvidenceStatus unavailable = Runner said why it could not read the head; failed = no answer.
+type ProbeEvidenceStatus string
+
 // ProfileInput defines model for ProfileInput.
 type ProfileInput struct {
 	// AudioLanguages Required audio languages, any one of which satisfies (ADR 0022). Codes from GET /languages. Omit or send empty for no requirement.
@@ -3923,9 +4260,21 @@ type ProfileInput struct {
 	// DownloadPriority One of -100, -50, 0, 50, 100, or 900 (force).
 	DownloadPriority *int          `json:"downloadPriority,omitempty"`
 	Floor            *QualityInput `json:"floor,omitempty"`
-	Name             string        `json:"name"`
-	Target           QualityInput  `json:"target"`
-	UpgradesAllowed  *bool         `json:"upgradesAllowed,omitempty"`
+
+	// HdrOrder Preferred HDR tiers, best first, from GET /hdr-tiers. Empty for no opinion.
+	HdrOrder *[]HDRTier `json:"hdrOrder,omitempty"`
+
+	// HdrReject HDR tiers to refuse, from GET /hdr-tiers.
+	HdrReject *[]HDRTier `json:"hdrReject,omitempty"`
+
+	// HdrTies Groups of two or more tiers from hdrOrder that rank as one.
+	HdrTies *[][]HDRTier `json:"hdrTies,omitempty"`
+	Name    string       `json:"name"`
+
+	// Preflight How a profile measures releases before grabbing them (ADR 0031). It applies whenever the profile has an HDR order or refusal list.
+	Preflight       *PreflightPolicy `json:"preflight,omitempty"`
+	Target          QualityInput     `json:"target"`
+	UpgradesAllowed *bool            `json:"upgradesAllowed,omitempty"`
 }
 
 // Proposal defines model for Proposal.
@@ -3977,11 +4326,23 @@ type QualityProfile struct {
 	// DownloadPriority Default scheduler priority for items that inherit from this profile.
 	DownloadPriority int      `json:"downloadPriority"`
 	Floor            *Quality `json:"floor,omitempty"`
-	Id               int64    `json:"id"`
+
+	// HdrOrder Preferred HDR presentation, best first (ADR 0031). Breaks ties after resolution and source; a file below the first tier keeps the item wanted when upgrades are on. Empty means no opinion.
+	HdrOrder *[]HDRTier `json:"hdrOrder,omitempty"`
+
+	// HdrReject HDR tiers the profile never takes. A release is refused only when measured, or named outright, as one of them.
+	HdrReject *[]HDRTier `json:"hdrReject,omitempty"`
+
+	// HdrTies Groups of tiers that rank as one -- tiers the playback device renders identically -- each at its best member's place in hdrOrder.
+	HdrTies *[][]HDRTier `json:"hdrTies,omitempty"`
+	Id      int64        `json:"id"`
 
 	// InUse How many items, copies and import lists reference this profile. Non-zero means DELETE will be refused with 409.
 	InUse *int   `json:"inUse,omitempty"`
 	Name  string `json:"name"`
+
+	// Preflight How a profile measures releases before grabbing them (ADR 0031). It applies whenever the profile has an HDR order or refusal list.
+	Preflight *PreflightPolicy `json:"preflight,omitempty"`
 
 	// Sentence The profile rendered as the one true sentence it now is -- "hunts the best release up to WEB-DL 1080p, then stops". Server-rendered so every client says exactly the same thing about a profile.
 	Sentence        string  `json:"sentence"`
@@ -4358,17 +4719,26 @@ type ReleaseCandidate struct {
 	DownloadUrl    string `json:"downloadUrl"`
 
 	// Formats Names of matched custom formats.
-	Formats   *[]string `json:"formats,omitempty"`
-	Indexer   string    `json:"indexer"`
-	InfoUrl   *string   `json:"infoUrl,omitempty"`
-	IsUpgrade bool      `json:"isUpgrade"`
+	Formats *[]string `json:"formats,omitempty"`
+
+	// Hdr One description of a release's HDR: what its name claims, or what a pre-flight probe of its first bytes measured (ADR 0031).
+	Hdr       *ReleaseHDR `json:"hdr,omitempty"`
+	Indexer   string      `json:"indexer"`
+	InfoUrl   *string     `json:"infoUrl,omitempty"`
+	IsUpgrade bool        `json:"isUpgrade"`
 
 	// Languages Audio languages the release name advertises (ADR 0022), canonical codes; "mul" for a MULTi/DUAL release. A name that says nothing reads as English, the scene convention.
-	Languages  *[]string     `json:"languages,omitempty"`
-	Match      MatchEvidence `json:"match"`
-	Protocol   string        `json:"protocol"`
-	Quality    string        `json:"quality"`
-	Rejections []Rejection   `json:"rejections"`
+	Languages *[]string     `json:"languages,omitempty"`
+	Match     MatchEvidence `json:"match"`
+
+	// MeasuredHdr One description of a release's HDR: what its name claims, or what a pre-flight probe of its first bytes measured (ADR 0031).
+	MeasuredHdr *ReleaseHDR `json:"measuredHdr,omitempty"`
+
+	// Probe What a pre-flight probe found (ADR 0031): Runner read the head of the release's main file and Curator measured it with the prober it runs on imported files.
+	Probe      *ProbeEvidence `json:"probe,omitempty"`
+	Protocol   string         `json:"protocol"`
+	Quality    string         `json:"quality"`
+	Rejections []Rejection    `json:"rejections"`
 
 	// Score Custom-format score sum (Phase 5).
 	Score   int    `json:"score"`
@@ -4379,6 +4749,25 @@ type ReleaseCandidate struct {
 	// Warning A caution that does not decline the release: the profile would take it, but something does not add up. Today that means an advertised size too small to hold what the name claims.
 	Warning *string `json:"warning,omitempty"`
 }
+
+// ReleaseHDR One description of a release's HDR: what its name claims, or what a pre-flight probe of its first bytes measured (ADR 0031).
+type ReleaseHDR struct {
+	// Confidence How sure a claim is; empty for a measurement.
+	Confidence *ReleaseHDRConfidence `json:"confidence,omitempty"`
+	DvProfile  *int                  `json:"dvProfile,omitempty"`
+	ElType     *ReleaseHDRElType     `json:"elType,omitempty"`
+	Label      string                `json:"label"`
+	Measured   bool                  `json:"measured"`
+
+	// Tier An HDR presentation (ADR 0031). Profiles name the first eight; dv-p7 (EL type unknown), dv (profile unknown) and the empty string (nothing known) appear only as observations.
+	Tier HDRTier `json:"tier"`
+}
+
+// ReleaseHDRConfidence How sure a claim is; empty for a measurement.
+type ReleaseHDRConfidence string
+
+// ReleaseHDRElType defines model for ReleaseHDR.ElType.
+type ReleaseHDRElType string
 
 // RematchBlocked defines model for RematchBlocked.
 type RematchBlocked struct {
@@ -6168,6 +6557,12 @@ type ServerInterface interface {
 	// GrabRelease Send a release to a download client
 	// (POST /grab)
 	GrabRelease(w http.ResponseWriter, r *http.Request)
+	// ListHDRTiers List the HDR tiers a profile can order or refuse
+	// (GET /hdr-tiers)
+	ListHDRTiers(w http.ResponseWriter, r *http.Request)
+	// ListHDRDevices Playback devices and the HDR order each suggests
+	// (GET /hdr/devices)
+	ListHDRDevices(w http.ResponseWriter, r *http.Request)
 	// GetHealth Run health checks and report results
 	// (GET /health)
 	GetHealth(w http.ResponseWriter, r *http.Request)
@@ -7833,6 +8228,34 @@ func (siw *ServerInterfaceWrapper) GrabRelease(w http.ResponseWriter, r *http.Re
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GrabRelease(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListHDRTiers operation middleware
+func (siw *ServerInterfaceWrapper) ListHDRTiers(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListHDRTiers(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListHDRDevices operation middleware
+func (siw *ServerInterfaceWrapper) ListHDRDevices(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListHDRDevices(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -12050,6 +12473,8 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/profiles", wrapper.ListProfiles)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/profiles", wrapper.CreateProfile)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/languages", wrapper.ListLanguages)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/hdr-tiers", wrapper.ListHDRTiers)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/hdr/devices", wrapper.ListHDRDevices)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/profiles/{id}", wrapper.DeleteProfile)
 	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/profiles/{id}", wrapper.UpdateProfile)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/indexers", wrapper.ListIndexers)

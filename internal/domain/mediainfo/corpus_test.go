@@ -36,6 +36,7 @@ type probeCase struct {
 	bitrate    int64
 	tier       int
 	summary    string
+	dovi       *mediainfo.DoViInfo
 }
 
 var corpus = []probeCase{
@@ -138,6 +139,66 @@ var corpus = []probeCase{
 		durationMS: 1000, bitrate: 3185, tier: 480,
 		summary: "480p · H.264 · AC-3 · 3.2 Mbps",
 	},
+
+	// Dolby Vision and HDR10+ (ADR 0031). These are whole files: the facts
+	// that matter live in the first frame, which a header window drops. The
+	// DV files were authored with libdovi in the plurx repository (see
+	// scripts/gen-mediainfo-fixtures.sh); ffprobe agrees on every field it
+	// reports (profile, level, layers, compatibility id, residual flag).
+	{
+		// The UHD Blu-ray shape: dual layer, the EL carried as a Matroska
+		// block addition, the first RPU's quantizer non-identity → FEL.
+		file: "mkv-64p-hevc-dv-p7-fel.mkv", size: 21286,
+		container: "mkv", codec: "hevc", width: 64, height: 64, bitDepth: 10,
+		hdr:        []string{mediainfo.DV, mediainfo.HDR10},
+		durationMS: 249, bitrate: 683, tier: 480,
+		summary: "480p · HEVC 10-bit · DV P7 FEL · HDR10 · 683 kbps",
+		dovi: &mediainfo.DoViInfo{
+			Profile: 7, Level: 1, RPU: true, EL: true, BL: true, BLCompatID: 6,
+			ELType: "fel", CMVersion: "4.0", MasteringMaxNits: 1000, Source: mediainfo.DoViFromRPU,
+		},
+	},
+	{
+		// Profile 5: no HDR10-compatible base layer (compatibility id 0).
+		file: "mp4-2160p-hevc-dv-p5.mp4", size: 34592,
+		container: "mp4", codec: "hevc", width: 3840, height: 2160, bitDepth: 10,
+		hdr:        []string{mediainfo.DV, mediainfo.HDR10},
+		durationMS: 1000, bitrate: 276, tier: 2160,
+		summary: "2160p · HEVC 10-bit · DV P5 · HDR10 · 276 kbps",
+		dovi: &mediainfo.DoViInfo{
+			Profile: 5, Level: 6, RPU: true, BL: true,
+			ELType: "none", CMVersion: "4.0", MasteringMaxNits: 1000, Source: mediainfo.DoViFromRPU,
+		},
+	},
+	{
+		// Profile 8.1, fragmented MP4: the moov sample tables are empty and
+		// the first sample is found through the first moof's tfhd/trun.
+		file: "mp4-64p-hevc-dv-p81.mp4", size: 7411,
+		container: "mp4", codec: "hevc", width: 64, height: 64, bitDepth: 10,
+		hdr:  []string{mediainfo.DV, mediainfo.HDR10},
+		tier: 480, summary: "480p · HEVC 10-bit · DV 8.1 · HDR10",
+		dovi: &mediainfo.DoViInfo{
+			Profile: 8, Level: 1, RPU: true, BL: true, BLCompatID: 1,
+			ELType: "none", CMVersion: "4.0", MasteringMaxNits: 1000, Source: mediainfo.DoViFromRPU,
+		},
+	},
+	{
+		// HDR10+ from x265: ST 2094-40 SEI in the first access unit.
+		file: "mkv-64p-hevc-hdr10plus.mkv", size: 6246,
+		container: "mkv", codec: "hevc", width: 64, height: 64, bitDepth: 10,
+		hdr:        []string{mediainfo.HDR10, mediainfo.HDR10Plus},
+		durationMS: 40, bitrate: 1249, tier: 480,
+		summary: "480p · HEVC 10-bit · HDR10 · HDR10+ · 1.2 Mbps",
+	},
+	{
+		// The same stream in MP4, where x265 wrote no colour box: the HDR10+
+		// SEI alone establishes the HDR10 base.
+		file: "mp4-64p-hevc-hdr10plus.mp4", size: 6317,
+		container: "mp4", codec: "hevc", width: 64, height: 64, bitDepth: 10,
+		hdr:        []string{mediainfo.HDR10, mediainfo.HDR10Plus},
+		durationMS: 40, bitrate: 1263, tier: 480,
+		summary: "480p · HEVC 10-bit · HDR10 · HDR10+ · 1.3 Mbps",
+	},
 }
 
 func TestProbeCorpus(t *testing.T) {
@@ -187,6 +248,9 @@ func TestProbeCorpus(t *testing.T) {
 			}
 			if !info.Measured() {
 				t.Error("Measured() = false for a fixture that clearly was")
+			}
+			if !reflect.DeepEqual(v.DoVi, tc.dovi) {
+				t.Errorf("dovi = %+v, want %+v", v.DoVi, tc.dovi)
 			}
 		})
 	}

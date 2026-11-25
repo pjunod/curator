@@ -7,6 +7,7 @@ import (
 	"fmt"
 
 	"github.com/pjunod/monarr/internal/domain"
+	"github.com/pjunod/monarr/internal/domain/hdr"
 	"github.com/pjunod/monarr/internal/domain/language"
 	"github.com/pjunod/monarr/internal/domain/quality"
 )
@@ -42,6 +43,9 @@ const (
 	// A German-only release cannot fix a library that wants English, at any
 	// resolution.
 	CodeLanguageNotWanted = "language_not_wanted"
+	// CodeHDRRejected is the profile's HDR refusal list (ADR 0031 §4): a
+	// release measured, or named outright, as a tier the profile never takes.
+	CodeHDRRejected = "hdr_rejected"
 )
 
 // Rejection is one machine-readable reason a release was declined.
@@ -62,11 +66,13 @@ func rejected(code, format string, args ...any) Decision {
 }
 
 // Release is what the engine knows about a candidate: the quality its name
-// claims and the languages its name advertises (ADR 0022). Both come from
-// the parser; a candidate that has not been downloaded has nothing else.
+// claims, the languages its name advertises (ADR 0022), and its HDR (ADR
+// 0031) — the name's claim, or a pre-flight probe's measurement of the
+// release's first bytes when there is one.
 type Release struct {
 	Quality   quality.Quality
 	Languages []string
+	HDR       hdr.Evidence
 }
 
 // Decide evaluates a release against a wantable's profile and what is
@@ -106,6 +112,14 @@ func Decide(r Release, w domain.Wantable, profile quality.Profile) Decision {
 			language.DisplayList(r.Languages), profile.Name, language.DisplayList(profile.Languages))
 	}
 
+	if !profile.HDRAcceptable(r.HDR) {
+		how := "named"
+		if r.HDR.Measured {
+			how = "measured"
+		}
+		return rejected(CodeHDRRejected, "%s %s; profile %q never takes it", how, r.HDR.Tier.Label(), profile.Name)
+	}
+
 	current, have := w.CurrentQuality()
 	if !have {
 		// Nothing KNOWN on disk. That is two different situations, and
@@ -122,8 +136,9 @@ func Decide(r Release, w domain.Wantable, profile quality.Profile) Decision {
 
 	verified := w.SourceVerified()
 	audio := w.AudioLanguages()
+	currentHDR := w.CurrentHDR()
 	languageMet := profile.LanguageMet(audio)
-	if profile.Met(current, verified) && languageMet {
+	if profile.Met(current, verified) && languageMet && profile.HDRMet(currentHDR) {
 		if !verified {
 			return rejected(CodeTargetMet,
 				"already at the target resolution with %s (source unverified)", current.Display())
@@ -133,7 +148,12 @@ func Decide(r Release, w domain.Wantable, profile quality.Profile) Decision {
 	if !profile.UpgradesAllowed {
 		return rejected(CodeUpgradesOff, "already have %s and upgrades are disabled", current.Display())
 	}
-	if !profile.Upgrade(q, r.Languages, current, verified, audio) {
+	if !profile.Upgrade(q, r.Languages, r.HDR, current, verified, audio, currentHDR) {
+		if profile.Met(current, verified) && languageMet {
+			// Only the HDR axis is open: say which presentation would help.
+			return rejected(CodeNotAnUpgrade, "%s (%s) does not improve on %s",
+				q.Display(), r.HDR.Tier.Label(), currentHDR.Label())
+		}
 		return rejected(CodeNotAnUpgrade, "%s does not improve on %s", q.Display(), current.Display())
 	}
 	return Decision{Accepted: true, IsUpgrade: true}

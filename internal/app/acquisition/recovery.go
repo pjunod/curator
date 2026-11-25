@@ -531,7 +531,7 @@ func (s *Service) PreviewRecovery(ctx context.Context, req RecoveryRequest) (Rec
 		if e != nil {
 			row.Reason = e.Error()
 		}
-		if why, cut := truncatedPayload(path); cut {
+		if why, cut := truncatedPayload(info); cut {
 			row.Usable = false
 			row.Reason = why
 		}

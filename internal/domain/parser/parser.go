@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/pjunod/monarr/internal/domain/hdr"
 	"github.com/pjunod/monarr/internal/domain/language"
 	"github.com/pjunod/monarr/internal/domain/quality"
 )
@@ -43,10 +44,13 @@ type Parsed struct {
 	// read as language.Multi. Subtitle tags (VOSTFR, SUBBED) say nothing
 	// about the audio and are ignored.
 	Languages []string
-	Proper    bool
-	Repack    bool
-	Codec     string
-	Group     string
+	// HDR is what the name claims about HDR and Dolby Vision (ADR 0031 §3).
+	// It is a claim: a measurement, when one exists, outranks it.
+	HDR    hdr.Claim
+	Proper bool
+	Repack bool
+	Codec  string
+	Group  string
 }
 
 var (
@@ -274,6 +278,9 @@ func Parse(release string) Parsed {
 	if m := reCodec.FindStringSubmatch(s); m != nil {
 		p.Codec = strings.ToLower(strings.ReplaceAll(m[1], ".", ""))
 	}
+	if !quality.IsBookFormat(p.Quality.Source) {
+		p.HDR = parseHDR(s[titleEnd:], p.Quality.Source, p.Codec)
+	}
 	if p.Group == "" {
 		if m := reGroupSuffix.FindStringSubmatch(strings.TrimSpace(s)); m != nil {
 			if !reResolution.MatchString(m[1]) && !reCodec.MatchString(m[1]) {
@@ -300,6 +307,97 @@ func Parse(release string) Parsed {
 		p.Author, p.Title = splitBookTitle(p.Title)
 	}
 	return p
+}
+
+// reHDRSplit tokenizes the tag section for HDR tags. Unlike reLangSplit it
+// keeps "+", which is part of "HDR10+".
+var reHDRSplit = regexp.MustCompile(`[ ._\-\[\]()]+`)
+
+// parseHDR reads HDR and Dolby Vision tags from the part of the name after the
+// title, and infers a likely Dolby Vision profile when the name does not
+// state one. The inference rules follow how releases are actually made:
+//
+//   - FEL or MEL named outright: profile 7 (only profile 7 has either).
+//   - A remux carrying DV is the disc's own stream: profile 7, EL unknown.
+//   - An encode from Blu-ray carrying DV re-encoded the base layer and kept
+//     the RPU, which is what profile 8.1 is.
+//   - A web release tagged DV alongside HDR/HDR10 has an HDR10 base: profile
+//     8. Tagged DV alone, it is usually profile 5, which has no base at all.
+//
+// Inferred profiles are medium confidence; a bare DV with nothing to place it
+// is low. The enhancement-layer type is never inferred: FEL versus MEL is the
+// question only bytes answer.
+func parseHDR(tail string, src quality.Source, codec string) hdr.Claim {
+	var c hdr.Claim
+	add := func(f string) {
+		for _, x := range c.Formats {
+			if x == f {
+				return
+			}
+		}
+		c.Formats = append(c.Formats, f)
+	}
+	stated := 0
+	toks := reHDRSplit.Split(strings.ToUpper(tail), -1)
+	for i, t := range toks {
+		switch t {
+		case "DV", "DOVI", "DVHE":
+			add(hdr.FormatDV)
+		case "DOLBY":
+			if i+1 < len(toks) && toks[i+1] == "VISION" {
+				add(hdr.FormatDV)
+			}
+		case "HDR", "HDR10":
+			add(hdr.FormatHDR10)
+		case "HDR10+", "HDR10P", "HDR10PLUS":
+			add(hdr.FormatHDR10Plus)
+		case "HLG":
+			add(hdr.FormatHLG)
+		case "SDR":
+			c.SDR = true
+		case "FEL":
+			add(hdr.FormatDV)
+			c.ELType, stated = hdr.ELFEL, 7
+		case "MEL":
+			add(hdr.FormatDV)
+			c.ELType, stated = hdr.ELMEL, 7
+		case "P5", "DVP5":
+			stated = 5
+		case "P7", "DVP7":
+			stated = 7
+		case "P8", "DVP8":
+			stated = 8
+		}
+	}
+	dv := false
+	for _, f := range c.Formats {
+		dv = dv || f == hdr.FormatDV
+	}
+	if !dv {
+		// "P7" with no Dolby Vision tag is not a profile claim; it is noise.
+		return c
+	}
+	if stated != 0 {
+		c.DVProfile, c.Confidence = stated, hdr.ConfidenceHigh
+		return c
+	}
+	hdrBase := false
+	for _, f := range c.Formats {
+		hdrBase = hdrBase || f == hdr.FormatHDR10 || f == hdr.FormatHDR10Plus
+	}
+	switch {
+	case src == quality.SourceRemux:
+		c.DVProfile, c.Confidence = 7, hdr.ConfidenceMedium
+	case src == quality.SourceBluray && (codec == "x265" || codec == "x264"):
+		c.DVProfile, c.Confidence = 8, hdr.ConfidenceMedium
+	case (src == quality.SourceWEBDL || src == quality.SourceWEBRip) && hdrBase:
+		c.DVProfile, c.Confidence = 8, hdr.ConfidenceMedium
+	case src == quality.SourceWEBDL || src == quality.SourceWEBRip:
+		c.DVProfile, c.Confidence = 5, hdr.ConfidenceMedium
+	default:
+		c.Confidence = hdr.ConfidenceLow
+	}
+	return c
 }
 
 // parseLanguages reads the audio-language tags out of the part of the name
