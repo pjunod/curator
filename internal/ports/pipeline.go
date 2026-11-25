@@ -98,6 +98,10 @@ type RunnerTerminal struct {
 	Outcome       string
 	Reason        string
 	FetchCause    string
+	// RetryAt is fetch{indexer_unavailable} only: when the indexer itself said
+	// to come back (Runner's retry_at_unix, from the Retry-After that ended the
+	// fetch). Zero when it named none.
+	RetryAt       time.Time
 	Stage         string
 	Message       string
 	BlamesRelease bool

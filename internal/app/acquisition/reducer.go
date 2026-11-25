@@ -395,7 +395,7 @@ func (s *Service) recordTerminalWith(ctx context.Context, dl sqlite.Download, cf
 		if t.Reason == ports.ReasonFetch && t.FetchCause == ports.FetchCauseIndexerUnavailable && !provisional {
 			// The indexer is down, not the release: defer it (the existing
 			// request-budget gate) instead of grabbing an alternative from it.
-			w.IndexerOutage = &sqlite.IndexerOutageWrite{IndexerID: dl.SourceIndexerID, Until: now.Add(indexerOutageRetry)}
+			w.IndexerOutage = &sqlite.IndexerOutageWrite{IndexerID: dl.SourceIndexerID, Until: indexerOutageUntil(now, t.RetryAt)}
 		}
 		household, originErr := s.db.IsHouseholdDownload(ctx, dl.ID, dl.GenerationKey)
 		if originErr != nil {
@@ -458,6 +458,26 @@ func (s *Service) recordTerminalWith(ctx context.Context, dl sqlite.Download, cf
 // deferred when it named no retry_at of its own: Runner had already
 // exhausted its own retries against it.
 const indexerOutageRetry = 15 * time.Minute
+
+// indexerOutageCeiling bounds an indexer's own retry_at: an exhausted daily
+// allowance resets within a day, so a later time is a clock or header error,
+// and deferring past it would hide a healthy indexer.
+const indexerOutageCeiling = 48 * time.Hour
+
+// indexerOutageUntil defers the indexer until the time it named (its quota
+// reset, carried by Runner as retry_at_unix) or, when it named none or an
+// earlier one, indexerOutageRetry from now. Searching it sooner only spends
+// requests the indexer has already said it will refuse.
+func indexerOutageUntil(now, retryAt time.Time) time.Time {
+	until := now.Add(indexerOutageRetry)
+	if limit := now.Add(indexerOutageCeiling); retryAt.After(limit) {
+		retryAt = limit
+	}
+	if retryAt.After(until) {
+		until = retryAt
+	}
+	return until
+}
 
 // HistoryNoReplacement explains why a failure starts no next grab.
 const HistoryNoReplacement = "no_replacement"
@@ -831,6 +851,9 @@ func admissionTerminal(adm ports.RequestAdmission) (ports.RunnerTerminal, bool) 
 		if adm.FailureReason != "" {
 			t = ports.RunnerTerminal{Outcome: ports.OutcomeFailed, Reason: adm.FailureReason, FetchCause: adm.FetchCause,
 				Stage: adm.FailureStage, Message: adm.FailureCause, Salvage: adm.Salvage}
+			if adm.RetryAtUnix > 0 {
+				t.RetryAt = time.Unix(adm.RetryAtUnix, 0)
+			}
 			if adm.BlamesRelease != nil {
 				t.BlamesRelease = *adm.BlamesRelease
 			}

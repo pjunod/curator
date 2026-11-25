@@ -394,7 +394,9 @@ other client keeps the established path and records its failures the same way.
   are Runner's; `submit`, `lost` and `parked` are Curator's and always
   provisional. `publish`, `io` and `identity` park the bytes whatever the
   client's `failure_action` says; a `fetch` whose cause is
-  `indexer_unavailable` re-queues the same want after 15 minutes.
+  `indexer_unavailable` defers its indexer and re-queues the same want at the
+  indexer's own `retry_at_unix` (the Retry-After of an exhausted quota, at most
+  48 hours ahead) or, when the indexer named none, after 15 minutes.
 - **The historical cohort** is described under §5.
 
 What Curator no longer does with Runner: acknowledge deliveries, pace receipt
@@ -1144,6 +1146,7 @@ changes, this file changes in the same commit.
 | Publication `import_failed{stalled}` after | 6 hours | `internal/app/acquisition/reducer.go` |
 | Replacement grab worker tick | 5 s | `internal/app/acquisition/replacement_grab_worker.go` |
 | Indexer-outage re-queue | 15 minutes | `internal/app/acquisition/reducer.go` |
+| Indexer-outage ceiling on its own `retry_at_unix` | 48 hours | `internal/app/acquisition/reducer.go` |
 | Pipeline timing kinds | `failure_to_next_grab`, `runner_done_to_import`, `import_to_cinema_visible` | `internal/api/openapi.yaml` |
 | Cinema scope Monarr holds | `scan:trigger` | `internal/adapters/notify/plurx.go` |
 | Ports | nzbd 6789 · Monarr 7676 · plurx 32400 | `docs/settings.md` |
