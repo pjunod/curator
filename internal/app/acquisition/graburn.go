@@ -202,7 +202,11 @@ func (s *Service) regrabSpend(ctx context.Context, w domain.Wantable, exclude in
 			// Bytes count only for failures that blame the release (contract
 			// section 3.3, item 5): a local fault, an operator delete, a lost
 			// or cancelled job costs nothing. The attempt ceiling counts all.
-			if dl.RunnerOutcome == "" || dl.RunnerBlamesRelease {
+			// A release Runner completed that Curator then failed (its import
+			// placed nothing) fetched the whole release: it spends bytes too,
+			// or a deterministic import refusal regrabs uncapped (the nightly
+			// Good Trouble loop of 2026-11-19..25, 6-7 full grabs a night).
+			if dl.RunnerOutcome == "" || dl.RunnerBlamesRelease || dl.RunnerOutcome == ports.OutcomeCompleted {
 				spent += releasesFetched(dl)
 			}
 		}

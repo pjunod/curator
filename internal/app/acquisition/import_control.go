@@ -283,16 +283,31 @@ func (s *Service) startImportCancellationWorker(ctx context.Context) {
 	}()
 }
 
-type importPolicyRefusal struct{ err error }
+// importPolicyRefusal is a deterministic verdict on one file. library marks a
+// verdict about what already occupies the library (a destination the library
+// cannot authorize replacing, a file it cannot verify, a protected sibling):
+// every release would meet the same verdict, so grabbing another one cannot
+// help and only spends the indexer's allowance.
+type importPolicyRefusal struct {
+	err     error
+	library bool
+}
 
 func (e importPolicyRefusal) Error() string { return e.err.Error() }
 func (e importPolicyRefusal) Unwrap() error { return e.err }
 func importPolicyRefusalf(format string, args ...any) error {
-	return importPolicyRefusal{fmt.Errorf(format, args...)}
+	return importPolicyRefusal{err: fmt.Errorf(format, args...)}
+}
+func importLibraryRefusalf(format string, args ...any) error {
+	return importPolicyRefusal{err: fmt.Errorf(format, args...), library: true}
 }
 func isImportPolicyRefusal(err error) bool {
 	var refusal importPolicyRefusal
 	return errors.As(err, &refusal)
+}
+func isLibraryRefusal(err error) bool {
+	var refusal importPolicyRefusal
+	return errors.As(err, &refusal) && refusal.library
 }
 func (s *Service) recordSkippedImportFile(ctx context.Context, src string) error {
 	key, ok := importAttemptFrom(ctx)
