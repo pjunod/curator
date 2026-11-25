@@ -64,7 +64,12 @@ func terminalOf(w terminalWire, params [][2]string, record *historyRecord) (port
 	}
 	t := ports.RunnerTerminal{Outcome: w.Outcome, Reason: w.Reason, FetchCause: w.FetchCause, Stage: w.Stage,
 		Message: w.Message, Salvage: w.Salvage, KeepOnFailure: w.KeepOnFailure}
-	t.RetryAt = retryAtOf(w.RetryAtUnix)
+	retryAt := w.RetryAtUnix
+	if retryAt <= 0 {
+		// History rows carry it only as their Failure:RetryAt marker.
+		retryAt, _ = strconv.ParseInt(paramValue(params, "Failure:RetryAt"), 10, 64)
+	}
+	t.RetryAt = retryAtOf(retryAt)
 	if w.BlamesRelease != nil {
 		t.BlamesRelease = *w.BlamesRelease
 	} else if w.Outcome == ports.OutcomeFailed {

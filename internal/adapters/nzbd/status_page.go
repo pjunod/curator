@@ -262,7 +262,7 @@ func statusArray(r *bufio.Reader, limit int, element func() error) error {
 var keptStatusParams = map[string]bool{
 	TransferParam: true, "*Control:v1": true, "Failure:Files": true,
 	"Delivery:Path": true, "Delivery:Generation": true, "Delivery:ManifestDigest": true,
-	"Failure:Reason": true, "Failure:FetchCause": true, "Failure:BlamesRelease": true, "Failure:Salvage": true,
+	"Failure:Reason": true, "Failure:FetchCause": true, "Failure:RetryAt": true, "Failure:BlamesRelease": true, "Failure:Salvage": true,
 }
 
 func statusParams(r *bufio.Reader) (json.RawMessage, error) {
