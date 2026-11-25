@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/pjunod/monarr/internal/domain"
+	"github.com/pjunod/monarr/internal/domain/acquisitionplan"
 	"github.com/pjunod/monarr/internal/domain/decision"
 	"github.com/pjunod/monarr/internal/domain/hdr"
 	"github.com/pjunod/monarr/internal/domain/parser"
@@ -289,5 +290,49 @@ func TestPreflightOneDeclinesAGrabOnTheMeasurement(t *testing.T) {
 	ok, why := svc.preflightOne(ctx, w, profile, r, parser.Parse(r.Title))
 	if ok || why.Code != decision.CodeHDRRejected {
 		t.Fatalf("preflightOne = %v, %+v; want declined as hdr_rejected", ok, why)
+	}
+}
+
+// Season plans are measured before they are built: a candidate that measures
+// a refused tier leaves the plan, a measured one carries its measured rank,
+// and a release whose name already states its HDR is not probed at all.
+func TestPreflightPlanMeasuresSeasonCandidates(t *testing.T) {
+	client := &probingClient{heads: map[string]string{
+		"nzb://fel": "mkv-64p-hevc-dv-p7-fel.mkv",
+		"nzb://p5":  "mp4-2160p-hevc-dv-p5.mp4",
+	}}
+	svc, db, itemID := preflightSetup(t, nil, client, fel())
+	profile, err := db.GetProfile(context.Background(), 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := domain.MovieWantable{Item: itemID, Profile: 3, Mon: true}
+	rels := map[acquisitionplan.CandidateKey]ports.Release{
+		"fel":    remux("Title.2021.2160p.BluRay.REMUX.DV.HEVC-A", "nzb://fel"),
+		"p5":     remux("Title.2021.2160p.BluRay.REMUX.DV.HEVC-B", "nzb://p5"),
+		"stated": remux("Title.2021.2160p.BluRay.REMUX.HDR10.HEVC-C", "nzb://stated"),
+	}
+	parsed := map[acquisitionplan.CandidateKey]parser.Parsed{}
+	wants := map[acquisitionplan.CandidateKey]domain.Wantable{}
+	var cands []acquisitionplan.Candidate
+	for _, k := range []acquisitionplan.CandidateKey{"fel", "p5", "stated"} {
+		p := parser.Parse(rels[k].Title)
+		parsed[k], wants[k] = p, w
+		cands = append(cands, acquisitionplan.Candidate{Key: k, Pref: acquisitionplan.Preference{
+			Class: quality.Rank(p.Quality), QualityRank: quality.Rank(p.Quality), HDRRank: profile.HDRRank(p.HDR.Tier()),
+		}})
+	}
+	out := svc.preflightPlan(context.Background(), profile, cands, rels, parsed, wants, itemID)
+	if len(out) != 2 || out[0].Key != "fel" || out[1].Key != "stated" {
+		t.Fatalf("plan candidates = %+v, want the P5 measurement dropped", out)
+	}
+	if !out[0].Pref.HDRMeasured || out[0].Pref.HDRRank != 0 {
+		t.Errorf("FEL candidate preference = %+v, want measured at rank 0", out[0].Pref)
+	}
+	if len(client.probed) != 2 {
+		t.Errorf("probed %v; a release stating HDR10 outright needs no probe", client.probed)
+	}
+	if joinWarning("", "b") != "b" || joinWarning("a", "b") != "a; b" {
+		t.Error("joinWarning")
 	}
 }
