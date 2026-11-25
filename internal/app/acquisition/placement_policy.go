@@ -2,6 +2,7 @@ package acquisition
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
@@ -81,12 +82,13 @@ func (s *Service) validateMeasuredPlacement(ctx context.Context, item domain.Med
 			continue
 		}
 		// A receipt for the same bytes is idempotent; it does not replace them.
+		// A tracked file already gone from disk leaves nothing to compare.
 		if f.Path == p.Target {
 			digest, _, e := fileDigest(ctx, f.Path)
-			if e != nil {
+			if e != nil && !errors.Is(e, os.ErrNotExist) {
 				return e
 			}
-			if digest == p.SHA256 {
+			if e == nil && digest == p.SHA256 {
 				continue
 			}
 		}
@@ -113,7 +115,7 @@ func (s *Service) validateMeasuredPlacement(ctx context.Context, item domain.Med
 			// Only bytes that would be overwritten need it: a row whose file is
 			// already gone (or holds these same bytes) is a fresh fill.
 			if f.Path == p.Target && !targetAuthorized {
-				if err := authorizeDisbelievedTarget(item, p); err != nil {
+				if err := authorizeDisbelievedTarget(ctx, item, p); err != nil {
 					return err
 				}
 				targetAuthorized = true
@@ -152,29 +154,23 @@ func (s *Service) validateMeasuredPlacement(ctx context.Context, item domain.Med
 
 // authorizeDisbelievedTarget proves, from the bytes rather than the library
 // row, that the file at the destination is still the implausible file the
-// library disbelieved. The row is only a pointer: the measurement is
-// repeated now, bracketed by the file generation the placement recorded, and
-// publishPlacement re-proves PreviousSHA256 before anything is renamed. A
-// payload that is itself implausible never replaces anything.
-func authorizeDisbelievedTarget(item domain.MediaItem, p sqlite.Placement) error {
+// library disbelieved. The row is only a pointer: the bytes are proven to be
+// the ones the placement previewed (PreviousSHA256 and its file generation),
+// measured again, and publishPlacement re-proves PreviousSHA256 before
+// anything is renamed, so bytes swapped after this measurement are refused
+// there. A payload that is itself implausible never replaces anything.
+func authorizeDisbelievedTarget(ctx context.Context, item domain.MediaItem, p sqlite.Placement) error {
 	if p.Provenance == mediainfo.ProvenanceImplausible || !p.Info.Measured() {
 		// Never act on ignorance (ADR 0013 section 5): only a payload whose
 		// bytes were measured and believed may destroy anything.
 		return importPolicyRefusalf("measured payload is itself implausible or could not be measured; it cannot replace the disbelieved file at %s", p.Target)
 	}
-	reviewed := func(info os.FileInfo) bool {
-		g := deliveryFileGeneration(info)
-		return g != "" && (g == p.TargetFileGeneration || (p.TargetAfterBackupGen != "" && g == p.TargetAfterBackupGen))
-	}
-	before, err := os.Lstat(p.Target)
-	if err != nil || !before.Mode().IsRegular() || !reviewed(before) {
+	digest, _, generation, err := fileDigestSnapshot(ctx, p.Target)
+	reviewed := generation != "" && (generation == p.TargetFileGeneration || (p.TargetAfterBackupGen != "" && generation == p.TargetAfterBackupGen))
+	if err != nil || digest != p.PreviousSHA256 || !reviewed {
 		return importPolicyRefusalf("disbelieved destination changed after placement preview: %s", p.Target)
 	}
 	info, _ := probe.File(p.Target)
-	after, err := os.Lstat(p.Target)
-	if err != nil || deliveryFileGeneration(after) != deliveryFileGeneration(before) {
-		return importPolicyRefusalf("disbelieved destination changed while it was measured: %s", p.Target)
-	}
 	if !info.Measured() {
 		return importLibraryRefusalf("disbelieved destination could not be measured again: %s", p.Target)
 	}
