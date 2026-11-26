@@ -433,6 +433,7 @@ func TestIntegrationLiteralsMatchTheCode(t *testing.T) {
 	warnAfter := constDuration(t, deliver, "WarningAfter")
 	goneGrace := constDuration(t, reducer, "goneGrace")
 	outage := constDuration(t, reducer, "indexerOutageRetry")
+	outageCeiling := constDuration(t, reducer, "indexerOutageCeiling")
 	tick := constDuration(t, worker, "replacementGrabTick")
 	stalled := constDuration(t, pipelineV, "DeadlinePublication")
 	lanes := constDuration(t, deliver, "laneWidth") // a count, evaluated the same way
@@ -444,6 +445,7 @@ func TestIntegrationLiteralsMatchTheCode(t *testing.T) {
 	expectRow("Publication `import_failed{stalled}` after", spoken(stalled), reducer)
 	expectRow("Replacement grab worker tick", spoken(tick), worker)
 	expectRow("Indexer-outage re-queue", spoken(outage), reducer)
+	expectRow("Indexer-outage ceiling on its own `retry_at_unix`", spoken(outageCeiling), reducer)
 
 	inSection("6. ", "its own "+spoken(sendTimeout)+" deadline")
 	inSection("6. ", spoken(warnAfter)+" after the import")

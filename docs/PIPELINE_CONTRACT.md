@@ -149,7 +149,7 @@ Rules, each with its reason:
 | `reason` | `stage` | Set when (by) | `blames_release` | `salvage` may be `pending` | Bytes after (§2.6) |
 |---|---|---|---|---|---|
 | `health` | `health` | articles missing below critical (owner) | yes | **yes** — the current handler already attempts PAR repair and salvage on this path (`manager.rs:897, 955`); 32 of the last 112 on nuc3 fetched *something* | `failure_action`, after salvage settles |
-| `fetch` | `fetch` | NZB/URL fetch exhausted (URL fetcher, own site). Carries `fetch_cause`: `gone` (the indexer answered 404/410/403 for *this* item) or `indexer_unavailable` (exhausted through 429/5xx/timeouts/transport, `fetch.rs:230`) | **only when `cause: gone`** — an indexer outage must not blocklist healthy releases; curator re-queues the want after the indexer's `retry_at` instead of grabbing an alternative | no | nothing to dispose |
+| `fetch` | `fetch` | NZB/URL fetch exhausted (URL fetcher, own site). Carries `fetch_cause`: `gone` (the indexer answered 404/410/403 for *this* item) or `indexer_unavailable` (exhausted through 429/5xx/timeouts/transport, or at once on a 429/503 whose Retry-After exceeds the ladder — an exhausted quota). That quota case also carries `retry_at_unix` (Unix seconds; `retryAtUnix` on the request-admission receipt, the `Failure:RetryAt` marker on history rows): when the indexer said to come back | **only when `cause: gone`** — an indexer outage must not blocklist healthy releases; curator re-queues the want after the indexer's `retry_at` (its own `retry_at_unix`, at most 48 h ahead, else 15 minutes) instead of grabbing an alternative | no | nothing to dispose |
 | `par` | `par_verify`/`par_repair` | repair impossible or budget exhausted (PP) | yes | yes | `failure_action`, after salvage settles |
 | `unpack` | `unpack` | extractor failed on the bytes, not the disk (PP) | yes | yes | `failure_action`, after salvage settles |
 | `script` | `script` | post script non-zero (PP) | no | yes | `failure_action` |
@@ -443,7 +443,8 @@ the grab itself, which the `replacement_grabs` worker performs:
    `blames_release`**. `io`, `publish`, `script`, `hold_expired`,
    `cancelled`, `lost` and `fetch{indexer_unavailable}` never blocklist; an
    `indexer_unavailable` failure re-queues the *same* want after the
-   indexer's `retry_at` (the existing `RequestBudget` deferral) and writes no
+   indexer's `retry_at` (the existing `RequestBudget` deferral; set from the
+   terminal's `retry_at_unix` when Runner names one) and writes no
    `replacement_grabs` row — grabbing an alternative from an indexer that is
    down is the storm, not the fix.
 3. **Write the replacement grab** — unless the terminal is `cancelled` or

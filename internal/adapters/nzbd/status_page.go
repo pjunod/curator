@@ -88,7 +88,7 @@ func readStatusPage[T any](body io.Reader, collection string, limit int) ([]T, m
 					return json.Marshal(counts)
 				case "kind", "torrent_role", "id", "job", "name", "status", "size_bytes", "downloaded_bytes", "rate_bps", "remaining_bytes", "pp_done", "ready", "stages", "control", "final_dir", "seq",
 					// pipeline contract v2: the projected status and the typed terminal.
-					"status_projected", "transfer", "outcome", "reason", "fetch_cause", "stage", "message", "blames_release",
+					"status_projected", "transfer", "outcome", "reason", "fetch_cause", "retry_at_unix", "stage", "message", "blames_release",
 					"salvage", "keep_on_failure", "fetched", "publication":
 					return statusValue(r)
 				default:
@@ -262,7 +262,7 @@ func statusArray(r *bufio.Reader, limit int, element func() error) error {
 var keptStatusParams = map[string]bool{
 	TransferParam: true, "*Control:v1": true, "Failure:Files": true,
 	"Delivery:Path": true, "Delivery:Generation": true, "Delivery:ManifestDigest": true,
-	"Failure:Reason": true, "Failure:FetchCause": true, "Failure:BlamesRelease": true, "Failure:Salvage": true,
+	"Failure:Reason": true, "Failure:FetchCause": true, "Failure:RetryAt": true, "Failure:BlamesRelease": true, "Failure:Salvage": true,
 }
 
 func statusParams(r *bufio.Reader) (json.RawMessage, error) {

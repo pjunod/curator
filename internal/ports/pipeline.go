@@ -9,6 +9,7 @@ import (
 	"io"
 	"sort"
 	"strconv"
+	"time"
 	"unicode/utf8"
 )
 
@@ -105,6 +106,11 @@ type RunnerTerminal struct {
 	KeepOnFailure bool
 	Fetched       Fetched
 	Publication   *RunnerPublication
+
+	// RetryAt is fetch{indexer_unavailable} only: when the indexer itself said
+	// to come back (Runner's retry_at_unix, from the Retry-After that ended the
+	// fetch). Zero when it named none.
+	RetryAt time.Time
 }
 
 // RunnerPublication names one published generation.

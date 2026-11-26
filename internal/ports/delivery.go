@@ -120,6 +120,7 @@ type RequestAdmission struct {
 	// then read by the legacy string rule.
 	FailureReason string `json:"failureReason,omitempty"`
 	FetchCause    string `json:"fetchCause,omitempty"`
+	RetryAtUnix   int64  `json:"retryAtUnix,omitempty"`
 	BlamesRelease *bool  `json:"blamesRelease,omitempty"`
 	Salvage       string `json:"salvage,omitempty"`
 }

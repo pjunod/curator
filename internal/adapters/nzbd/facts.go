@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/pjunod/monarr/internal/ports"
 )
@@ -29,6 +30,7 @@ type terminalWire struct {
 	Outcome       string           `json:"outcome"`
 	Reason        string           `json:"reason"`
 	FetchCause    string           `json:"fetch_cause"`
+	RetryAtUnix   int64            `json:"retry_at_unix"`
 	Stage         string           `json:"stage"`
 	Message       string           `json:"message"`
 	BlamesRelease *bool            `json:"blames_release"`
@@ -62,6 +64,12 @@ func terminalOf(w terminalWire, params [][2]string, record *historyRecord) (port
 	}
 	t := ports.RunnerTerminal{Outcome: w.Outcome, Reason: w.Reason, FetchCause: w.FetchCause, Stage: w.Stage,
 		Message: w.Message, Salvage: w.Salvage, KeepOnFailure: w.KeepOnFailure}
+	retryAt := w.RetryAtUnix
+	if retryAt <= 0 {
+		// History rows carry it only as their Failure:RetryAt marker.
+		retryAt, _ = strconv.ParseInt(paramValue(params, "Failure:RetryAt"), 10, 64)
+	}
+	t.RetryAt = retryAtOf(retryAt)
 	if w.BlamesRelease != nil {
 		t.BlamesRelease = *w.BlamesRelease
 	} else if w.Outcome == ports.OutcomeFailed {
@@ -301,4 +309,13 @@ func statusFact(st ports.DownloadStatus, seq uint64) *ports.RunnerFact {
 		src = fmt.Sprintf("event %d", seq)
 	}
 	return &ports.RunnerFact{Kind: ports.FactStatus, Transfer: st.Transfer, Handle: st.Handle, Status: &s, Source: src}
+}
+
+// retryAtOf reads Runner's retry_at_unix (whole seconds); zero or absent
+// means the indexer named no time of its own.
+func retryAtOf(unix int64) time.Time {
+	if unix <= 0 {
+		return time.Time{}
+	}
+	return time.Unix(unix, 0)
 }

@@ -96,7 +96,7 @@ func TestPublicationReadyIsASalvage(t *testing.T) {
 
 // A typed job_pp_finished is taken as Runner states it.
 func TestTypedPPFinishedIsTakenAsStated(t *testing.T) {
-	f, ok := ppFinishedFact([]byte(`{"job":5,"transfer":"t-5","outcome":"failed","reason":"fetch","fetch_cause":"indexer_unavailable",
+	f, ok := ppFinishedFact([]byte(`{"job":5,"transfer":"t-5","outcome":"failed","reason":"fetch","fetch_cause":"indexer_unavailable","retry_at_unix":1795700000,
 		"blames_release":false,"salvage":"none","message":"indexer 503","fetched":{"bytes":100},"history_seq":77,"history_incarnation":"inc"}`), 12)
 	if !ok || f.Kind != ports.FactTerminal || f.Terminal == nil {
 		t.Fatalf("pp_finished = %+v ok=%v", f, ok)
@@ -104,6 +104,9 @@ func TestTypedPPFinishedIsTakenAsStated(t *testing.T) {
 	tm := f.Terminal
 	if tm.Outcome != ports.OutcomeFailed || tm.Reason != ports.ReasonFetch || tm.FetchCause != ports.FetchCauseIndexerUnavailable || tm.BlamesRelease {
 		t.Fatalf("terminal = %+v, want failed/fetch{indexer_unavailable} not blaming the release", tm)
+	}
+	if tm.RetryAt.Unix() != 1795700000 {
+		t.Fatalf("retry_at = %v, want the indexer's own time from retry_at_unix", tm.RetryAt)
 	}
 	if f.Transfer != "t-5" || f.HistorySeq != 77 || f.HistoryIncarnation != "inc" || tm.Fetched.Bytes != 100 {
 		t.Fatalf("fact = %+v fetched %+v", f, tm.Fetched)

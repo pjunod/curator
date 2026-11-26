@@ -1067,6 +1067,12 @@ also stop automatic re-grabs. The cap applies to every automatic search — the 
 Auto search, the backlog pass and the re-search after a failure. A manual
 grab is never capped.
 
+When Runner could not fetch an NZB because **the indexer refused it** — its
+daily allowance is used up — the release is not blamed and nothing is grabbed
+in its place. Monarr leaves that indexer alone until the time the indexer
+itself named (its Retry-After, at most 48 hours ahead), or for 15 minutes when
+it named none, then searches the same want again.
+
 A download that **completed but whose every file the import refused**
 counts as a whole release spent: the bytes arrived, they just had nowhere to
 go. (An import that stopped on a local problem — a full disk, a stall —
