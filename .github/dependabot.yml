@@ -30,10 +30,11 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
-    # The Expo SDK fixes these versions (bundledNativeModules), and Expo
-    # Doctor in CI rejects anything else. They move only with an Expo SDK
-    # upgrade via `npx expo install --fix`. Ignores that list only
-    # update-types skip version updates; security updates still open.
+    # The Expo SDK fixes react and react-native (bundledNativeModules), and
+    # react-test-renderer and @types/react must match react; Expo Doctor in
+    # CI rejects mismatches. They move only with an Expo SDK upgrade via
+    # `npx expo install --fix`. Because these ignores list only update-types,
+    # they skip version updates but not security updates.
     ignore:
       - dependency-name: react
         update-types:
