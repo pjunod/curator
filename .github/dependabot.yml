@@ -30,6 +30,30 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    # The Expo SDK fixes these versions (bundledNativeModules), and Expo
+    # Doctor in CI rejects anything else. They move only with an Expo SDK
+    # upgrade via `npx expo install --fix`. Ignores that list only
+    # update-types skip version updates; security updates still open.
+    ignore:
+      - dependency-name: react
+        update-types:
+          - version-update:semver-patch
+          - version-update:semver-minor
+          - version-update:semver-major
+      - dependency-name: react-native
+        update-types:
+          - version-update:semver-patch
+          - version-update:semver-minor
+          - version-update:semver-major
+      - dependency-name: react-test-renderer
+        update-types:
+          - version-update:semver-patch
+          - version-update:semver-minor
+          - version-update:semver-major
+      - dependency-name: "@types/react"
+        update-types:
+          - version-update:semver-minor
+          - version-update:semver-major
     groups:
       mobile-patches:
         applies-to: version-updates
