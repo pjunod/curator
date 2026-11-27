@@ -44,7 +44,7 @@ RUN mkdir -p /data-skel/backups && chown -R 1000:1000 /data-skel
 
 # ---- Cinema's Jellyfin FFmpeg 8 and its complete runtime dependencies ----
 # Match Cinema/plurx: the signed Jellyfin Bookworm repository and package major.
-FROM debian:bookworm-slim@sha256:734a72b3d6142a71993b4bc580ca01d8ca687f77a2c422d96a961d3376b179bc AS media-tools
+FROM debian:bookworm-slim@sha256:e67eeead736ff7bbe258ef088bff683635c561b1fcfefad0806c1df4ab49ce0e AS media-tools
 RUN apt-get update \
  && apt-get install -y --no-install-recommends ca-certificates curl gnupg \
  && install -d /etc/apt/keyrings \
