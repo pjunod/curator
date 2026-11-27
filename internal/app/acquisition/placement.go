@@ -531,6 +531,15 @@ func (s *Service) commitPlacement(ctx context.Context, item domain.MediaItem, sc
 				conf = mediainfo.ConfidenceNone
 			}
 		}
+		if stated, ok := statedSource(ctx); ok && item.Kind != domain.KindBook && prov != mediainfo.ProvenanceImplausible {
+			// A person said what these files are. The source is theirs; the
+			// resolution stays whatever the pixels measured.
+			measured.Source = stated
+			if info.Measured() {
+				measured.Resolution = info.ResolutionTier()
+			}
+			prov, conf = mediainfo.ProvenanceManual, mediainfo.ConfidenceNone
+		}
 		p = sqlite.Placement{DownloadID: scope.DownloadID, ReplacementOperationID: scope.ReplacementOperationID,
 			SourceGeneration: scope.SourceGeneration, SourceTransfer: scope.Transfer,
 			SourcePayloadGeneration: acceptedPublicationGeneration(ctx), SourceGUID: scope.SourceGUID, SourceIndexerID: scope.SourceIndexerID,

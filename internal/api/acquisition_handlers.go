@@ -1160,6 +1160,9 @@ func (s *Server) PlanImport(w http.ResponseWriter, r *http.Request) {
 	if in.RemoveOriginal != nil {
 		req.RemoveOriginal = *in.RemoveOriginal
 	}
+	if in.QualitySource != nil {
+		req.QualitySource = string(*in.QualitySource)
+	}
 	for _, f := range in.Files {
 		file := acquisition.ItemImportFile{Path: f.Path, Season: -1}
 		if f.Season != nil {
@@ -1234,6 +1237,9 @@ func (s *Server) ManualImport(w http.ResponseWriter, r *http.Request) {
 	}
 	if in.RemoveOriginal != nil {
 		req.RemoveOriginal = *in.RemoveOriginal
+	}
+	if in.QualitySource != nil {
+		req.QualitySource = string(*in.QualitySource)
 	}
 	id, err := s.deps.Acquisition.QueueManualImport(r.Context(), req)
 	if err != nil {
