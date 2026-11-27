@@ -1208,10 +1208,23 @@ export interface ScannedPublication {
 
 export interface EpisodeTarget { path: string; season: number; episodes: number[] }
 
+/** Sources a person may state for files they import by hand (a disc they
+ *  ripped, say). Resolution is never stated: Curator measures it. */
+export const STATED_SOURCES = [
+  { value: 'remux', label: 'Remux (lossless disc copy)' },
+  { value: 'bluray', label: 'Blu-ray (re-encoded)' },
+  { value: 'webdl', label: 'WEB-DL' },
+  { value: 'webrip', label: 'WEBRip' },
+  { value: 'hdtv', label: 'HDTV' },
+  { value: 'dvd', label: 'DVD' },
+] as const
+export type StatedSource = (typeof STATED_SOURCES)[number]['value']
+
 export interface ImportPlanRequest {
   mediaItemId: number
   copyId?: number
   removeOriginal?: boolean
+  qualitySource?: StatedSource
   files: { path: string; season?: number; episodes?: number[] }[]
 }
 
@@ -1247,6 +1260,8 @@ export interface ManualImportRequest {
   reviewLegacyFiles?: CompletedFileSelection[]
   /** A series file's chosen episode(s), per selected path. */
   episodeTargets?: EpisodeTarget[]
+  /** The source the person states for these files; recorded as set by hand. */
+  qualitySource?: StatedSource
   /** Remove each loose source once its library copy is placed. */
   removeOriginal?: boolean
 }

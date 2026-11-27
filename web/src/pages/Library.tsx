@@ -10,6 +10,7 @@ import {
 import { PAGE_SIZES, Pager, PageSizePicker, sliceForPage } from '../Pager'
 import { CardSizePicker } from '../CardSizePicker'
 import { DiskScanControl } from '../DiskScan'
+import { ImportIntoTitleButton } from '../ImportIntoTitle'
 import { PRESENCES, matchesPresence, validPresence, type Presence } from '../libraryPresence'
 
 type LibraryTab = 'all' | 'movie' | 'series' | BookType
@@ -455,6 +456,7 @@ export function LibraryPage() {
         <CardSizePicker />
         <div className="head-actions">
           <DiskScanControl label="Scan disk" />
+          <ImportIntoTitleButton />
           <button onClick={() => { setEditing(!editing); setSelected(new Set()); setBulkNote('') }}>
             {editing ? 'Done' : 'Edit'}
           </button>

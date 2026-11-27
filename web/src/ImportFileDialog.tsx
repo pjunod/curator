@@ -13,6 +13,8 @@ import {
   placePublicationFiles,
   planImport,
   scanImportFolder,
+  STATED_SOURCES,
+  type StatedSource,
   type ImportPlanFile,
   type ImportPlanMode,
   type MediaItemDetail,
@@ -53,10 +55,12 @@ interface Started { downloadId?: number; label: string; error?: string }
  * plan. Runner deliveries go through Resolve's placement; loose files through
  * the queued manual import. The target item is fixed: it is this page's.
  */
-export function ImportFileDialog({ item, scope, onClose, returnFocus }: {
+export function ImportFileDialog({ item, scope, onClose, onStarted, returnFocus }: {
   item: MediaItemDetail
   scope?: ActivityFileScope
   onClose: () => void
+  /** Called once at least one import job has started. */
+  onStarted?: () => void
   returnFocus?: RefObject<HTMLElement | null>
 }) {
   const qc = useQueryClient()
@@ -67,6 +71,11 @@ export function ImportFileDialog({ item, scope, onClose, returnFocus }: {
   const [choices, setChoices] = useState<Record<string, Choice>>({})
   const [copyId, setCopyId] = useState(scope?.copyId ?? 0)
   const [removeOriginal, setRemoveOriginal] = useState(false)
+  // Files someone made themselves (a ripped disc) carry no release name to
+  // say what they are; the person can. Not offered for a job's own files.
+  const [source, setSource] = useState<StatedSource | ''>('')
+  const canState = !scope && item.kind !== 'book'
+  const qualitySource = (canState && source) || undefined
   const [started, setStarted] = useState<Started[]>([])
 
   const defaultPath = useQuery({ queryKey: ['import-default-path'], queryFn: getManualImportDefaultPath, enabled: !scope })
@@ -121,6 +130,7 @@ export function ImportFileDialog({ item, scope, onClose, returnFocus }: {
     mediaItemId: item.id,
     copyId: copyId || undefined,
     removeOriginal,
+    qualitySource,
     files: chosen.map((f) => {
       const c = parseChoice(choiceFor(f))
       return { path: f.path, season: c?.season ?? -1, episodes: c?.episodes ?? [] }
@@ -176,6 +186,7 @@ export function ImportFileDialog({ item, scope, onClose, returnFocus }: {
             mediaItemId: item.id,
             copyId: copyId || undefined,
             removeOriginal,
+            qualitySource,
             episodeTargets: item.kind === 'series'
               ? group.flatMap((f) => {
                   const c = parseChoice(choiceFor(f))
@@ -193,6 +204,7 @@ export function ImportFileDialog({ item, scope, onClose, returnFocus }: {
     onSuccess: (out) => {
       setStarted(out)
       setStep('started')
+      if (out.some((o) => o.downloadId)) onStarted?.()
       void qc.invalidateQueries({ queryKey: ['queue'] })
     },
   })
@@ -286,6 +298,16 @@ export function ImportFileDialog({ item, scope, onClose, returnFocus }: {
                   <option key={c.id} value={c.id}>{c.name || c.bookType || `Copy ${c.id}`}</option>
                 ))}
               </select>
+            </label>
+          )}
+          {canState && (
+            <label className="ifd-copy">
+              Source{' '}
+              <select value={source} onChange={(e) => setSource(e.target.value as StatedSource | '')}>
+                <option value="">From the file name</option>
+                {STATED_SOURCES.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
+              </select>
+              <span className="muted"> For a disc you ripped, say what it is; resolution is measured from the file.</span>
             </label>
           )}
           {plan.isError && <div className="banner warning" role="alert">{(plan.error as Error).message}</div>}
