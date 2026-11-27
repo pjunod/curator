@@ -4,7 +4,7 @@ go 1.26.11
 
 require (
 	github.com/betamos/zeroconf v0.1.7
-	github.com/oapi-codegen/runtime v1.6.0
+	github.com/oapi-codegen/runtime v1.9.1
 	github.com/pressly/goose/v3 v3.30.1
 	golang.org/x/net v0.63.0
 	golang.org/x/sys v0.50.0
