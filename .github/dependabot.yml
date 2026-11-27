@@ -55,7 +55,72 @@ updates:
         update-types:
           - version-update:semver-minor
           - version-update:semver-major
+      # @types/react-test-renderer tracks react's major.
+      - dependency-name: "@types/react-test-renderer"
+        update-types:
+          - version-update:semver-major
+      # `expo` is the SDK itself: its minors and patches stay within SDK 58,
+      # and a major is an SDK upgrade done with `npx expo install --fix`.
+      - dependency-name: expo
+        update-types:
+          - version-update:semver-major
+      # These direct dependencies have ~ ranges in the expo package's
+      # bundledNativeModules.json, so only patches stay valid for Expo
+      # Doctor. When `npx expo install` adds a bundled module, list it here
+      # too. (A wildcard `expo-*` would also freeze expo-doctor, which is not
+      # SDK-pinned.)
+      - dependency-name: expo-build-properties
+        update-types:
+          - version-update:semver-minor
+          - version-update:semver-major
+      - dependency-name: expo-camera
+        update-types:
+          - version-update:semver-minor
+          - version-update:semver-major
+      - dependency-name: expo-constants
+        update-types:
+          - version-update:semver-minor
+          - version-update:semver-major
+      - dependency-name: expo-crypto
+        update-types:
+          - version-update:semver-minor
+          - version-update:semver-major
+      - dependency-name: expo-network
+        update-types:
+          - version-update:semver-minor
+          - version-update:semver-major
+      - dependency-name: expo-secure-store
+        update-types:
+          - version-update:semver-minor
+          - version-update:semver-major
+      - dependency-name: expo-splash-screen
+        update-types:
+          - version-update:semver-minor
+          - version-update:semver-major
+      - dependency-name: expo-status-bar
+        update-types:
+          - version-update:semver-minor
+          - version-update:semver-major
+      - dependency-name: react-native-safe-area-context
+        update-types:
+          - version-update:semver-minor
+          - version-update:semver-major
     groups:
+      # bundledNativeModules.json couples an `expo` release to the module
+      # patches it expects, so they land in one PR. This group comes before
+      # mobile-patches because a dependency joins only the first group it
+      # matches.
+      expo-sdk:
+        applies-to: version-updates
+        patterns:
+          - expo
+          - "expo-*"
+          - react-native-safe-area-context
+        exclude-patterns:
+          - expo-doctor
+        update-types:
+          - patch
+          - minor
       mobile-patches:
         applies-to: version-updates
         patterns:
