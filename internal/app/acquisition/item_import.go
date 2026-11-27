@@ -709,8 +709,12 @@ func (s *Service) planItemFile(ctx context.Context, pc *planContext, f ItemImpor
 	var q quality.Quality
 	if item.Kind == domain.KindBook {
 		q = quality.Quality{Source: quality.Source(filename.BookQualitySource(src))}
-	} else {
+	} else if pub == nil {
 		q = handMadeQuality(src, parsed.Quality, pc.stated)
+	} else {
+		// A runner delivery is placed under its release's claim, as its
+		// import will place it.
+		q = parsed.Quality
 	}
 	line.Quality = q.Display()
 

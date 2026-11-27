@@ -5190,6 +5190,9 @@ type SearchResult struct {
 	InLibrary       bool      `json:"inLibrary"`
 	Kind            MediaKind `json:"kind"`
 
+	// LibraryItemId The library title this result already is, when inLibrary (movies and series).
+	LibraryItemId *int64 `json:"libraryItemId,omitempty"`
+
 	// Olid Present for book results (ADR 0006).
 	Olid       *string `json:"olid,omitempty"`
 	Overview   string  `json:"overview"`

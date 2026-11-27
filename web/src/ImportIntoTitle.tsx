@@ -52,10 +52,22 @@ function ImportIntoTitleFlow({ onClose, returnFocus }: { onClose: () => void; re
 
   const library = useQuery({ queryKey: ['library', kind], queryFn: () => getLibrary(kind), enabled: query !== '' })
   const search = useQuery({ queryKey: ['metadata-search', kind, query], queryFn: () => searchMetadata(kind, query), enabled: query !== '', retry: false })
-  const candidates = useMemo(() => rematchCandidates(library.data ?? [], search.data ?? [], query, 0), [library.data, search.data, query])
+  const candidates = useMemo(() => {
+    const listed = rematchCandidates(library.data ?? [], search.data ?? [], query, 0)
+    // A provider hit the library already holds (found by id, or under
+    // another title such as tmdb:550) is that library title.
+    const have = new Set(listed.map((c) => c.target.itemId).filter(Boolean))
+    for (const r of search.data ?? []) {
+      if (!r.inLibrary || !r.libraryItemId || have.has(r.libraryItemId)) continue
+      have.add(r.libraryItemId)
+      listed.push({ key: `lib-${r.libraryItemId}`, title: r.title, year: r.year || undefined, detail: 'in your library', target: { itemId: r.libraryItemId }, inLibrary: true, current: false })
+    }
+    return listed
+  }, [library.data, search.data, query])
   const roots = useQuery({ queryKey: ['rootfolders'], queryFn: getRootFolders })
   const usable = (roots.data ?? []).filter((r) => (r.kind === 'mixed' || r.kind === kind) && r.accessible)
-  const chosenRoot = rootId || usable[0]?.id || 0
+  const chosenRoot = usable.some((r) => r.id === rootId) ? rootId : usable[0]?.id || 0
+  const [closing, setClosing] = useState(false)
 
   const proceed = useMutation({
     mutationFn: async (c: RematchCandidate): Promise<{ item: MediaItemDetail; added: number }> => {
@@ -76,14 +88,23 @@ function ImportIntoTitleFlow({ onClose, returnFocus }: { onClose: () => void; re
   })
 
   const finish = async () => {
+    if (closing) return
+    setClosing(true)
     if (addedId && !started.current) {
       // Added only for this import, and nothing was imported: take it back
-      // out. Nothing is on disk for it, so this removes just the record.
-      try { await deleteLibraryItem(addedId) } catch { /* it stays, visible and unmonitored */ }
+      // out — unless files reached it some other way meanwhile (a disk
+      // scan). Deleting removes the record only; nothing on disk is touched.
+      try {
+        const now = await getLibraryItem(addedId)
+        if (now.files.length === 0) await deleteLibraryItem(addedId)
+      } catch { /* it stays, visible and unmonitored */ }
       void qc.invalidateQueries({ queryKey: ['library'] })
     }
     onClose()
   }
+  // While the add is in flight the dialog cannot be dismissed: the title it
+  // is adding must reach the import, or be taken back out.
+  const dismiss = () => { if (!proceed.isPending) onClose() }
 
   if (item) {
     return <ImportFileDialog item={item} returnFocus={returnFocus} onStarted={() => { started.current = true }} onClose={() => void finish()} />
@@ -91,19 +112,21 @@ function ImportIntoTitleFlow({ onClose, returnFocus }: { onClose: () => void; re
 
   const isNew = !!picked && !picked.target.itemId
   return (
-    <ActionDialog title="Import files" className="rmd" onClose={onClose} returnFocus={returnFocus}>
+    <ActionDialog title="Import files" className="rmd" onClose={dismiss} returnFocus={returnFocus}>
       <p className="muted">Which title are these files? Titles in your library are listed first; a title that is not there yet is added, unmonitored and without a search.</p>
       <div className="rmd-scope" role="radiogroup" aria-label="Kind">
-        <label><input type="radio" checked={kind === 'movie'} onChange={() => { setKind('movie'); setPicked(null) }} /> Movie</label>
-        <label><input type="radio" checked={kind === 'series'} onChange={() => { setKind('series'); setPicked(null) }} /> Series</label>
+        <label><input type="radio" name="import-kind" checked={kind === 'movie'} onChange={() => { setKind('movie'); setPicked(null) }} /> Movie</label>
+        <label><input type="radio" name="import-kind" checked={kind === 'series'} onChange={() => { setKind('series'); setPicked(null) }} /> Series</label>
       </div>
       <form className="rmd-search" onSubmit={(e) => { e.preventDefault(); setPicked(null); setQuery(draft.trim()) }}>
         <input aria-label="Title to search for" placeholder="Title, or tmdb:550" value={draft} onChange={(e) => setDraft(e.target.value)} />
         <button type="submit" disabled={!draft.trim()}>Search</button>
       </form>
+      <div role="status">
       {(library.isFetching || search.isFetching) && <span className="muted">Searching…</span>}
       {search.isError && <span className="muted">Provider search unavailable: {(search.error as Error).message}. Library titles are still listed.</span>}
       {query && !library.isFetching && !search.isFetching && candidates.length === 0 && <span className="muted">Nothing found for “{query}”.</span>}
+      </div>
       {candidates.length > 0 && (
         <ul className="rmd-cands" aria-label="Titles">
           {candidates.map((c) => (
@@ -128,7 +151,7 @@ function ImportIntoTitleFlow({ onClose, returnFocus }: { onClose: () => void; re
       )}
       {proceed.isError && <div className="banner warning" role="alert">{(proceed.error as Error).message}</div>}
       <div className="row-actions">
-        <button type="button" onClick={onClose}>Cancel</button>
+        <button type="button" onClick={dismiss} disabled={proceed.isPending}>Cancel</button>
         <button type="button" className="btn-accent" disabled={!picked || (isNew && !chosenRoot) || proceed.isPending}
           onClick={() => picked && proceed.mutate(picked)}>
           {proceed.isPending ? 'Adding…' : isNew ? 'Add and choose files' : 'Choose files'}

@@ -383,6 +383,8 @@ export interface SearchResult {
   overview: string
   posterPath: string
   inLibrary: boolean
+  /** The library title this result already is (movies and series). */
+  libraryItemId?: number
   /** Book editions already present for this Open Library work. */
   bookTypes?: BookType[]
 }

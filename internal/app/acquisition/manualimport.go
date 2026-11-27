@@ -14,6 +14,7 @@ import (
 
 	"github.com/pjunod/monarr/internal/domain/filename"
 	"github.com/pjunod/monarr/internal/domain/parser"
+	"github.com/pjunod/monarr/internal/domain/quality"
 	"github.com/pjunod/monarr/internal/infra/sqlite"
 	"github.com/pjunod/monarr/internal/ports"
 )
@@ -223,12 +224,6 @@ func (s *Service) ManualImport(ctx context.Context, req ManualImportRequest) (Im
 	if !ValidStatedSource(req.QualitySource) {
 		return ImportResult{}, fmt.Errorf("unknown source %q", req.QualitySource)
 	}
-	if req.DownloadID == 0 && req.QualitySource != "" {
-		// A standalone inline import has no durable row; its selection entry
-		// lives only for this call and carries the stated source to the
-		// importer the same way a queued one does.
-		dl.Handoff = []sqlite.HandoffEntry{{Step: stepManualQueued, At: time.Now().UnixMilli(), Paths: req.Paths, QualitySource: req.QualitySource}}
-	}
 
 	if req.DownloadID != 0 {
 		if s.ImportRunning(dl.ID) {
@@ -271,7 +266,7 @@ func (s *Service) ManualImport(ctx context.Context, req ManualImportRequest) (Im
 		ctx = bound
 		defer finish()
 	}
-	result, err := s.importDownloadFiles(ctx, dl, req.Path, req.Paths, true)
+	result, err := s.importDownloadFiles(withStatedSource(ctx, quality.Source(req.QualitySource)), dl, req.Path, req.Paths, true)
 	if err != nil {
 		if req.DownloadID != 0 && !errors.Is(err, context.Canceled) {
 			if row, e := s.db.GetDownload(ctx, req.DownloadID); e == nil {

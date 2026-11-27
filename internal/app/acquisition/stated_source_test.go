@@ -53,7 +53,7 @@ func TestManualImportOfARipUsesTheStatedSourceAndMeasuredResolution(t *testing.T
 		t.Fatal(err)
 	}
 	dl, err := db.GetDownload(ctx, id)
-	if err != nil || statedSourceOf(dl) != quality.SourceRemux {
+	if err != nil || dl.Handoff[0].Step != stepManualQueued || dl.Handoff[0].QualitySource != "remux" {
 		t.Fatalf("queued row %+v err %v, want the stated source kept in its handoff", dl.Handoff, err)
 	}
 	// Without started workers the import runs inline (importers.go).

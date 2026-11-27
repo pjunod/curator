@@ -314,14 +314,14 @@ func (s *Service) importDownloadFiles(ctx context.Context, dl sqlite.Download, s
 	if err != nil {
 		return ImportResult{}, err
 	}
-	// Every way into a manual import — queued, a Runner delivery's chosen
-	// files, the inline form — reads the stated source from the same
-	// durable handoff entry.
+	// Files a person brought in by hand — a standalone manual import, or
+	// any import they stated a source for — are named from what can be
+	// known before placement: their word on the source, and a resolution
+	// read from the file when the name gives none. A hand-picked release
+	// keeps its release's claim, as an automatic one does.
 	_, recovering := ctx.Value(recoveryPlacementKey{}).(*recoveryPlacementContext)
-	handMade := manual && !recovering
-	if handMade {
-		ctx = withStatedSource(ctx, statedSourceOf(dl))
-	}
+	_, stated := statedSource(ctx)
+	handMade := !recovering && (dl.Protocol == "manual" || stated)
 
 	// The import scope: which copy this grab was for decides the profile,
 	// the destination folder, and which existing files count as "current".

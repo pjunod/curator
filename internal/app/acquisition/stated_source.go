@@ -5,7 +5,6 @@ import (
 
 	"github.com/pjunod/monarr/internal/domain/quality"
 	"github.com/pjunod/monarr/internal/infra/probe"
-	"github.com/pjunod/monarr/internal/infra/sqlite"
 )
 
 // StatedSources are the video sources a person may state for files they
@@ -45,18 +44,6 @@ func handMadeQuality(src string, named quality.Quality, stated quality.Source) q
 		}
 	}
 	return q
-}
-
-// statedSourceOf is the source stated on the newest manual selection in a
-// download's durable handoff trace — the entry the import is running.
-func statedSourceOf(dl sqlite.Download) quality.Source {
-	for i := len(dl.Handoff) - 1; i >= 0; i-- {
-		switch dl.Handoff[i].Step {
-		case stepManualQueued, stepLegacyReviewImportQueued:
-			return quality.Source(dl.Handoff[i].QualitySource)
-		}
-	}
-	return ""
 }
 
 type statedSourceKey struct{}

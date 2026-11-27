@@ -5549,6 +5549,10 @@ components:
           type: string
         inLibrary:
           type: boolean
+        libraryItemId:
+          type: integer
+          format: int64
+          description: The library title this result already is, when inLibrary (movies and series).
         bookTypes:
           type: array
           items: { $ref: "#/components/schemas/BookType" }
