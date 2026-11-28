@@ -162,7 +162,7 @@ func (d *Dispatcher) attempt(ctx context.Context, del sqlite.Delivery) {
 	}
 	if del.Event == ports.ScanLinkedEvent {
 		if !cfg.Enabled || !cfg.OnImport || !queued(cfg) {
-			d.settle(ctx, del, cfg.Type, "", errors.New("Cinema no longer opts in to library notifications"), true)
+			d.settle(ctx, del, cfg.Type, "", errors.New("library notifications are disabled for this Cinema connection"), true)
 			return
 		}
 		if err := d.refreshScanDelivery(ctx, &del, &n); err != nil {
@@ -176,7 +176,7 @@ func (d *Dispatcher) attempt(ctx context.Context, del sqlite.Delivery) {
 		var fresh bool
 		target, fresh = d.refreshFeatures(ctx, cfg, target)
 		if !fresh {
-			d.settle(ctx, del, cfg.Type, "", errors.New("Cinema's exact file probe support could not be confirmed"), false)
+			d.settle(ctx, del, cfg.Type, "", errors.New("could not confirm Cinema's exact-file probe support"), false)
 			return
 		}
 	}
