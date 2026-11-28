@@ -495,6 +495,8 @@ type ItemImportPlanRequest struct {
 	CopyID         int64
 	RemoveOriginal bool
 	Files          []ItemImportFile
+	// QualitySource is the source the person states for these files.
+	QualitySource string
 }
 
 // ItemImportPlanFile is the confirm step's line for one file.
@@ -526,6 +528,7 @@ type planContext struct {
 	subtitles map[string]map[string]int // folder → video name → count
 	downloads map[int64]placeVerdict    // per runner delivery: may it be placed here
 	folders   []string                  // library folders (Remove original's refusal)
+	stated    quality.Source            // the source the person states, if any
 }
 
 // PlanItemImport answers the confirm step without moving anything: per
@@ -541,7 +544,10 @@ func (s *Service) PlanItemImport(ctx context.Context, req ItemImportPlanRequest)
 	if err != nil {
 		return nil, err
 	}
-	pc := &planContext{item: item, root: item.Path, remove: req.RemoveOriginal,
+	if !ValidStatedSource(req.QualitySource) {
+		return nil, fmt.Errorf("%w: unknown source %q", ErrInvalidImportPlan, req.QualitySource)
+	}
+	pc := &planContext{item: item, root: item.Path, remove: req.RemoveOriginal, stated: quality.Source(req.QualitySource),
 		subtitles: map[string]map[string]int{}, downloads: map[int64]placeVerdict{}}
 	profileID := item.QualityProfileID
 	if req.CopyID != 0 {
@@ -703,7 +709,11 @@ func (s *Service) planItemFile(ctx context.Context, pc *planContext, f ItemImpor
 	var q quality.Quality
 	if item.Kind == domain.KindBook {
 		q = quality.Quality{Source: quality.Source(filename.BookQualitySource(src))}
+	} else if pub == nil {
+		q = handMadeQuality(src, parsed.Quality, pc.stated)
 	} else {
+		// A runner delivery is placed under its release's claim, as its
+		// import will place it.
 		q = parsed.Quality
 	}
 	line.Quality = q.Display()

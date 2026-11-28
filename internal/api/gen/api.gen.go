@@ -1700,6 +1700,36 @@ func (e SeriesMonitorMode) Valid() bool {
 	}
 }
 
+// Defines values for StatedSource.
+const (
+	Bluray StatedSource = "bluray"
+	Dvd    StatedSource = "dvd"
+	Hdtv   StatedSource = "hdtv"
+	Remux  StatedSource = "remux"
+	Webdl  StatedSource = "webdl"
+	Webrip StatedSource = "webrip"
+)
+
+// Valid indicates whether the value is a known member of the StatedSource enum.
+func (e StatedSource) Valid() bool {
+	switch e {
+	case Bluray:
+		return true
+	case Dvd:
+		return true
+	case Hdtv:
+		return true
+	case Remux:
+		return true
+	case Webdl:
+		return true
+	case Webrip:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for StatusHeadlineState.
 const (
 	StatusHeadlineStateActive  StatusHeadlineState = "active"
@@ -3458,8 +3488,11 @@ type ImportPlanRequest struct {
 		Path     string `json:"path"`
 		Season   *int   `json:"season,omitempty"`
 	} `json:"files"`
-	MediaItemId    int64 `json:"mediaItemId"`
-	RemoveOriginal *bool `json:"removeOriginal,omitempty"`
+	MediaItemId int64 `json:"mediaItemId"`
+
+	// QualitySource The source a person states for files they import by hand, such as a disc they ripped. Recorded as set by hand (provenance manual), which a later re-measure keeps unless the file proves implausible. Resolution is never stated; it is measured. Absent leaves the source to the name, the release and the probe.
+	QualitySource  *StatedSource `json:"qualitySource,omitempty"`
+	RemoveOriginal *bool         `json:"removeOriginal,omitempty"`
 }
 
 // Indexer defines model for Indexer.
@@ -3603,6 +3636,9 @@ type ManualImportRequest struct {
 
 	// Paths Exact files selected from the scan. Every path must be a media file under path. Absent imports the whole path for backwards compatibility; an explicit selection must contain a file.
 	Paths *[]string `json:"paths,omitempty"`
+
+	// QualitySource The source a person states for files they import by hand, such as a disc they ripped. Recorded as set by hand (provenance manual), which a later re-measure keeps unless the file proves implausible. Resolution is never stated; it is measured. Absent leaves the source to the name, the release and the probe.
+	QualitySource *StatedSource `json:"qualitySource,omitempty"`
 
 	// RemoveOriginal Remove each source once its library copy is placed (a rename on one filesystem; copy, verify and remove across volumes). Standalone imports of loose files only; refused for a file inside a runner delivery.
 	RemoveOriginal *bool `json:"removeOriginal,omitempty"`
@@ -5154,6 +5190,9 @@ type SearchResult struct {
 	InLibrary       bool      `json:"inLibrary"`
 	Kind            MediaKind `json:"kind"`
 
+	// LibraryItemId The library title this result already is, when inLibrary (movies and series).
+	LibraryItemId *int64 `json:"libraryItemId,omitempty"`
+
 	// Olid Present for book results (ADR 0006).
 	Olid       *string `json:"olid,omitempty"`
 	Overview   string  `json:"overview"`
@@ -5254,6 +5293,9 @@ type SettingsUpdate struct {
 	// TraktClientId Optional — a free Trakt app client id, which adds five rows to Discover (ADR 0015). "" clears it. Import lists keep their own per-list id and are unaffected either way.
 	TraktClientId *string `json:"traktClientId,omitempty"`
 }
+
+// StatedSource The source a person states for files they import by hand, such as a disc they ripped. Recorded as set by hand (provenance manual), which a later re-measure keeps unless the file proves implausible. Resolution is never stated; it is measured. Absent leaves the source to the name, the release and the probe.
+type StatedSource string
 
 // StatusAttempt defines model for StatusAttempt.
 type StatusAttempt struct {

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/pjunod/monarr/internal/app/pipeline"
+	"github.com/pjunod/monarr/internal/domain/quality"
 	"github.com/pjunod/monarr/internal/infra/sqlite"
 	"github.com/pjunod/monarr/internal/ports"
 )
@@ -192,6 +193,9 @@ func (s *Service) runImport(ctx context.Context, dl sqlite.Download) error {
 			selected = selection.Paths
 			manual = true
 			ctx = withManualEpisodeTargets(ctx, selection.EpisodeTargets)
+			// The source stated for exactly this selection, not for some
+			// earlier one on the same row.
+			ctx = withStatedSource(ctx, quality.Source(selection.QualitySource))
 			break
 		}
 	}

@@ -5549,6 +5549,10 @@ components:
           type: string
         inLibrary:
           type: boolean
+        libraryItemId:
+          type: integer
+          format: int64
+          description: The library title this result already is, when inLibrary (movies and series).
         bookTypes:
           type: array
           items: { $ref: "#/components/schemas/BookType" }
@@ -6557,6 +6561,7 @@ components:
         mediaItemId: { type: integer, format: int64 }
         copyId: { type: integer, format: int64, description: Target copy or edition; 0 = the primary. }
         removeOriginal: { type: boolean }
+        qualitySource: { $ref: "#/components/schemas/StatedSource" }
         files:
           type: array
           minItems: 1
@@ -6948,6 +6953,17 @@ components:
             one filesystem; copy, verify and remove across volumes).
             Standalone imports of loose files only; refused for a file inside
             a runner delivery.
+        qualitySource: { $ref: "#/components/schemas/StatedSource" }
+
+    StatedSource:
+      type: string
+      enum: [remux, bluray, webdl, webrip, hdtv, dvd]
+      description: >
+        The source a person states for files they import by hand, such as a
+        disc they ripped. Recorded as set by hand (provenance manual), which
+        a later re-measure keeps unless the file proves implausible.
+        Resolution is never stated; it is measured. Absent leaves the
+        source to the name, the release and the probe.
 
     ManualImportAccepted:
       type: object

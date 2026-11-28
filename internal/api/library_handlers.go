@@ -897,18 +897,22 @@ func (s *Server) SearchMetadata(w http.ResponseWriter, r *http.Request, params a
 	}
 	// Mark results already in the library (movies/series by TMDB id,
 	// books by Open Library work id, including which editions are present).
-	inLib := map[int64]bool{}
-	inLibTvdb := map[int64]bool{}
-	inLibImdb := map[string]bool{}
+	// Each map names the library item holding that id, so a result can say
+	// which title it already is.
+	inLib := map[int64]int64{}
+	inLibTvdb := map[int64]int64{}
+	inLibImdb := map[string]int64{}
 	inLibOlid := map[string][]apigen.BookType{}
 	if items, err := s.deps.Library.List(r.Context(), domain.MediaKind(params.Kind)); err == nil {
 		for _, it := range items {
-			inLib[it.IDs.TMDB] = true
+			if it.IDs.TMDB != 0 {
+				inLib[it.IDs.TMDB] = it.ID
+			}
 			if it.IDs.TVDB != 0 {
-				inLibTvdb[it.IDs.TVDB] = true
+				inLibTvdb[it.IDs.TVDB] = it.ID
 			}
 			if it.IDs.IMDB != "" {
-				inLibImdb[strings.ToLower(it.IDs.IMDB)] = true
+				inLibImdb[strings.ToLower(it.IDs.IMDB)] = it.ID
 			}
 			if it.IDs.OLID != "" {
 				if types := bookTypesDTO(it); types != nil {
@@ -944,12 +948,20 @@ func (s *Server) SearchMetadata(w http.ResponseWriter, r *http.Request, params a
 			owned := inLibOlid[res.OLID]
 			sr.InLibrary = len(owned) > 0
 			sr.BookTypes = &owned
-		case res.TMDBID != 0:
-			sr.InLibrary = inLib[res.TMDBID]
-		case res.TVDBID != 0:
-			sr.InLibrary = inLibTvdb[res.TVDBID]
 		default:
-			sr.InLibrary = inLibImdb[strings.ToLower(res.IMDBID)]
+			var id int64
+			switch {
+			case res.TMDBID != 0:
+				id = inLib[res.TMDBID]
+			case res.TVDBID != 0:
+				id = inLibTvdb[res.TVDBID]
+			default:
+				id = inLibImdb[strings.ToLower(res.IMDBID)]
+			}
+			sr.InLibrary = id != 0
+			if id != 0 {
+				sr.LibraryItemId = &id
+			}
 		}
 		out = append(out, sr)
 	}

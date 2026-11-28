@@ -479,3 +479,39 @@ func TestImplausibleFileStopsCountingAsSatisfied(t *testing.T) {
 		t.Errorf("file rows = %d, want 1 — the file stays visible, it just stops voting", len(files))
 	}
 }
+
+// A source a person stated on manual import (a ripped Remux) survives a
+// re-measure: the probe refreshes the facts and the resolution, never the
+// person's word.
+func TestProbeKeepsAHandStatedSource(t *testing.T) {
+	svc, db, _ := newService(t)
+	ctx := context.Background()
+	rf, _ := svc.AddRootFolder(ctx, t.TempDir(), domain.KindMixed)
+	item, err := svc.Add(ctx, AddRequest{Kind: domain.KindMovie, TMDBID: 550, RootFolderID: rf.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = os.MkdirAll(item.Path, 0o755)
+	if err := os.WriteFile(filepath.Join(item.Path, "Fight Club.mkv"), fixtureBytes(t, whole1080), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Scan(ctx); err != nil {
+		t.Fatal(err)
+	}
+	records, err := db.FileQualityRecords(ctx, item.ID)
+	if err != nil || len(records) != 1 {
+		t.Fatalf("records = %+v err = %v", records, err)
+	}
+	fileID := records[0].FileID
+	if err := db.SetFileQualityFrom(ctx, fileID, quality.Quality{Source: quality.SourceRemux}, mediainfo.ProvenanceManual, mediainfo.ConfidenceNone); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.ProbeFile(ctx, fileID); err != nil {
+		t.Fatal(err)
+	}
+	records, _ = db.FileQualityRecords(ctx, item.ID)
+	got := records[0]
+	if got.Quality.Source != quality.SourceRemux || got.Quality.Resolution != 1080 || got.Provenance != mediainfo.ProvenanceManual {
+		t.Fatalf("after re-measure: %+v provenance %q, want remux 1080 set by hand", got.Quality, got.Provenance)
+	}
+}

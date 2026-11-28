@@ -44,6 +44,13 @@ func TestItemImportScanAndPlanHTTP(t *testing.T) {
 	if _, err := os.Stat(movie); err != nil {
 		t.Fatal("planning moved the file")
 	}
+	// A stated source shows in the plan; one outside the schema is refused.
+	stated, _ := json.Marshal(map[string]any{"mediaItemId": itemID, "qualitySource": "remux", "files": []map[string]any{{"path": movie}}})
+	e.post(t, "/api/v1/import/plan", string(stated)).expect(t, http.StatusOK).into(t, &plan)
+	if len(plan) != 1 || !strings.HasPrefix(plan[0].Quality, "Remux") || !strings.Contains(*plan[0].Destination, "[Remux") {
+		t.Fatalf("plan with a stated source = %+v", plan)
+	}
+	e.post(t, "/api/v1/import/plan", fmt.Sprintf(`{"mediaItemId":%d,"qualitySource":"vhs","files":[{"path":%q}]}`, itemID, movie)).expect(t, http.StatusBadRequest)
 	e.post(t, "/api/v1/import/plan", fmt.Sprintf(`{"mediaItemId":%d,"files":[]}`, itemID)).expect(t, http.StatusBadRequest)
 	e.post(t, "/api/v1/import/plan", fmt.Sprintf(`{"mediaItemId":%d,"copyId":999,"files":[{"path":%q}]}`, itemID, movie)).expect(t, http.StatusBadRequest)
 	e.get(t, "/api/v1/import/scan?depth=2&path="+url.QueryEscape(dir)).expect(t, http.StatusBadRequest)

@@ -788,6 +788,39 @@ Remove original removed or kept. A long copy shows **Stop** (the import's
 own cancellation: the source stays where it was, and the row can be
 retried from Activity).
 
+### Importing files you made yourself
+
+A disc you ripped, or any file Curator never grabbed, goes in through
+**Import files…** on the Library page — for a title that is not in your
+library yet as well as one that is.
+
+1. **Choose the title.** Pick Movie or Series and search; titles in your
+   library are listed first, then the provider's (a TMDB id such as
+   `tmdb:550` works too). A title that is not in your library yet is
+   added **unmonitored, with no search** — you already have the files —
+   under the root folder you pick.
+2. **Choose files, then confirm**, exactly as
+   [Import file… from the item page](#import-file-from-the-item-page): a
+   series file whose name has no episode (`title_t00.mkv`) is given one in
+   the confirm step.
+3. **Source.** The confirm step offers **Source** (Remux, Blu-ray, WEB-DL,
+   WEBRip, HDTV, DVD) for video. A rip's name rarely says what it is; what
+   you choose names the file and is recorded as *set by hand*, which a
+   later **Re-measure files** keeps. Only a file that proves implausible
+   loses it. Resolution is always measured from the file, never chosen,
+   and a name without one is read from the file before the destination
+   is shown. The same Source control is on every item's **Import file…**.
+
+The import ends like any other: Curator names and places the file and
+tells your media server (Cinema) the title's ids, so Cinema matches it
+exactly instead of guessing from the file name.
+
+If you close the import without starting it, a title added in step 1 is
+removed again; nothing else is left behind. Files you copy straight into a
+library folder yourself are found by **Scan disk**, but Cinema is not told
+about them until it scans on its own or you press **Ask cinema to confirm** on
+the item.
+
 ### Re-match and Move to…
 
 Two shapes of a wrong match, one operation: **move these files to the right

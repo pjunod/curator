@@ -314,6 +314,14 @@ func (s *Service) importDownloadFiles(ctx context.Context, dl sqlite.Download, s
 	if err != nil {
 		return ImportResult{}, err
 	}
+	// Files a person brought in by hand — a standalone manual import, or
+	// any import they stated a source for — are named from what can be
+	// known before placement: their word on the source, and a resolution
+	// read from the file when the name gives none. A hand-picked release
+	// keeps its release's claim, as an automatic one does.
+	_, recovering := ctx.Value(recoveryPlacementKey{}).(*recoveryPlacementContext)
+	_, stated := statedSource(ctx)
+	handMade := !recovering && (dl.Protocol == "manual" || stated)
 
 	// The import scope: which copy this grab was for decides the profile,
 	// the destination folder, and which existing files count as "current".
@@ -598,6 +606,10 @@ func (s *Service) importDownloadFiles(ctx context.Context, dl sqlite.Download, s
 		} else if q.Source == quality.SourceUnknown && q.Resolution == 0 {
 			// Single files often carry the quality only on the release name.
 			q = dl.Quality
+		}
+		if handMade && item.Kind != domain.KindBook {
+			stated, _ := statedSource(ctx)
+			q = handMadeQuality(src, q, stated)
 		}
 
 		outcome := FileOutcome{Name: filepath.Base(src), SourcePath: src, Quality: q.Display(),

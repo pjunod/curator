@@ -14,6 +14,7 @@ import (
 
 	"github.com/pjunod/monarr/internal/domain/filename"
 	"github.com/pjunod/monarr/internal/domain/parser"
+	"github.com/pjunod/monarr/internal/domain/quality"
 	"github.com/pjunod/monarr/internal/infra/sqlite"
 	"github.com/pjunod/monarr/internal/ports"
 )
@@ -118,6 +119,9 @@ type ManualImportRequest struct {
 	// (a standalone import of loose files only; a runner delivery is
 	// cleaned up by its own rules).
 	RemoveOriginal bool
+	// QualitySource is the source the person states for these files; empty
+	// leaves it to the name, the release and the probe.
+	QualitySource string
 }
 
 func legacyReviewTargetIdentity(ctx context.Context, db *sqlite.DB, itemID, copyID int64) (string, error) {
@@ -217,6 +221,9 @@ func (s *Service) ManualImport(ctx context.Context, req ManualImportRequest) (Im
 	if dl.MediaItemID == 0 {
 		return ImportResult{}, fmt.Errorf("no target item chosen")
 	}
+	if !ValidStatedSource(req.QualitySource) {
+		return ImportResult{}, fmt.Errorf("unknown source %q", req.QualitySource)
+	}
 
 	if req.DownloadID != 0 {
 		if s.ImportRunning(dl.ID) {
@@ -242,7 +249,7 @@ func (s *Service) ManualImport(ctx context.Context, req ManualImportRequest) (Im
 				return ImportResult{}, e
 			}
 		}
-		dl.Handoff = append(dl.Handoff, sqlite.HandoffEntry{Step: stepManualQueued, At: time.Now().UnixMilli(), Detail: "inline manual import selection", Paths: paths, TargetMediaItemID: dl.MediaItemID, TargetCopyID: dl.CopyID})
+		dl.Handoff = append(dl.Handoff, sqlite.HandoffEntry{Step: stepManualQueued, At: time.Now().UnixMilli(), Detail: "inline manual import selection", Paths: paths, TargetMediaItemID: dl.MediaItemID, TargetCopyID: dl.CopyID, QualitySource: req.QualitySource})
 		var err error
 		dl, err = s.db.CommitManualImportAdmission(ctx, dl)
 		if err != nil {
@@ -259,7 +266,7 @@ func (s *Service) ManualImport(ctx context.Context, req ManualImportRequest) (Im
 		ctx = bound
 		defer finish()
 	}
-	result, err := s.importDownloadFiles(ctx, dl, req.Path, req.Paths, true)
+	result, err := s.importDownloadFiles(withStatedSource(ctx, quality.Source(req.QualitySource)), dl, req.Path, req.Paths, true)
 	if err != nil {
 		if req.DownloadID != 0 && !errors.Is(err, context.Canceled) {
 			if row, e := s.db.GetDownload(ctx, req.DownloadID); e == nil {
@@ -281,6 +288,9 @@ func (s *Service) ManualImport(ctx context.Context, req ManualImportRequest) (Im
 func (s *Service) QueueManualImport(ctx context.Context, req ManualImportRequest) (int64, error) {
 	if strings.TrimSpace(req.Path) == "" || req.MediaItemID == 0 {
 		return 0, fmt.Errorf("path and target item are required")
+	}
+	if !ValidStatedSource(req.QualitySource) {
+		return 0, fmt.Errorf("unknown source %q", req.QualitySource)
 	}
 	id := req.DownloadID
 	if req.ReviewLegacy {
@@ -499,6 +509,7 @@ func (s *Service) QueueManualImport(ctx context.Context, req ManualImportRequest
 		ReviewFiles:       handoffReviewFiles(req.ReviewLegacyFiles),
 		TargetMediaItemID: req.MediaItemID, TargetCopyID: req.CopyID, TargetIdentity: targetIdentity,
 		EpisodeTargets: targets, RemoveOriginal: req.RemoveOriginal, SourceIdentities: sourceIdentities,
+		QualitySource: req.QualitySource,
 	})
 	dl, err = s.db.CommitManualImportAdmission(ctx, dl)
 	if err != nil {

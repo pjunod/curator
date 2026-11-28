@@ -441,6 +441,10 @@ type HandoffEntry struct {
 	TargetMediaItemID int64                 `json:"targetMediaItemId,omitempty"`
 	TargetCopyID      int64                 `json:"targetCopyId,omitempty"`
 	TargetIdentity    string                `json:"targetIdentity,omitempty"`
+	// QualitySource is the source a person stated for a manual import
+	// ("remux", "bluray", …): files they made themselves carry no release
+	// name to claim one. Empty means nobody stated one.
+	QualitySource string `json:"qualitySource,omitempty"`
 	// EpisodeTargets is a person's episode choice per selected file, keyed
 	// by the file's absolute path (Import file… on the item page). It is
 	// part of the admitted selection, so every retry of this attempt places
