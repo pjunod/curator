@@ -43,6 +43,12 @@ const FeatureOffload = "offload"
 // paths that left a folder (contract amendment 4.2).
 const FeatureRemovedPaths = "removed_paths"
 
+// FeatureProbeOnly means Cinema can probe listed files without walking their directory.
+const FeatureProbeOnly = "probe_only"
+
+// ScanLinkedEvent identifies an outbox delivery created by a library scan.
+const ScanLinkedEvent = "scan"
+
 // HasFeature reports whether the notifier said it supports f.
 func (c NotifierConfig) HasFeature(f string) bool {
 	for _, x := range c.Features {
@@ -56,13 +62,13 @@ func (c NotifierConfig) HasFeature(f string) bool {
 // Notification is one event rendered for the outside world. The JSON shape
 // is the webhook wire format — lowercase, stable.
 type Notification struct {
-	Event string `json:"event"` // grab | import | moved | offload | failed | health | test
+	Event string `json:"event"` // grab | import | scan | moved | offload | failed | health | test
 	Title string `json:"title"`
 	Body  string `json:"body"`
 	// Fields carries structured extras (release, quality, item title…).
 	Fields map[string]string `json:"fields,omitempty"`
-	// Import is the machine-readable half of an import event: what landed,
-	// where, and what it is. Present only on `import`.
+	// Import is the machine-readable part of a file event: what landed,
+	// where, and what it is.
 	//
 	// Chat notifiers have no use for it and ignore it; the webhook passes it
 	// through, which is the point of a webhook. A media server that can be

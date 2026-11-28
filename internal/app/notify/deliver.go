@@ -160,8 +160,26 @@ func (d *Dispatcher) attempt(ctx context.Context, del sqlite.Delivery) {
 		d.settle(ctx, del, cfg.Type, "", fmt.Errorf("unreadable payload: %w", err), true)
 		return
 	}
+	if del.Event == ports.ScanLinkedEvent {
+		if !cfg.Enabled || !cfg.OnImport || !queued(cfg) {
+			d.settle(ctx, del, cfg.Type, "", errors.New("library notifications are disabled for this Cinema connection"), true)
+			return
+		}
+		if err := d.refreshScanDelivery(ctx, &del, &n); err != nil {
+			d.settle(ctx, del, cfg.Type, "", err, errors.Is(err, ports.ErrNotifyPermanent))
+			return
+		}
+	}
 
 	target := d.new(cfg)
+	if n.Event == ports.ScanLinkedEvent && del.RemoteRequestID == "" {
+		var fresh bool
+		target, fresh = d.refreshFeatures(ctx, cfg, target)
+		if !fresh {
+			d.settle(ctx, del, cfg.Type, "", errors.New("could not confirm Cinema's exact-file probe support"), false)
+			return
+		}
+	}
 	if (n.Event == "moved" || n.Event == "offload") && n.Import != nil && del.RemoteRequestID == "" {
 		var fresh bool
 		target, fresh = d.refreshFeatures(ctx, cfg, target)
@@ -235,7 +253,9 @@ func (d *Dispatcher) attemptSub(ctx context.Context, del sqlite.Delivery, peer s
 				Msg: "cinema no longer knows request " + del.RemoteRequestID + ": " + ne.Msg}
 		}
 	} else {
-		n.IdempotencyKey = del.RequestKey()
+		if n.IdempotencyKey == "" {
+			n.IdempotencyKey = del.RequestKey()
+		}
 		res, err = scanner.SendScan(cctx, n)
 	}
 	sub := subAttempt{peer: peer, polled: polled, notifierID: del.NotifierID}
@@ -295,13 +315,11 @@ func (d *Dispatcher) refreshFeatures(ctx context.Context, cfg ports.NotifierConf
 		return target, true
 	}
 	d.mu.Lock()
-	if d.featuresRead == nil {
-		d.featuresRead = map[int64]time.Time{}
-	}
 	last := d.featuresRead[cfg.ID]
 	d.mu.Unlock()
-	if !last.IsZero() && d.now().Sub(last) < featuresFresh {
-		return target, true
+	if !last.at.IsZero() && last.url == cfg.Settings["url"] && d.now().Sub(last.at) < featuresFresh {
+		cfg.Features = last.features
+		return d.new(cfg), true
 	}
 	pctx, cancel := context.WithTimeout(ctx, d.sendTimeout)
 	features, err := prober.ProbeFeatures(pctx)
@@ -311,7 +329,10 @@ func (d *Dispatcher) refreshFeatures(ctx context.Context, cfg ports.NotifierConf
 		return target, false
 	}
 	d.mu.Lock()
-	d.featuresRead[cfg.ID] = d.now()
+	if d.featuresRead == nil {
+		d.featuresRead = map[int64]confirmedFeatures{}
+	}
+	d.featuresRead[cfg.ID] = confirmedFeatures{at: d.now(), url: cfg.Settings["url"], features: features}
 	d.mu.Unlock()
 	if err := d.db.SetNotifierFeatures(ctx, cfg.ID, features); err != nil {
 		d.log.Warn("notify: cannot store cinema features", "notifier", cfg.ID, "err", err)

@@ -161,7 +161,7 @@ func TestLibraryScanRejectsInterleavedImportsAndForeignPaths(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = db.ApplyLibraryScan(ctx, snapshot, rev, shared, nil, map[int64]bool{0: true}, nil)
+	_, err = db.ApplyLibraryScan(ctx, snapshot, rev, shared, nil, map[int64]string{0: snapshot.Path}, nil, nil)
 	if !errors.Is(err, ErrScanChanged) {
 		t.Fatalf("race = %v", err)
 	}
@@ -179,7 +179,7 @@ func TestLibraryScanRejectsInterleavedImportsAndForeignPaths(t *testing.T) {
 	}
 	snapshot, _ = db.GetMediaItemFull(ctx, id)
 	rev, shared, _ = db.PresenceRevision(ctx, id)
-	_, err = db.ApplyLibraryScan(ctx, snapshot, rev, shared, nil, map[int64]bool{0: true}, []ScannedLibraryFile{{Path: snapshot.Path + "/newly-found.mkv", Size: 3}, {Path: "/foreign.mkv", Size: 10}})
+	_, err = db.ApplyLibraryScan(ctx, snapshot, rev, shared, nil, map[int64]string{0: snapshot.Path}, []ScannedLibraryFile{{Path: snapshot.Path + "/newly-found.mkv", Size: 3}, {Path: "/foreign.mkv", Size: 10}}, nil)
 	if !errors.Is(err, ErrScanChanged) {
 		t.Fatalf("foreign path=%v", err)
 	}
@@ -207,7 +207,7 @@ func TestVolumeRebindFencesScanAndPresence(t *testing.T) {
 	if err = db.BindPresenceRoot(ctx, state, "volume-3"); !errors.Is(err, ErrScanChanged) {
 		t.Fatalf("stale confirmation %v", err)
 	}
-	_, err = db.ApplyLibraryScan(ctx, item, rev, shared, []ScanRootBinding{{RootID: state.RootID, Path: state.Path, Identity: "volume-1", Generation: 1}}, nil, nil)
+	_, err = db.ApplyLibraryScan(ctx, item, rev, shared, []ScanRootBinding{{RootID: state.RootID, Path: state.Path, Identity: "volume-1", Generation: 1}}, nil, nil, nil)
 	if !errors.Is(err, ErrScanChanged) {
 		t.Fatalf("old scan %v", err)
 	}

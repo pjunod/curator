@@ -891,8 +891,10 @@ recommend preserve-and-opt-in over a silent migration.)*
 `200 {"roots": [...], "visible": [...], "missing": [...]}`; needs
 `scan:trigger`. Probe paths are accepted only when each is a configured
 library root or a descendant of one; anything else is reported as
-`outside_roots`, never `stat`ed. The answer adds `"features": [...]`
-(`removed_paths`, §4.4; `offload`, §4.5); an empty `probe_paths` reads the features alone.
+`outside_roots`, never `stat`ed. The answer includes `"features": [...]`
+with supported capabilities such as `removed_paths`, `probe_only` and `offload`.
+Specify 1–64 paths. Curator uses `["/"]` when it only needs to read the
+capabilities. This connection test starts no library scan.
 
 ### 5.4 Not in this contract
 

@@ -815,11 +815,14 @@ The import ends like any other: Curator names and places the file and
 tells your media server (Cinema) the title's ids, so Cinema matches it
 exactly instead of guessing from the file name.
 
-If you close the import without starting it, a title added in step 1 is
-removed again; nothing else is left behind. Files you copy straight into a
-library folder yourself are found by **Scan disk**, but Cinema is not told
-about them until it scans on its own or you press **Ask cinema to confirm** on
-the item.
+If you close the import without starting it, Curator removes the title it
+added in step 1. If you copy files directly into a library folder, use
+**Scan disk**. Curator also checks a folder when you approve its adoption.
+When either action links new files, Curator queues exact-file probes grouped
+by directory for your Cinema connections that notify on import. Curator sends
+known title IDs and retries if Cinema is temporarily unavailable. If a Cinema
+version lacks exact-file probes, the delivery log shows a warning and that
+server can pick up the files in its own scan.
 
 ### Re-match and Move to…
 

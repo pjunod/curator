@@ -2119,7 +2119,7 @@ func chunkPairs(pairs []rematchPair) [][]rematchPair {
 		if len(e) > ports.MaxExpectedFiles || len(r) > ports.MaxExpectedFiles {
 			return false
 		}
-		return expectedJSONSize(e) <= ports.MaxExpectedFileBytes && pathsJSONSize(r) <= ports.MaxExpectedFileBytes
+		return ports.ExpectedFilesJSONSize(e) <= ports.MaxExpectedFileBytes && pathsJSONSize(r) <= ports.MaxExpectedFileBytes
 	}
 	for _, p := range pairs {
 		ne := exp

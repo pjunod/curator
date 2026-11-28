@@ -78,7 +78,7 @@ func (p *Plurx) Send(ctx context.Context, n ports.Notification) error {
 	var failures []string
 	permanent := true
 	for _, dir := range n.Import.Dirs {
-		res, err := p.scan(ctx, dir, n.Import, "", false)
+		res, err := p.scan(ctx, dir, n.Import, "", "")
 		if err != nil {
 			failures = append(failures, fmt.Sprintf("%s: %v", dir, err))
 			permanent = permanent && errors.Is(err, ports.ErrNotifyPermanent)
@@ -112,8 +112,12 @@ func (p *Plurx) SendScan(ctx context.Context, n ports.Notification) (ports.Notif
 	if n.Import == nil || len(n.Import.Dirs) != 1 {
 		return ports.NotifyResult{}, &ports.NotifyError{Retry: ports.RetryNever, Msg: "plurx: a sub-delivery names exactly one directory"}
 	}
+	if n.Event == ports.ScanLinkedEvent && !p.hasFeature(ports.FeatureProbeOnly) && !p.hasFeature(ports.FeatureRemovedPaths) {
+		// Early Cinema ignores probe_only and would walk the directory.
+		return ports.NotifyResult{State: "done", NotTold: "Cinema does not support exact file probes; its next regular scan can discover these files"}, nil
+	}
 	dir := n.Import.Dirs[0]
-	return p.scan(ctx, dir, n.Import, n.IdempotencyKey, n.Event == "moved" || n.Event == "offload")
+	return p.scan(ctx, dir, n.Import, n.IdempotencyKey, n.Event)
 }
 
 // waitMs is how long Cinema may hold a request for its targeted result. It
@@ -160,14 +164,14 @@ func (p *Plurx) hasFeature(f string) bool {
 // LearnedFeatures implements ports.FeatureReporter: what the last Test learned.
 func (p *Plurx) LearnedFeatures() []string { return p.learned }
 
-// ProbeFeatures implements ports.FeatureProber: the connection test's answer
-// with no paths to check, read for its features. An older Cinema refuses the
-// body with a 422 and supports none of them.
+// ProbeFeatures uses a non-mutating path test and reads only its capabilities.
+// Cinema requires a nonempty list, and reports "/" as outside when it is not
+// a configured root. An older Cinema refuses this body with a 422.
 func (p *Plurx) ProbeFeatures(ctx context.Context) ([]string, error) {
 	if p.URL == "" || p.APIKey == "" {
 		return nil, fmt.Errorf("plurx: url and apiKey required")
 	}
-	body, err := json.Marshal(map[string]any{"probe_paths": []string{}, "source": "monarr"})
+	body, err := json.Marshal(plurxScanRequest{ProbePaths: []string{"/"}, Source: "monarr"})
 	if err != nil {
 		return nil, err
 	}
@@ -260,7 +264,7 @@ const NotToldNoOffload = "cinema not told: it supports neither offload nor remov
 // owns is the CLASSIFICATION — whether trying again could possibly help, and
 // whether the next try needs a fresh attempt — because that knowledge lives
 // with the status codes.
-func (p *Plurx) scan(ctx context.Context, dir string, info *ports.ImportInfo, key string, moved bool) (ports.NotifyResult, error) {
+func (p *Plurx) scan(ctx context.Context, dir string, info *ports.ImportInfo, key, event string) (ports.NotifyResult, error) {
 	req := scanBody(dir, info)
 	sentRemoved := false
 	if key != "" {
@@ -283,7 +287,7 @@ func (p *Plurx) scan(ctx context.Context, dir string, info *ports.ImportInfo, ke
 				// same way, so nothing is sent (settled with the old-cinema note).
 				return ports.NotifyResult{State: "done", FilesReported: true, NotTold: NotToldNoOffload}, nil
 			}
-		} else if moved || len(info.RemovedPaths) > 0 {
+		} else if event == "moved" || event == "offload" || len(info.RemovedPaths) > 0 {
 			if p.hasFeature(ports.FeatureRemovedPaths) {
 				req.Event, req.RemovedPaths, req.ProbeOnly, sentRemoved = "moved", info.RemovedPaths, true, true
 			} else {
@@ -295,6 +299,8 @@ func (p *Plurx) scan(ctx context.Context, dir string, info *ports.ImportInfo, ke
 				}
 				req.Path = commonDir(req.ExpectedFiles)
 			}
+		} else if event == ports.ScanLinkedEvent {
+			req.ProbeOnly = true
 		}
 	}
 	body, err := json.Marshal(req)

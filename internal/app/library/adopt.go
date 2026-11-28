@@ -634,7 +634,7 @@ func (s *Service) adoptOne(ctx context.Context, p Proposal) error {
 	if holder, ok := s.itemHolding(ctx, p.Path); ok {
 		s.log.Info("adopt: folder already held, not adding a second entry",
 			"path", p.Path, "held by", holder.Title, "id", holder.ID)
-		return nil
+		return s.scanAdoptedFolder(ctx, holder)
 	}
 
 	req := AddRequest{
@@ -662,7 +662,8 @@ func (s *Service) adoptOne(ctx context.Context, p Proposal) error {
 	// folder that exists instead, or the item points at a path with no
 	// files in it.
 	path := p.Path
-	if _, err := s.UpdateItem(ctx, item.ID, UpdateRequest{Path: &path}); err != nil {
+	updated, err := s.UpdateItem(ctx, item.ID, UpdateRequest{Path: &path})
+	if err != nil {
 		// The item only exists to hold this folder. Leaving it behind at
 		// its naming-rule path would turn a failed adoption into a stray
 		// library entry the user never asked for.
@@ -676,6 +677,18 @@ func (s *Service) adoptOne(ctx context.Context, p Proposal) error {
 	// it removes it (ADR 0027), unlike an item a person added.
 	if err := s.db.SetMediaItemOrigin(ctx, item.ID, "adopted"); err != nil {
 		s.log.Warn("adopt: could not record the item's origin", "id", item.ID, "err", err)
+	}
+	return s.scanAdoptedFolder(ctx, updated)
+}
+
+// Scan only the title that adoption bound. A failure leaves the binding in
+// place so retrying adoption or running Scan disk can reconcile it safely.
+func (s *Service) scanAdoptedFolder(ctx context.Context, item domain.MediaItem) error {
+	if _, _, err := s.scanItem(ctx, item, nil); err != nil {
+		return fmt.Errorf("folder saved, but scanning it failed: %w", err)
+	}
+	if err := s.VerifyPresence(ctx, item.ID); err != nil {
+		s.log.Debug("adopt: presence unknown", "title", item.Title, "err", err)
 	}
 	return nil
 }
@@ -1017,9 +1030,7 @@ func (s *Service) relinkExisting(ctx context.Context, p Proposal, win ports.Sear
 	}
 
 	if existing.Path == p.Path {
-		// Already pointed here. Nothing to do, and not an error — this is
-		// what a re-run looks like.
-		return nil
+		return s.scanAdoptedFolder(ctx, existing)
 	}
 	if existing.Path != "" && !force {
 		if _, statErr := os.Stat(existing.Path); statErr == nil {
@@ -1036,12 +1047,13 @@ func (s *Service) relinkExisting(ctx context.Context, p Proposal, win ports.Sear
 
 	path := p.Path
 	root := p.RootFolderID
-	if _, err := s.UpdateItem(ctx, existing.ID, UpdateRequest{Path: &path, RootFolderID: &root}); err != nil {
+	updated, err := s.UpdateItem(ctx, existing.ID, UpdateRequest{Path: &path, RootFolderID: &root})
+	if err != nil {
 		return fmt.Errorf("point %q at %s: %w", existing.Title, p.Path, err)
 	}
 	s.log.Info("adopt: existing library item pointed at its folder",
 		"title", existing.Title, "path", p.Path, "was", existing.Path)
-	return nil
+	return s.scanAdoptedFolder(ctx, updated)
 }
 
 // resultHasTag reports whether a provider result is the record a folder's

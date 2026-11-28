@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/pjunod/monarr/internal/domain"
@@ -29,8 +31,9 @@ type ScanResult struct {
 }
 
 // ApplyLibraryScan atomically reconciles exactly the title snapshot that was
-// walked. An import, target edit or root rebind during IO rejects the whole write.
-func (d *DB) ApplyLibraryScan(ctx context.Context, item domain.MediaItem, revision, shared int64, bindings []ScanRootBinding, prune map[int64]bool, files []ScannedLibraryFile) (ScanResult, error) {
+// walked. Its outbox rows commit with the new links. An import, target edit or
+// root rebind during IO rejects the whole write.
+func (d *DB) ApplyLibraryScan(ctx context.Context, item domain.MediaItem, revision, shared int64, bindings []ScanRootBinding, prune map[int64]string, files []ScannedLibraryFile, outbox []OutboxWrite) (ScanResult, error) {
 	result := ScanResult{FileIDs: map[string]int64{}, FileGenerations: map[string]string{}}
 	tx, err := d.W.BeginTx(ctx, nil)
 	if err != nil {
@@ -120,7 +123,14 @@ func (d *DB) ApplyLibraryScan(ctx context.Context, item domain.MediaItem, revisi
 		}
 	}
 	for path, f := range old {
-		if _, exists := result.FileIDs[path]; exists || !prune[f.CopyID] {
+		scope := prune[f.CopyID]
+		if _, exists := result.FileIDs[path]; exists || scope == "" {
+			continue
+		}
+		// A location edit can leave old records outside this scan's scope.
+		// Keep those records and still reconcile the folder we did observe.
+		rel, err := filepath.Rel(scope, path)
+		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 			continue
 		}
 		res, err := tx.ExecContext(ctx, `DELETE FROM media_files WHERE id=? AND media_item_id=? AND COALESCE(copy_id,0)=? AND path=? AND size=? AND file_generation=?`, f.ID, item.ID, f.CopyID, f.Path, f.Size, f.FileGeneration)
@@ -135,6 +145,9 @@ func (d *DB) ApplyLibraryScan(ctx context.Context, item domain.MediaItem, revisi
 			return result, fmt.Errorf("%w: file identity", ErrScanChanged)
 		}
 		result.Removed++
+	}
+	if err = insertOutboxTx(ctx, tx, outbox, time.Now().UnixMilli()); err != nil {
+		return result, err
 	}
 	if err = tx.Commit(); err != nil {
 		return result, err
