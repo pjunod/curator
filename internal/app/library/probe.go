@@ -90,6 +90,8 @@ func (s *Service) ProbeFile(ctx context.Context, fileID int64) error {
 
 	now := time.Now()
 	info, probeErr := probe.File(rec.Path)
+	statedSource := rec.Provenance == mediainfo.ProvenanceManual &&
+		rec.Quality.Source != "" && rec.Quality.Source != quality.SourceUnknown
 
 	if !info.Measured() {
 		// Unreadable, or a container we do not parse. Record that we tried,
@@ -97,7 +99,7 @@ func (s *Service) ProbeFile(ctx context.Context, fileID int64) error {
 		// leave the file in the "on disk, quality unverified" state — which is
 		// emphatically not "missing" (ADR 0013 §5).
 		prov := mediainfo.ProvenanceFailed
-		if rec.Provenance == mediainfo.ProvenanceManual {
+		if statedSource {
 			prov = mediainfo.ProvenanceManual // a person's word outlives an unreadable re-read
 		} else if rec.Known {
 			prov = mediainfo.ProvenanceFilename // a name told us something
@@ -132,7 +134,7 @@ func (s *Service) ProbeFile(ctx context.Context, fileID int64) error {
 			"why", self.Reason, "facts", info.Summary())
 	}
 
-	if rec.Provenance == mediainfo.ProvenanceManual && prov != mediainfo.ProvenanceImplausible {
+	if statedSource && prov != mediainfo.ProvenanceImplausible {
 		// A person stated this file's source (a manual import of a rip).
 		// Re-measuring refreshes the facts and the resolution; the source
 		// stays theirs. Only proof the file is not what anything claims

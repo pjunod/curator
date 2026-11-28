@@ -18,6 +18,7 @@ async function fixture(page: Page) {
     { id: 3, path: '/media/movies', kind: 'movie', freeBytes: 1e12, accessible: true },
   ] }))
   await page.route('**/api/v1/library', async route => {
+    if (route.request().method() === 'GET') return route.fulfill({ json: [] })
     if (route.request().method() !== 'POST') return route.fallback()
     calls.add.push(route.request().postDataJSON())
     await route.fulfill({ status: 201, json: { id: 4300, kind: 'movie', title: 'Ripped Film', year: 2005 } })
@@ -54,7 +55,7 @@ async function fixture(page: Page) {
 }
 
 async function chooseNewTitle(page: Page) {
-  await page.goto('/library')
+  await page.goto('/')
   const trigger = page.getByRole('button', { name: 'Import files…' })
   await trigger.click()
   const picker = page.getByRole('dialog', { name: 'Import files' })
