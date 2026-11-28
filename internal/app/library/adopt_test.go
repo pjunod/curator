@@ -446,6 +446,9 @@ func TestAdoptOneRefusesToStealAFolderThatExists(t *testing.T) {
 		if err := os.Mkdir(d, 0o755); err != nil {
 			t.Fatal(err)
 		}
+		if err := os.WriteFile(filepath.Join(d, "title_t00.mkv"), []byte("fixture"), 0o644); err != nil {
+			t.Fatal(err)
+		}
 	}
 	rf, err := svc.AddRootFolder(ctx, root, domain.RootKindOf(domain.KindMovie))
 	if err != nil {
@@ -491,6 +494,13 @@ func TestAdoptOneRefusesToStealAFolderThatExists(t *testing.T) {
 	moved, _ := svc.Get(ctx, item.ID)
 	if moved.Path != second {
 		t.Errorf("after force the item should sit at %q, got %q", second, moved.Path)
+	}
+	files := map[string]bool{}
+	for _, file := range moved.Files {
+		files[file.Path] = true
+	}
+	if !files[filepath.Join(first, "title_t00.mkv")] || !files[filepath.Join(second, "title_t00.mkv")] {
+		t.Errorf("forced adoption must preserve old records and link the replacement folder: %v", files)
 	}
 	// Still one item — forcing must not duplicate.
 	if items, _ := svc.List(ctx, domain.KindMovie); len(items) != 1 {

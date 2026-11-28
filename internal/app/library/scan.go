@@ -15,6 +15,7 @@ import (
 	"github.com/pjunod/monarr/internal/domain/parser"
 	"github.com/pjunod/monarr/internal/domain/quality"
 	"github.com/pjunod/monarr/internal/infra/sqlite"
+	"github.com/pjunod/monarr/internal/ports"
 )
 
 const scanReportKey = "last_scan_report"
@@ -313,7 +314,7 @@ func (s *Service) scanItem(ctx context.Context, selected domain.MediaItem, _ []d
 		}
 		scopes = append(scopes, scope{id: cp.ID, root: root, path: path})
 	}
-	prune := map[int64]bool{}
+	prune := map[int64]string{}
 	bindings := []sqlite.ScanRootBinding{}
 	for i := range scopes {
 		sc := &scopes[i]
@@ -322,18 +323,13 @@ func (s *Service) scanItem(ctx context.Context, selected domain.MediaItem, _ []d
 				return 0, 0, err
 			}
 		}
-		for _, file := range item.Files {
-			if file.CopyID == sc.id && sc.path != "" && !presenceInside(sc.path, file.Path) {
-				return 0, 0, errScanIncomplete
-			}
-		}
 		if sc.root == 0 {
-			prune[sc.id] = true
+			prune[sc.id] = sc.path
 			continue
 		} // legacy unassigned-root scanning stays supported
 		before, identity, e := s.checkPresenceRoot(ctx, sc.root, paths[sc.root])
 		if errors.Is(e, errPresenceUnsupported) {
-			prune[sc.id] = true
+			prune[sc.id] = sc.path
 			continue
 		}
 		if e != nil {
@@ -346,8 +342,9 @@ func (s *Service) scanItem(ctx context.Context, selected domain.MediaItem, _ []d
 		sc.before = before
 		sc.binding = sqlite.ScanRootBinding{RootID: sc.root, Path: paths[sc.root], Identity: identity, Generation: generation}
 		bindings = append(bindings, sc.binding)
-		prune[sc.id] = generation > 0
-		if generation == 0 {
+		if generation > 0 {
+			prune[sc.id] = sc.path
+		} else {
 			offloaded := item.OffloadedAt > 0
 			for _, season := range item.Seasons {
 				for _, episode := range season.Episodes {
@@ -368,6 +365,7 @@ func (s *Service) scanItem(ctx context.Context, selected domain.MediaItem, _ []d
 		old[f.Path] = f
 	}
 	found := map[string]sqlite.ScannedLibraryFile{}
+	newFiles := map[string]ports.ExpectedFile{}
 	episodeIDs := map[[2]int]int64{}
 	for _, season := range item.Seasons {
 		for _, ep := range season.Episodes {
@@ -377,7 +375,7 @@ func (s *Service) scanItem(ctx context.Context, selected domain.MediaItem, _ []d
 	walked := map[string]bool{}
 	for _, sc := range scopes {
 		if sc.path == "" {
-			prune[sc.id] = false
+			delete(prune, sc.id)
 			continue
 		}
 		if walked[sc.path] {
@@ -409,6 +407,8 @@ func (s *Service) scanItem(ctx context.Context, selected domain.MediaItem, _ []d
 			copyID := sc.id
 			if prior, exists := old[path]; exists {
 				copyID = prior.CopyID
+			} else {
+				newFiles[path] = ports.ExpectedFile{Path: path, Bytes: info.Size(), MtimeNs: info.ModTime().UnixNano()}
 			}
 			if item.Kind == domain.KindBook && sc.id == 0 {
 				bookType := quality.BookTypeForSource(quality.Source(filename.BookQualitySource(path)))
@@ -460,7 +460,11 @@ func (s *Service) scanItem(ctx context.Context, selected domain.MediaItem, _ []d
 			probeState[r.Path] = r
 		}
 	}
-	result, err := s.db.ApplyLibraryScan(ctx, item, revision, shared, bindings, prune, files)
+	outbox, err := s.scanOutbox(ctx, item, newFiles)
+	if err != nil {
+		return 0, 0, err
+	}
+	result, err := s.db.ApplyLibraryScan(ctx, item, revision, shared, bindings, prune, files, outbox)
 	if err != nil {
 		return 0, 0, err
 	}

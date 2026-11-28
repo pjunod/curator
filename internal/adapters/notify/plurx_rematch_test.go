@@ -38,7 +38,7 @@ func TestPlurxOffloadToACinemaWithNeitherFeatureIsNotToldAndSaysSo(t *testing.T)
 	defer c.Close()
 	p := &Plurx{URL: c.URL(), APIKey: "plx_secret"}
 	info := &ports.ImportInfo{OffloadedPaths: []string{root + "/a.mkv"}}
-	res, err := p.scan(context.Background(), root, info, "op/x", false)
+	res, err := p.scan(context.Background(), root, info, "op/x", "")
 	if err != nil {
 		t.Fatal(err)
 	}

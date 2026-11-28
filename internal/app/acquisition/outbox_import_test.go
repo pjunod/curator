@@ -47,7 +47,7 @@ func TestPublicationImportWritesOneSubDeliveryPerDirectory(t *testing.T) {
 	if s.PublicationID != p.ID || s.DownloadID != dl.ID || s.Attempt != 1 || s.Status != "pending" {
 		t.Errorf("sub-delivery = %+v", s)
 	}
-	if want := SubDeliveryKey(dl.Transfer, "5d0c1b1e2f3a4b5c", s.Directory); s.IdempotencyKey != want ||
+	if want := ports.ScanSubDeliveryKey(dl.Transfer, "5d0c1b1e2f3a4b5c", s.Directory); s.IdempotencyKey != want ||
 		!strings.HasPrefix(s.IdempotencyKey, dl.Transfer+"/5d0c1b1e2f3a4b5c/") || len(strings.Split(s.IdempotencyKey, "/")[2]) != 16 {
 		t.Errorf("key = %q, want %q", s.IdempotencyKey, want)
 	}
@@ -76,9 +76,9 @@ func TestPublicationImportWritesOneSubDeliveryPerDirectory(t *testing.T) {
 
 // The key is stable per directory and distinct across directories.
 func TestSubDeliveryKeyIsPerDirectory(t *testing.T) {
-	a := SubDeliveryKey("t-1-x", "g", "/media/tv/Show/Season 01")
-	b := SubDeliveryKey("t-1-x", "g", "/media/tv/Show/Season 02")
-	if a == b || a != SubDeliveryKey("t-1-x", "g", "/media/tv/Show/Season 01") {
+	a := ports.ScanSubDeliveryKey("t-1-x", "g", "/media/tv/Show/Season 01")
+	b := ports.ScanSubDeliveryKey("t-1-x", "g", "/media/tv/Show/Season 02")
+	if a == b || a != ports.ScanSubDeliveryKey("t-1-x", "g", "/media/tv/Show/Season 01") {
 		t.Errorf("keys %q %q", a, b)
 	}
 }

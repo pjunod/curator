@@ -3,7 +3,6 @@ package acquisition
 import (
 	"context"
 	"crypto/rand"
-	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -975,7 +974,7 @@ func ImportOutbox(notifiers []ports.NotifierConfig, e ImportCompleted, generatio
 				return nil, nil, err
 			}
 			out = append(out, sqlite.OutboxWrite{NotifierID: cfg.ID, DownloadID: e.DownloadID, MediaItemID: e.MediaItemID, PublicationID: e.PublicationID,
-				Directory: dir, IdempotencyKey: SubDeliveryKey(transfer, generation, dir), ExpectedFiles: expected,
+				Directory: dir, IdempotencyKey: ports.ScanSubDeliveryKey(transfer, generation, dir), ExpectedFiles: expected,
 				Event: "import", Payload: string(payload)})
 			subs = true
 		}
@@ -1006,7 +1005,7 @@ func subDeliveryNotification(whole ports.Notification, dir string, expected []po
 	return n
 }
 
-// CapExpected keeps the expected files Cinema will accept in one request:
+// CapExpected keeps the expected files Cinema will accept in one request, with
 // at most ports.MaxExpectedFiles, within ports.MaxExpectedFileBytes as JSON.
 // Cinema refuses a request over either with a 400, which retrying cannot fix,
 // so a directory never scanned would be the price of naming every file. Over
@@ -1014,7 +1013,7 @@ func subDeliveryNotification(whole ports.Notification, dir string, expected []po
 // newest; the delivery log says how many of the directory's files that
 // verified. Order is by path, as the files were given.
 func CapExpected(files []ports.ExpectedFile) []ports.ExpectedFile {
-	if len(files) <= ports.MaxExpectedFiles && expectedJSONSize(files) <= ports.MaxExpectedFileBytes {
+	if len(files) <= ports.MaxExpectedFiles && ports.ExpectedFilesJSONSize(files) <= ports.MaxExpectedFileBytes {
 		return files
 	}
 	ranked := append([]ports.ExpectedFile(nil), files...)
@@ -1033,7 +1032,7 @@ func CapExpected(files []ports.ExpectedFile) []ports.ExpectedFile {
 		if len(out) == ports.MaxExpectedFiles {
 			break
 		}
-		n := expectedJSONSize([]ports.ExpectedFile{f}) - 2
+		n := ports.ExpectedFilesJSONSize([]ports.ExpectedFile{f}) - 2
 		if len(out) > 0 {
 			n++ // the comma
 		}
@@ -1044,22 +1043,6 @@ func CapExpected(files []ports.ExpectedFile) []ports.ExpectedFile {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
 	return out
-}
-
-func expectedJSONSize(files []ports.ExpectedFile) int {
-	if files == nil {
-		files = []ports.ExpectedFile{}
-	}
-	raw, _ := json.Marshal(files)
-	return len(raw)
-}
-
-// SubDeliveryKey is a sub-delivery's idempotency key (contract section 4.1):
-// <transfer>/<generation>/<first 16 hex of sha256(directory)>. Cinema sees it
-// with the attempt appended.
-func SubDeliveryKey(transfer, generation, dir string) string {
-	sum := sha256.Sum256([]byte(dir))
-	return fmt.Sprintf("%s/%s/%s", transfer, generation, hex.EncodeToString(sum[:])[:16])
 }
 
 // legacyGeneration names an import that did not come from a publication: a
