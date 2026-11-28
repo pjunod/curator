@@ -252,6 +252,11 @@ func (c *Cinema) scan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !c.Old && b.Path == nil && b.ProbePaths != nil {
+		if len(b.ProbePaths) == 0 || len(b.ProbePaths) > 64 {
+			c.mu.Unlock()
+			writeText(w, http.StatusBadRequest, "probe_paths must name 1..=64 paths")
+			return
+		}
 		out := c.probe(b.ProbePaths)
 		c.mu.Unlock()
 		writeJSON(w, http.StatusOK, out)

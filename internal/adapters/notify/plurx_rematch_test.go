@@ -22,6 +22,9 @@ func TestPlurxTestLearnsRemovedPathsFeature(t *testing.T) {
 	if got := p.LearnedFeatures(); len(got) != 1 || got[0] != "removed_paths" {
 		t.Fatalf("features = %v, want removed_paths", got)
 	}
+	if got, err := p.ProbeFeatures(context.Background()); err != nil || len(got) != 1 || got[0] != "removed_paths" {
+		t.Fatalf("current cinema features = %v %v, want removed_paths", got, err)
+	}
 	c.Set(func(c *cinematest.Cinema) { c.RemovedPaths = false; c.Old = true })
 	got, err := p.ProbeFeatures(context.Background())
 	if err != nil || len(got) != 0 {

@@ -164,14 +164,14 @@ func (p *Plurx) hasFeature(f string) bool {
 // LearnedFeatures implements ports.FeatureReporter: what the last Test learned.
 func (p *Plurx) LearnedFeatures() []string { return p.learned }
 
-// ProbeFeatures implements ports.FeatureProber: the connection test's answer
-// with no paths to check, read for its features. An older Cinema refuses the
-// body with a 422 and supports none of them.
+// ProbeFeatures uses a non-mutating path test and reads only its capabilities.
+// Cinema requires a nonempty list, and reports "/" as outside when it is not
+// a configured root. An older Cinema refuses this body with a 422.
 func (p *Plurx) ProbeFeatures(ctx context.Context) ([]string, error) {
 	if p.URL == "" || p.APIKey == "" {
 		return nil, fmt.Errorf("plurx: url and apiKey required")
 	}
-	body, err := json.Marshal(map[string]any{"probe_paths": []string{}, "source": "monarr"})
+	body, err := json.Marshal(plurxScanRequest{ProbePaths: []string{"/"}, Source: "monarr"})
 	if err != nil {
 		return nil, err
 	}
